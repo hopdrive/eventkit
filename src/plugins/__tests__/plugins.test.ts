@@ -7,7 +7,7 @@ import { observability, type ObservabilityBatch } from '../observability/index.j
 import { graphqlSink } from '../observability/graphql-sink.js';
 import { safeSerialize } from '../observability/serialize.js';
 import { batchJobs, type BatchJobUpdate, type DelayedBatchJobSpec } from '../batchjobs/index.js';
-import { grafanaTransport, type LokiPayload } from '../transports/grafana/index.js';
+import { grafanaLogger, type LokiPayload, type LoggerLike } from '../transports/grafana/index.js';
 import { sentry, type SentryEvent } from '../transports/sentry/index.js';
 
 const UUID = '11111111-1111-1111-1111-111111111111';
@@ -515,7 +515,7 @@ describe('batchJobs', () => {
   });
 });
 
-describe('transports/grafana', () => {
+describe('transports/grafana (direct Loki mode)', () => {
   it('buffers job logs (with jobExecutionId) and flushes a Loki payload; correlation fields stay out of stream labels', async () => {
     const payloads: LokiPayload[] = [];
     let jobId = '';
@@ -523,7 +523,7 @@ describe('transports/grafana', () => {
       run(event, [job((c: JobContext) => { jobId = c.job.id; c.log.info('hello from job', { n: 1 }); }, { name: 'j' })]),
     );
     const kit = createEventKit(fakeSource())
-      .use(grafanaTransport, { endpoint: 'http://loki', labels: { app: 'test' }, send: (p: LokiPayload) => void payloads.push(p) })
+      .use(grafanaLogger, { grafana: { endpoint: 'http://loki', labels: { app: 'test' }, send: (p: LokiPayload) => void payloads.push(p) } })
       .registerEvents([mod]);
     await kit.handle('go');
 
@@ -537,6 +537,65 @@ describe('transports/grafana', () => {
     expect(jobLine).toBeTruthy();
     expect(jobLine.jobExecutionId).toBe(jobId); // per-job-execution queryability
     expect(jobLine.jobName).toBe('j');
+  });
+});
+
+describe('transports/grafana (injected-logger bridge mode)', () => {
+  it('forwards entries to an injected sdk-server-logger-shaped logger; never touches Loki', async () => {
+    const calls: Array<{ level: string; message: string; error?: unknown; metadata?: Record<string, unknown> }> = [];
+    const logger: LoggerLike = {
+      info: (message, metadata) => void calls.push({ level: 'info', message, metadata }),
+      warn: (message, metadata) => void calls.push({ level: 'warn', message, metadata }),
+      error: (message, error, metadata) => void calls.push({ level: 'error', message, error, metadata }),
+    };
+    let jobId = '';
+    const mod = defineFakeEvent('e', () => true, (event, _ctx) =>
+      run(event, [job((c: JobContext) => { jobId = c.job.id; c.log.info('hello from job', { n: 1 }); }, { name: 'j' })]),
+    );
+    const kit = createEventKit(fakeSource())
+      .use(grafanaLogger, { logger, source: 'eventkit' })
+      .registerEvents([mod]);
+    await kit.handle('go');
+
+    const jobLine = calls.find(c => c.message === 'hello from job');
+    expect(jobLine).toBeTruthy();
+    expect(jobLine!.level).toBe('info');
+    expect(jobLine!.metadata).toMatchObject({ source: 'eventkit', jobName: 'j', jobExecutionId: jobId, data: { n: 1 } });
+  });
+
+  it('routes errors through logger.error(message, error, metadata) with the SerializedError', async () => {
+    const errors: Array<{ message: string; error: unknown; metadata?: Record<string, unknown> }> = [];
+    const logger: LoggerLike = {
+      info: () => {},
+      warn: () => {},
+      error: (message, error, metadata) => void errors.push({ message, error, metadata }),
+    };
+    const mod = defineFakeEvent('e', () => true, () => { throw new Error('kaboom'); });
+    const kit = createEventKit(fakeSource())
+      .use(grafanaLogger, { logger })
+      .registerEvents([mod]);
+    await kit.handle('go');
+
+    expect(errors.length).toBeGreaterThan(0);
+    const handleErr = errors.find(e => e.message.includes('kaboom'));
+    expect(handleErr).toBeTruthy();
+    expect(handleErr!.message).toMatch(/^\[handle\] Error: kaboom/);
+    expect((handleErr!.error as { message?: string }).message).toBe('kaboom');
+  });
+
+  it('invokes the injected flush seam at end of invocation (mode 1 does not own flush by default)', async () => {
+    let flushed = 0;
+    const logger: LoggerLike = { info: () => {}, warn: () => {}, error: () => {} };
+    const mod = defineFakeEvent('e', () => true, (event) => run(event, []));
+    const kit = createEventKit(fakeSource())
+      .use(grafanaLogger, { logger, flush: () => { flushed += 1; } })
+      .registerEvents([mod]);
+    await kit.handle('go');
+    expect(flushed).toBe(1);
+  });
+
+  it('throws when neither logger nor grafana config is provided', () => {
+    expect(() => grafanaLogger({})).toThrow(/requires either `logger`/);
   });
 });
 
