@@ -206,6 +206,54 @@ describe('timeouts and cancellation', () => {
   });
 });
 
+describe('observability parity: crashes surface in events[] without flipping ok (no-retry contract)', () => {
+  it('a handler crash → detected:true, no jobs, error set, ok stays true', async () => {
+    const mod = defineFakeEvent('e', always, () => {
+      throw new Error('handler boom');
+    });
+    const kit = createEventKit(fakeSource()).registerEvents([mod]);
+    const result = await kit.handle('x');
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]!.detected).toBe(true); // event WAS detected; handler failed
+    expect(result.events[0]!.jobs).toEqual([]);
+    expect(result.events[0]!.error?.message).toBe('handler boom');
+    expect(result.ok).toBe(true); // no failed jobs → not flipped → no 5xx → no Hasura retry
+  });
+
+  it('a run() non-job entry crashes the handler and is surfaced as an event error', async () => {
+    const mod = defineFakeEvent('e', always, (event, _ctx) => run(event, [false as never]));
+    const kit = createEventKit(fakeSource()).registerEvents([mod]);
+    const result = await kit.handle('x');
+    expect(result.events[0]!.detected).toBe(true);
+    expect(result.events[0]!.error?.message).toMatch(/non-job entry/);
+    expect(result.ok).toBe(true);
+  });
+
+  it('a detector crash → detected:false, no jobs, error set, ok stays true', async () => {
+    const mod = defineFakeEvent(
+      'e',
+      () => {
+        throw new Error('detector boom');
+      },
+      (event, _ctx) => run(event, []),
+    );
+    const kit = createEventKit(fakeSource()).registerEvents([mod]);
+    const result = await kit.handle('x');
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]!.detected).toBe(false);
+    expect(result.events[0]!.jobs).toEqual([]);
+    expect(result.events[0]!.error?.message).toBe('detector boom');
+    expect(result.ok).toBe(true);
+  });
+
+  it('a cleanly-false detector produces no event entry', async () => {
+    const mod = defineFakeEvent('e', () => false, (event, _ctx) => run(event, []));
+    const kit = createEventKit(fakeSource()).registerEvents([mod]);
+    const result = await kit.handle('x');
+    expect(result.events).toHaveLength(0);
+  });
+});
+
 describe('plugin lifecycle + capability validation', () => {
   it('fans out notifications in registration order', async () => {
     const calls: string[] = [];

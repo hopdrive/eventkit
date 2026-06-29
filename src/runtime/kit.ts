@@ -14,6 +14,7 @@ import {
   type EventKit,
   type EventKitPlugin,
   type EventModule,
+  type EventOutcome,
   type EventSourceName,
   type EventSourceType,
   type HandlerContext,
@@ -23,6 +24,7 @@ import {
   type JobExecution,
   type PluginFactory,
   type RequestContext,
+  type SerializedError,
 } from '../core/index.js';
 import { PluginManager } from './plugin-manager.js';
 import { invocationStore, type InvocationRuntime } from './invocation-store.js';
@@ -183,12 +185,17 @@ class Kit implements EventKit {
     return result;
   }
 
-  /** Run every registered detector; return the modules + DetectedEvents that fired. */
+  /**
+   * Run every registered detector. Returns one entry per module that DETECTED
+   * (with its DetectedEvent) or whose detector THREW (with the error) — clean
+   * `false` verdicts produce no entry. Surfacing detector crashes here lets them
+   * appear in InvocationResult.events for observability parity with legacy.
+   */
   private async detect(
     envelope: EventEnvelope,
     invocation: InvocationContext,
-  ): Promise<Array<{ module: EventModule; event: DetectedEvent }>> {
-    const out: Array<{ module: EventModule; event: DetectedEvent }> = [];
+  ): Promise<Array<{ module: EventModule; event: DetectedEvent | null; error?: SerializedError }>> {
+    const out: Array<{ module: EventModule; event: DetectedEvent | null; error?: SerializedError }> = [];
     for (const module of this.modules) {
       const base: DetectorContext = {
         eventName: asEventName(module.name),
@@ -240,19 +247,32 @@ class Kit implements EventKit {
             envelope,
           },
         });
+      } else if (error !== undefined) {
+        // Detector threw: surface it (detected:false) without firing a handler.
+        out.push({ module, event: null, error });
       }
     }
     return out;
   }
 
-  /** Invoke each detected event's handler; collect job executions. */
+  /** Invoke each detected event's handler; collect job executions and surface crashes. */
   private async dispatch(
-    detected: Array<{ module: EventModule; event: DetectedEvent }>,
+    detected: Array<{ module: EventModule; event: DetectedEvent | null; error?: SerializedError }>,
     envelope: EventEnvelope,
     invocation: InvocationContext,
-  ): Promise<InvocationResult['events']> {
-    const events: InvocationResult['events'] = [];
-    for (const { module, event } of detected) {
+  ): Promise<EventOutcome[]> {
+    const events: EventOutcome[] = [];
+    for (const entry of detected) {
+      const { module, event } = entry;
+
+      // Detector crash: report it (detected:false, no jobs); no handler runs.
+      if (!event) {
+        const crashed: EventOutcome = { name: module.name, detected: false, jobs: [] };
+        if (entry.error !== undefined) crashed.error = entry.error;
+        events.push(crashed);
+        continue;
+      }
+
       const base: HandlerContext = {
         invocationId: invocation.invocationId,
         correlationId: invocation.correlationId,
@@ -290,7 +310,12 @@ class Kit implements EventKit {
       if (error !== undefined) handlerResult.error = error;
       await this.pm.onEventHandlerEnd(ctx, handlerResult);
 
-      events.push({ name: event.name, detected: true, jobs });
+      // detected stays true even on a handler crash (the event WAS detected); the
+      // error is surfaced separately. `ok` is computed from job status only, so a
+      // handler crash with no jobs does not flip it — preserving the no-retry contract.
+      const outcome: EventOutcome = { name: event.name, detected: true, jobs };
+      if (error !== undefined) outcome.error = error;
+      events.push(outcome);
     }
     return events;
   }

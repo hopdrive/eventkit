@@ -12,11 +12,32 @@ import type { EventKitPlugin } from './plugin.js';
 /** A plugin factory the kit instantiates itself (D22 — lazily). */
 export type PluginFactory = (config?: unknown) => EventKitPlugin;
 
+/**
+ * The outcome of one registered event during an invocation. Appears for an event
+ * that DETECTED, or for one whose DETECTOR threw (so the crash is visible in the
+ * returned payload — observability parity with the legacy runtime, which recorded
+ * detector/handler/job errors in the response body Hasura logs).
+ *
+ * Semantics, matching the legacy no-retry contract:
+ *  - `detected` is the detector's verdict. A handler crash keeps `detected: true`
+ *    (the event WAS detected; the handler is what failed) with `jobs: []` and
+ *    `error` set. A detector crash is reported as `detected: false` with `error`.
+ *  - `error` is the serialized detector/handler crash, if any. It does NOT flow
+ *    into `InvocationResult.ok` — business-logic throws are swallowed and reported,
+ *    never retried via a 5xx (that is reserved for the framework itself breaking).
+ */
+export interface EventOutcome {
+  name: string;
+  detected: boolean;
+  jobs: JobExecution[];
+  error?: SerializedError;
+}
+
 /** The aggregate outcome of one invocation (§9.7). */
 export interface InvocationResult {
   ok: boolean;
   invocationId: InvocationId;
-  events: Array<{ name: string; detected: boolean; jobs: JobExecution[] }>;
+  events: EventOutcome[];
   durationMs: number;
   timedOut?: boolean;
   error?: SerializedError;

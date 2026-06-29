@@ -81,4 +81,4 @@ export type {
 } from './plugin.js';
 
 // ── Kit / entry point (types only; createEventKit + run are runtime, re-exported from the root) ──
-export type { EventKit, InvocationResult, PluginFactory } from './kit.js';
+export type { EventKit, InvocationResult, EventOutcome, PluginFactory } from './kit.js';
