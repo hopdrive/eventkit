@@ -27,6 +27,10 @@ export {
 // ── Capabilities (D20) ──────────────────────────────────────────────────────
 export type { Capability, CapabilityRole, ParsedCapability } from './capabilities.js';
 
+// ── Source-meta convention (well-known envelope.meta keys) ────────────────────
+export type { SourceMeta } from './source-meta.js';
+export { SOURCE_META_KEYS } from './source-meta.js';
+
 // ── Loggers ───────────────────────────────────────────────────────────────
 export type { LogLevel, LogEntry, DetectorLogger, HandlerLogger, JobLogger } from './logger.js';
 

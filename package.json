@@ -32,6 +32,11 @@
       "import": "./dist/esm/plugins/observability/index.js",
       "require": "./dist/cjs/plugins/observability/index.js"
     },
+    "./plugins/observability/graphql-sink": {
+      "types": "./dist/types/plugins/observability/graphql-sink.d.ts",
+      "import": "./dist/esm/plugins/observability/graphql-sink.js",
+      "require": "./dist/cjs/plugins/observability/graphql-sink.js"
+    },
     "./plugins/loop-prevention": {
       "types": "./dist/types/plugins/loop-prevention/index.d.ts",
       "import": "./dist/esm/plugins/loop-prevention/index.js",

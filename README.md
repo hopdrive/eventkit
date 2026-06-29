@@ -29,7 +29,9 @@ the center of the architecture.
   house style; `appointment.ready` example + tests.
 - **Built-in plugins** (config-driven, subpath exports — ADR-024):
   `./plugins/loop-prevention` (`loopPrevention` + a generic tracking-token codec),
-  `./plugins/observability` (buffered, sink-based), `./plugins/batchjobs`
+  `./plugins/observability` (buffered, sink-based, full canonical record set) +
+  `./plugins/observability/graphql-sink` (built-in Hasura bulk-upsert sink),
+  `./plugins/batchjobs`
   (registration-emergent durability, `requires: ['source:hasura']`),
   `./plugins/transports/grafana` and `./plugins/transports/sentry`.
 - **Testing** (`@hopdrive/eventkit/testing`) — `fakeSource`, `defineFakeEvent`,

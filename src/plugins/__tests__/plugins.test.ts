@@ -4,6 +4,7 @@ import { fakeSource, defineFakeEvent } from '../../testing/index.js';
 import { hasuraEvent } from '../../sources/hasura/index.js';
 import { loopPrevention, createTokenCodec } from '../loop-prevention/index.js';
 import { observability, type ObservabilityBatch } from '../observability/index.js';
+import { graphqlSink } from '../observability/graphql-sink.js';
 import { batchJobs, type BatchJobUpdate } from '../batchjobs/index.js';
 import { grafanaTransport, type LokiPayload } from '../transports/grafana/index.js';
 import { sentry, type SentryEvent } from '../transports/sentry/index.js';
@@ -91,10 +92,13 @@ describe('loopPrevention', () => {
 });
 
 describe('observability', () => {
-  it('flushes one batch per invocation with invocation/event/job records', async () => {
+  it('flushes one batch per invocation with the canonical record field set', async () => {
     const batches: ObservabilityBatch[] = [];
     const mod = defineFakeEvent('thing.happened', () => true, (event, _ctx) =>
-      run(event, [job(() => 'ok', { name: 'good' }), job(() => { throw new Error('x'); }, { name: 'bad' })]),
+      run(event, [
+        job(() => 'ok', { name: 'good', metadata: { tier: 1 } }),
+        job(() => { throw new Error('x'); }, { name: 'bad' }),
+      ]),
     );
     const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b) }).registerEvents([mod]);
 
@@ -102,10 +106,54 @@ describe('observability', () => {
     await kit.handle('go');
 
     expect(batches).toHaveLength(2);
-    expect(batches[0]!.invocation.invocationId).not.toBe(batches[1]!.invocation.invocationId);
-    expect(batches[0]!.events).toHaveLength(1);
-    expect(batches[0]!.events[0]!.eventName).toBe('thing.happened');
-    expect(batches[0]!.jobs.map(j => j.status).sort()).toEqual(['completed', 'failed']);
+    const b = batches[0]!;
+    expect(b.invocation.id).not.toBe(batches[1]!.invocation.id);
+    expect(b.invocation.source_system).toBe('fake');
+    expect(b.invocation.status).toBe('failed'); // one job failed
+    expect(b.invocation.total_jobs_run).toBe(2);
+    expect(b.invocation.total_jobs_succeeded).toBe(1);
+    expect(b.invocation.total_jobs_failed).toBe(1);
+    expect(b.invocation.events_detected_count).toBe(1);
+
+    expect(b.events).toHaveLength(1);
+    expect(b.events[0]!.event_name).toBe('thing.happened');
+    expect(b.events[0]!.jobs_count).toBe(2);
+    expect(b.events[0]!.jobs_succeeded).toBe(1);
+
+    expect(b.jobs.map(j => j.status).sort()).toEqual(['completed', 'failed']);
+    const good = b.jobs.find(j => j.job_name === 'good')!;
+    expect(good.event_execution_id).toBe(b.events[0]!.id); // job linked to its event
+    expect(good.job_function_name).toBe('good');
+    expect(good.job_options).toEqual({ tier: 1 }); // serializable metadata captured
+    expect(good.result).toBe('ok');
+    expect(b.jobs.find(j => j.job_name === 'bad')!.error_message).toBe('x');
+  });
+
+  it('captures source attributes from envelope.meta (Hasura) and the prior-job link', async () => {
+    const batches: ObservabilityBatch[] = [];
+    const detector = hasuraEvent.detector(ctx => ctx.operation === 'INSERT');
+    const handler = hasuraEvent.handler((event, _ctx) => run(event, []));
+    const kit = createEventKit(hasuraEvent)
+      .use(loopPrevention, { field: 'updated_by', codec: { separator: '|', validateCorrelationId: true } })
+      .use(observability, { sink: (bb: ObservabilityBatch) => void batches.push(bb) })
+      .registerEvents([{ name: asEventName('batch.created'), detector, handler } as EventModule]);
+    await kit.handle(hasuraInsert({ id: 1, updated_by: `prior-svc|${UUID}|prior-job-9` }));
+
+    const inv = batches[0]!.invocation;
+    expect(inv.source_system).toBe('hasura');
+    expect(inv.source_table).toBe('public.batch_jobs');
+    expect(inv.source_operation).toBe('INSERT');
+    expect(inv.source_job_id).toBe('prior-job-9'); // loop-prevention surfaced the prior job link
+  });
+
+  it('records a handler crash on the invocation (onError) without failing execution', async () => {
+    const batches: ObservabilityBatch[] = [];
+    const mod = defineFakeEvent('e', () => true, () => { throw new Error('handler boom'); });
+    const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b) }).registerEvents([mod]);
+    const result = await kit.handle('x');
+    expect(result.ok).toBe(true); // no-retry contract
+    expect(batches[0]!.invocation.status).toBe('failed');
+    expect(batches[0]!.invocation.error_message).toBe('handler boom');
   });
 
   it('does not record events that never fired', async () => {
@@ -114,6 +162,53 @@ describe('observability', () => {
     const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b) }).registerEvents([mod]);
     await kit.handle('x');
     expect(batches[0]!.events).toHaveLength(0);
+  });
+});
+
+describe('observability/graphql-sink', () => {
+  it('bulk-upserts invocations → events → jobs in order via the injected transport', async () => {
+    const calls: Array<{ query: string; objects: unknown[] }> = [];
+    const sink = graphqlSink({
+      endpoint: 'http://hasura/v1/graphql',
+      headers: { 'x-hasura-admin-secret': 'secret' },
+      request: async body => {
+        calls.push({ query: body.query, objects: (body.variables as { objects: unknown[] }).objects });
+        return {};
+      },
+    });
+    const batches: ObservabilityBatch[] = [];
+    const mod = defineFakeEvent('thing.happened', () => true, (event, _ctx) => run(event, [job(() => 'ok', { name: 'good' })]));
+    const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => { batches.push(b); return sink(b); } }).registerEvents([mod]);
+    await kit.handle('go');
+
+    // invocations first, then event_executions, then job_executions (FK order)
+    expect(calls.map(c => c.query.match(/insert_(\w+)\(/)?.[1])).toEqual(['invocations', 'event_executions', 'job_executions']);
+    expect((calls[0]!.objects[0] as { id: string }).id).toBe(batches[0]!.invocation.id);
+    // omitted (undefined) columns are not sent
+    expect(Object.values(calls[0]!.objects[0] as Record<string, unknown>).every(v => v !== undefined)).toBe(true);
+  });
+
+  it('retries on transport failure then succeeds', async () => {
+    let attempts = 0;
+    const sink = graphqlSink({
+      endpoint: 'http://hasura/v1/graphql',
+      retryDelayMs: 1,
+      request: async () => {
+        attempts += 1;
+        if (attempts < 2) throw new Error('network blip');
+        return {};
+      },
+    });
+    await sink({
+      invocation: {
+        id: 'i1', correlation_id: 'c1', source_system: 'fake', status: 'completed',
+        created_at: 'x', updated_at: 'x', events_detected_count: 0, total_jobs_run: 0,
+        total_jobs_succeeded: 0, total_jobs_failed: 0,
+      },
+      events: [],
+      jobs: [],
+    });
+    expect(attempts).toBe(2);
   });
 });
 

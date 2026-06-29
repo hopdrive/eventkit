@@ -59,11 +59,16 @@ export function loopPrevention(config: LoopPreventionConfig = {}): EventKitPlugi
   return {
     name: 'loop-prevention',
 
-    // Inbound: lift the prior token into envelope.meta for detectors/handlers.
+    // Inbound: lift the prior token into envelope.meta for detectors/handlers, and
+    // surface its job-execution id as `sourceJobId` (the observability link back to
+    // the job that produced this write).
     augmentEnvelope(envelope) {
       const inbound = read(envelope);
       if (inbound && codec.isValid(inbound)) {
-        return { meta: { ...envelope.meta, sourceTrackingToken: inbound } };
+        const meta: Record<string, unknown> = { ...envelope.meta, sourceTrackingToken: inbound };
+        const priorJobId = codec.getJobExecutionId(inbound);
+        if (priorJobId) meta['sourceJobId'] = priorJobId;
+        return { meta };
       }
       return undefined;
     },

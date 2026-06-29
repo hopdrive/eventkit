@@ -9,6 +9,7 @@ import {
   type HandlerContext,
   type RequestContext,
 } from '../../core/index.js';
+import type { SourceMeta } from '../../core/index.js';
 import type { HasuraDetectorContext, HasuraEventPayload, HasuraHandlerContext, HasuraOperation } from './types.js';
 import { columnAdded, columnChanged, columnRemoved, getNewRow, getOldRow, getOperation, getSession } from './payload.js';
 
@@ -27,6 +28,17 @@ export function normalizeHasuraEvent(raw: unknown, request: RequestContext): Eve
   const correlationId = asCorrelationId(request.correlationId ?? traceId ?? randomId());
   const receivedAt = payload?.created_at ? new Date(payload.created_at) : new Date();
 
+  // Surface source attributes into envelope.meta so source-agnostic plugins
+  // (observability) can read them without parsing the Hasura payload.
+  const session = getSession(payload);
+  const meta: SourceMeta = {};
+  if (payload?.table) meta.sourceTable = `${payload.table.schema ?? 'public'}.${payload.table.name ?? 'unknown'}`;
+  const op = getOperation(payload);
+  if (op) meta.sourceOperation = op;
+  if (payload?.id) meta.sourceEventId = payload.id;
+  if (session['x-hasura-user-email']) meta.sourceUserEmail = session['x-hasura-user-email'];
+  if (session['x-hasura-role']) meta.sourceUserRole = session['x-hasura-role'];
+
   return {
     id: payload?.id ?? randomId(),
     source: asEventSourceName('hasura'),
@@ -34,7 +46,7 @@ export function normalizeHasuraEvent(raw: unknown, request: RequestContext): Eve
     receivedAt,
     correlationId,
     payload,
-    meta: {},
+    meta: meta as Record<string, unknown>,
     raw,
   };
 }
