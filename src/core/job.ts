@@ -101,6 +101,22 @@ export interface JobContext<
   signal?: AbortSignal;
 }
 
+/**
+ * What a plugin's `augmentJobContext` may contribute before a job runs (ADR-020).
+ * Two live, request-scoped channels — neither is ever persisted or serialized:
+ *  - `input`   merges UNDER the handler's `options.input` (handler keys win), so
+ *              the job reads it from `ctx.input` and stays plugin-agnostic.
+ *  - `ambient` sets known ambient `JobContext` fields. Today the only ambient
+ *              field is `trackingToken` (§13). This is deliberately NOT an open
+ *              record: every contributable key has a defined landing on
+ *              `JobContext`, so adding one is a deliberate change to BOTH this
+ *              type and `JobContext` — never a silent untyped merge into a void.
+ */
+export interface JobContextContribution {
+  input?: Record<string, unknown>;
+  ambient?: { trackingToken?: string };
+}
+
 export type JobExecutionStatus =
   | 'queued'
   | 'running'

@@ -17,6 +17,9 @@ jobs:
       - run: npm ci
       - name: Typecheck
         run: npm run typecheck
+      # Negative-type fixtures: brand/contribution guards must keep failing to compile.
+      - name: Typecheck contracts (negative-type fixtures)
+        run: npm run typecheck:contracts
       - name: Build (dual ESM/CJS + types)
         run: npm run build
       # D8 release gate: every subpath export must resolve under esbuild (the

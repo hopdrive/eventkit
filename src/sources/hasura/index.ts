@@ -39,7 +39,7 @@ export interface HasuraEventSource extends EventKitPlugin {
   sourceType: EventSourceType;
   detector<TNewRow = Record<string, unknown>, TOldRow = TNewRow>(
     fn: (ctx: HasuraDetectorContext<TNewRow, TOldRow>) => boolean | Promise<boolean>,
-  ): DetectorFunction<HasuraEventPayload<TNewRow, TOldRow>, unknown>;
+  ): DetectorFunction<HasuraEventPayload<TNewRow, TOldRow>>;
   handler<TNewRow = Record<string, unknown>, TOldRow = TNewRow>(
     fn: (
       event: DetectedEvent<HasuraEventPayload<TNewRow, TOldRow>>,
@@ -53,7 +53,7 @@ export interface HasuraCronSource extends EventKitPlugin {
   sourceType: EventSourceType;
   detector<TPayload = Record<string, unknown>>(
     fn: (ctx: HasuraCronContext<TPayload>) => boolean | Promise<boolean>,
-  ): DetectorFunction<HasuraCronPayload<TPayload>, unknown>;
+  ): DetectorFunction<HasuraCronPayload<TPayload>>;
   handler<TPayload = Record<string, unknown>>(
     fn: (
       event: DetectedEvent<HasuraCronPayload<TPayload>>,

@@ -13,9 +13,8 @@ import type { JobExecution } from './job.js';
 
 export type DetectorFunction<
   TPayload = unknown,
-  TSourceContext = unknown,
   TMeta extends Record<string, unknown> = Record<string, unknown>,
-> = (ctx: DetectorContext<TPayload, TSourceContext, TMeta>) => boolean | Promise<boolean>;
+> = (ctx: DetectorContext<TPayload, TMeta>) => boolean | Promise<boolean>;
 
 export type HandlerFunction<
   TPayload = unknown,
@@ -43,11 +42,10 @@ export interface EventModuleMetadata {
 /** A registered event module (§3.4 — explicit registration only). */
 export interface EventModule<
   TPayload = unknown,
-  TSourceContext = unknown,
   TMeta extends Record<string, unknown> = Record<string, unknown>,
 > {
   name: EventName;
-  detector: DetectorFunction<TPayload, TSourceContext, TMeta>;
+  detector: DetectorFunction<TPayload, TMeta>;
   handler: HandlerFunction<TPayload, TMeta>;
   metadata?: EventModuleMetadata;
 }

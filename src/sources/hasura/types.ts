@@ -49,7 +49,7 @@ export interface HasuraDetectorContext<
   TNewRow = Record<string, unknown>,
   TOldRow = TNewRow,
   TMeta extends Record<string, unknown> = Record<string, unknown>,
-> extends DetectorContext<HasuraEventPayload<TNewRow, TOldRow>, unknown, TMeta> {
+> extends DetectorContext<HasuraEventPayload<TNewRow, TOldRow>, TMeta> {
   operation: HasuraOperation;
   schema: string;
   table: string;
@@ -92,7 +92,7 @@ export interface HasuraHandlerContext<
 export interface HasuraCronContext<
   TPayload = Record<string, unknown>,
   TMeta extends Record<string, unknown> = Record<string, unknown>,
-> extends DetectorContext<HasuraCronPayload<TPayload>, unknown, TMeta> {
+> extends DetectorContext<HasuraCronPayload<TPayload>, TMeta> {
   scheduleName: string;
   scheduledAt: Date;
   payload: TPayload;

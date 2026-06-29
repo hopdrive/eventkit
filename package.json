@@ -58,6 +58,7 @@
     "build:esm": "tsc -p tsconfig.esm.json",
     "build:types": "tsc -p tsconfig.types.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:contracts": "tsc -p tsconfig.typetest.json",
     "smoke:bundle": "node scripts/bundle-smoke.cjs",
     "lint": "eslint src --ext .ts",
     "test": "echo \"no tests yet — Phase 1\" && exit 0",

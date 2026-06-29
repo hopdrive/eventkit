@@ -12,13 +12,16 @@ import type { EventSourceType, EventEnvelope, DetectedEvent } from './envelope.j
 import type { DetectorLogger, HandlerLogger } from './logger.js';
 
 /**
- * Context passed to a detector. Common runtime fields plus a source-specific
- * helper API on `sourceContext` (e.g. the Hasura `columnChanged()`/`operation`).
+ * Context passed to a detector. The generic *base* the runtime builds; a source
+ * adapter ENRICHES it by intersection in `buildDetectorContext` — the source's
+ * helpers (Hasura: `operation`/`columnChanged()`/rows) are flattened directly
+ * onto the context the authored detector receives (see `HasuraDetectorContext`).
+ * There is intentionally no `sourceContext` sub-object: flattened is the only
+ * style, so a contributor reaches for `ctx.operation`, never `ctx.sourceContext`.
  * Detection-only; SHOULD be pure over this context (§8).
  */
 export interface DetectorContext<
   TPayload = unknown,
-  TSourceContext = unknown,
   TMeta extends Record<string, unknown> = Record<string, unknown>,
 > {
   eventName: EventName;
@@ -27,8 +30,6 @@ export interface DetectorContext<
   envelope: EventEnvelope<TPayload, TMeta>;
   source: EventSourceName;
   sourceType: EventSourceType;
-  /** Source-contributed helper surface (Hasura: operation/rows/columnChanged, …). */
-  sourceContext: TSourceContext;
   log: DetectorLogger;
   metadata: Record<string, unknown>;
 }

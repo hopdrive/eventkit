@@ -52,6 +52,7 @@ export type {
   JobFunction,
   JobDefinition,
   JobContext,
+  JobContextContribution,
   JobProgress,
   JobCheckpoint,
   JobExecution,

@@ -22,7 +22,7 @@ import type {
   RequestContext,
 } from './context.js';
 import type { EventEnvelope } from './envelope.js';
-import type { JobContext, JobProgress, JobCheckpoint, JobExecution } from './job.js';
+import type { JobContext, JobContextContribution, JobProgress, JobCheckpoint, JobExecution } from './job.js';
 import type { LogEntry } from './logger.js';
 import type { SerializedError, ErrorContext } from './errors.js';
 import type { InvocationResult } from './kit.js';
@@ -87,9 +87,7 @@ export interface EventKitPlugin {
   // ── Shape 2: delta transforms (return a partial; runtime merges) ────────
   configureInvocation?(request: RequestContext, envelope: EventEnvelope): Partial<RequestContext> | void;
   augmentEnvelope?(envelope: EventEnvelope): Partial<EventEnvelope> | void;
-  augmentJobContext?(
-    ctx: JobContext,
-  ): { input?: Record<string, unknown>; context?: Record<string, unknown> } | void;
+  augmentJobContext?(ctx: JobContext): JobContextContribution | void;
 
   // ── Shape 3: singleton capabilities (one provider; `base` = injected default) ──
   normalize?(raw: unknown, request: RequestContext, base?: NormalizeFn): EventEnvelope;
