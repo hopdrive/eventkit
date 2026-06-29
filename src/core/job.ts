@@ -168,25 +168,12 @@ export function job<TInput = undefined, TResult = unknown>(
   return { __eventkitJob: true, fn, name, options: resolved };
 }
 
-/**
- * Execute a detected event's jobs. Defaults are PINNED (ADR-014): `mode`
- * defaults to `'parallel'` and `continueOnFailure` to `true`, matching the
- * current `Promise.allSettled` fan-out so a flaky job never blocks billing.
- * `jobs` is a strict `JobDefinition[]`: the runtime MUST throw on any non-job
- * entry (ADR-018).
- *
- * Phase 1 implements the body; in Phase 0 it throws so the public signature is
- * frozen and importable without committing runtime behavior.
- */
-export async function run<TResult = unknown>(
-  _event: DetectedEvent,
-  _jobs: JobDefinition[],
-  _options?: RunOptions,
-): Promise<JobExecution<TResult>[]> {
-  throw new NotImplementedError('run() — runtime lands in Phase 1 (Core runtime).');
-}
+// `run()` (the executor) lives in `../runtime/run.ts` — it needs invocation-scoped
+// state (plugins, signal, loggers) and so cannot be a pure-core leaf. Its type
+// signature is `(event: DetectedEvent, jobs: JobDefinition[], options?: RunOptions)
+// => Promise<JobExecution[]>`; the root package re-exports the real one.
 
-/** Marker for Phase 0 stubs whose runtime behavior is intentionally deferred. */
+/** Marker for not-yet-implemented stubs whose runtime behavior is deferred to a later phase. */
 export class NotImplementedError extends Error {
   override readonly name = 'NotImplementedError';
   constructor(message: string) {

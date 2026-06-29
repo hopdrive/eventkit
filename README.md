@@ -4,12 +4,11 @@ Source-agnostic business-event execution framework. The successor to
 `@hopdrive/hasura-event-detector` — Hasura becomes one *source adapter* rather than
 the center of the architecture.
 
-> **Status: Phase 0 (skeleton + type freeze).** The public contracts are frozen and
-> importable; the runtime is stubbed (calling `createEventKit`/`run`/a source/plugin
-> throws `NotImplementedError`). Design source of truth:
-> `hasura-event-detector/docs/eventkit-rewrite/` (RFC v0.3.7 + kickoff).
+> **Status: Phase 1 (core runtime).** The kit detects + runs jobs end to end with an
+> in-memory source. Source/plugin/platform runtimes are still stubbed. Design source
+> of truth: `hasura-event-detector/docs/eventkit-rewrite/` (RFC v0.3.7 + kickoff).
 
-## What's here in Phase 0
+## What works now (Phases 0–1)
 
 - **Package skeleton** — dual ESM/CJS build, subpath `exports` map, three-tsconfig
   setup, marker `package.json` files, Changesets, and a CI **Netlify-bundle smoke
@@ -18,12 +17,17 @@ the center of the architecture.
   types the RFC left loose (`Capability`, `JobDefinition`, `PluginFactory`,
   `NormalizeFn`/`FormatFn`, `KitContext`, `DetectionResult`/`HandlerResult`, the
   logger tiers, `EventModuleMetadata`, `SerializedError`).
-- **Implemented now** (pure leaf utilities): `serializeError`, `serializeOutput`,
-  `replaceCircularReferences`, `job()` (the definition builder), and the branded-id
-  helpers.
-- **Stubbed until later phases**: `run()` + `createEventKit()` (Phase 1), the Hasura
-  source runtime (Phase 2), `batchJobs`/`observability` (Phase 3), platform adapters
-  (Phase 4).
+- **Core runtime** (`src/runtime`) — `createEventKit` / `use` / `registerEvents` /
+  `validate` / `handle`, and `run()` (parallel + continue-on-failure defaults, strict
+  `JobDefinition[]`, `augmentJobContext` merge + ambient tracking token, per-job
+  timeout, AbortSignal cancellation, retries). Plugin manager with lazy instantiation,
+  registration-order notifications, delta transforms, and capability validation.
+- **Testing** (`@hopdrive/eventkit/testing`) — `fakeSource` + `defineFakeEvent`; 14
+  unit tests.
+- **Pure utilities**: `serializeError`, `serializeOutput`, `replaceCircularReferences`,
+  `job()`, branded-id helpers.
+- **Stubbed until later phases** (throw `NotImplementedError`): the Hasura source
+  runtime (Phase 2), `batchJobs`/`observability` (Phase 3), platform adapters (Phase 4).
 
 ## Public surface
 
@@ -51,7 +55,9 @@ bundle smoke test. (Flagged for ratification.)
 
 ```bash
 npm install
-npm run build          # dual ESM/CJS + .d.ts
-npm run typecheck      # strict, no emit
-npm run smoke:bundle   # D8 gate: every subpath resolves under esbuild
+npm run build                # dual ESM/CJS + .d.ts
+npm run typecheck            # strict, no emit
+npm run typecheck:contracts  # negative-type fixtures (brand/contribution guards)
+npm test                     # vitest
+npm run smoke:bundle         # D8 gate: every subpath resolves under esbuild
 ```

@@ -59,7 +59,7 @@ export type {
   JobExecutionStatus,
   RunOptions,
 } from './job.js';
-export { job, run, NotImplementedError } from './job.js';
+export { job, NotImplementedError } from './job.js';
 
 // ── Event modules ───────────────────────────────────────────────────────────
 export type {
@@ -80,6 +80,5 @@ export type {
   FormatFn,
 } from './plugin.js';
 
-// ── Kit / entry point ─────────────────────────────────────────────────────────
+// ── Kit / entry point (types only; createEventKit + run are runtime, re-exported from the root) ──
 export type { EventKit, InvocationResult, PluginFactory } from './kit.js';
-export { createEventKit } from './kit.js';

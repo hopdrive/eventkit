@@ -8,13 +8,8 @@
 // the type-level half of ADR-018 (declarative handlers / no conditional jobs) and
 // ADR-020 (typed job-context contribution).
 
-import {
-  job,
-  run,
-  type DetectedEvent,
-  type JobContext,
-  type EventKitPlugin,
-} from '../core/index.js';
+import { job, run } from '../index.js';
+import type { DetectedEvent, JobContext, EventKitPlugin } from '../core/index.js';
 
 declare const event: DetectedEvent;
 const work = (_ctx: JobContext): void => {};

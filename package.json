@@ -61,7 +61,8 @@
     "typecheck:contracts": "tsc -p tsconfig.typetest.json",
     "smoke:bundle": "node scripts/bundle-smoke.cjs",
     "lint": "eslint src --ext .ts",
-    "test": "echo \"no tests yet — Phase 1\" && exit 0",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "npm run build && npm run smoke:bundle && changeset publish",
@@ -85,6 +86,7 @@
     "@types/uuid": "^10.0.0",
     "esbuild": "^0.21.0",
     "rimraf": "^5.0.5",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^2.1.9"
   }
 }

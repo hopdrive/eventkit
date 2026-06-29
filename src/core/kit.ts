@@ -8,7 +8,6 @@ import type { EventModule } from './event-module.js';
 import type { JobExecution } from './job.js';
 import type { SerializedError } from './errors.js';
 import type { EventKitPlugin } from './plugin.js';
-import { NotImplementedError } from './job.js';
 
 /** A plugin factory the kit instantiates itself (D22 — lazily). */
 export type PluginFactory = (config?: unknown) => EventKitPlugin;
@@ -48,12 +47,5 @@ export interface EventKit {
   shutdown(): Promise<void>;
 }
 
-/**
- * Construct a kit once at module scope with its single required source. The
- * source is the first positional arg — same `(plugin, config?)` shape as
- * `kit.use()` (ADR-019). Phase 1 implements the runtime; in Phase 0 this is a
- * stub so the public signature is frozen and `import { createEventKit }` resolves.
- */
-export function createEventKit(_source: EventKitPlugin | PluginFactory, _config?: unknown): EventKit {
-  throw new NotImplementedError('createEventKit() — runtime lands in Phase 1 (Core runtime).');
-}
+// `createEventKit()` (the constructor) lives in `../runtime/kit.ts`. The root
+// package re-exports it; this module owns only the frozen `EventKit` contract.
