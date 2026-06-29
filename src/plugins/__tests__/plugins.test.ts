@@ -597,6 +597,35 @@ describe('transports/grafana (injected-logger bridge mode)', () => {
   it('throws when neither logger nor grafana config is provided', () => {
     expect(() => grafanaLogger({})).toThrow(/requires either `logger`/);
   });
+
+  it('forwards the concise lifecycle narrative (detection / running / per-job / completed)', async () => {
+    const lines: Array<{ msg: string; scope?: string; jobName?: string }> = [];
+    const logger: LoggerLike = {
+      info: (message, metadata) => void lines.push({ msg: message, scope: metadata?.scope, jobName: metadata?.jobName }),
+      warn: () => {},
+      error: () => {},
+    };
+    const mod = defineFakeEvent('e', () => true, (event, _ctx) =>
+      run(event, [
+        job(() => 'ok', { name: 'good' }),
+        job(() => { throw new Error('nope'); }, { name: 'bad' }),
+      ]),
+    );
+    const kit = createEventKit(fakeSource())
+      .use(grafanaLogger, { logger })
+      .registerEvents([mod]);
+    await kit.handle('go');
+
+    const msgs = lines.map(l => l.msg);
+    expect(msgs).toContain('e ⭐ detected');
+    expect(msgs).toContain('e running 2 jobs');
+    expect(msgs).toContain('✓ good 0ms');
+    expect(lines.find(l => l.msg.startsWith('✗ bad'))?.msg).toMatch(/^✗ bad \d+ms \(Error\)$/);
+    expect(msgs).toContain('e completed 2 jobs (1 failed)');
+    // scopes are structured fields, not baked into the message
+    expect(lines.find(l => l.msg === 'e ⭐ detected')?.scope).toBe('detection');
+    expect(lines.find(l => l.msg.startsWith('✓ good'))?.scope).toBe('job');
+  });
 });
 
 describe('transports/sentry', () => {

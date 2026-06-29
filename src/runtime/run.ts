@@ -14,8 +14,38 @@ import {
   type RunOptions,
 } from '../core/index.js';
 import { currentRuntime, type InvocationRuntime } from './invocation-store.js';
-import { createJobLogger } from './loggers.js';
+import { createHandlerLogger, createJobLogger } from './loggers.js';
 import { newUuid } from './ids.js';
+
+// Concise lifecycle logging (transport-agnostic): emitted through pm.onLog so every
+// log sink (grafana, console, …) gets the legacy-style narrative — `running N jobs`,
+// one `✓/✗ jobName Nms` line per job, then `completed N jobs (M failed)`. Structured
+// detail (status, jobExecutionId) rides in `data`; the observability DB still owns the
+// authoritative rows. Skipped entirely for an empty job list (e.g. probe handlers).
+const plural = (n: number) => (n === 1 ? 'job' : 'jobs');
+
+function emitRunStart(rt: InvocationRuntime, event: DetectedEvent, count: number): void {
+  const { invocation } = rt;
+  createHandlerLogger(
+    { invocationId: invocation.invocationId, correlationId: invocation.correlationId, eventName: event.name, scope: 'handler' },
+    entry => void rt.pluginManager.onLog(entry),
+  ).info(`${event.name} running ${count} ${plural(count)}`);
+}
+
+function emitRunEnd(rt: InvocationRuntime, event: DetectedEvent, executions: JobExecution<any>[]): void {
+  const { invocation } = rt;
+  const sink = (entry: Parameters<typeof rt.pluginManager.onLog>[0]) => void rt.pluginManager.onLog(entry);
+  const correlation = { invocationId: invocation.invocationId, correlationId: invocation.correlationId, eventName: event.name };
+  for (const x of executions) {
+    const icon = x.status === 'completed' ? '✓' : x.status === 'skipped' ? '⊘' : '✗';
+    const suffix = x.error ? ` (${x.error.name})` : '';
+    createHandlerLogger({ ...correlation, jobName: x.jobName, scope: 'job' }, sink)
+      .info(`${icon} ${x.jobName} ${x.durationMs}ms${suffix}`, { jobExecutionId: x.id, status: x.status });
+  }
+  const failed = executions.filter(x => x.status === 'failed' || x.status === 'timed_out').length;
+  createHandlerLogger({ ...correlation, scope: 'handler' }, sink)
+    .info(`${event.name} completed ${executions.length} ${plural(executions.length)}${failed ? ` (${failed} failed)` : ''}`);
+}
 
 const isJobDefinition = (x: unknown): x is JobDefinition =>
   !!x && typeof x === 'object' && (x as { __eventkitJob?: unknown }).__eventkitJob === true;
@@ -50,8 +80,11 @@ export async function run<TResult = unknown>(
   const mode = options?.mode ?? 'parallel';
   const continueOnFailure = options?.continueOnFailure ?? true;
 
+  if (jobs.length > 0) emitRunStart(rt, event, jobs.length);
+
+  let executions: JobExecution<TResult>[];
   if (mode === 'series') {
-    const executions: JobExecution<TResult>[] = [];
+    executions = [];
     let stopped = false;
     for (const def of jobs) {
       if (stopped) {
@@ -64,11 +97,13 @@ export async function run<TResult = unknown>(
       const jobContinue = def.options.continueOnFailure ?? continueOnFailure;
       if (failed && !jobContinue) stopped = true;
     }
-    return executions;
+  } else {
+    // parallel (default): launch all; isolated failures (runOne never rejects).
+    executions = await Promise.all(jobs.map(def => runOne<TResult>(event, def, rt, options)));
   }
 
-  // parallel (default): launch all; isolated failures (runOne never rejects).
-  return Promise.all(jobs.map(def => runOne<TResult>(event, def, rt, options)));
+  if (jobs.length > 0) emitRunEnd(rt, event, executions);
+  return executions;
 }
 
 const describe = (x: unknown): string =>

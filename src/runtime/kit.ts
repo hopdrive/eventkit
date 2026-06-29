@@ -282,6 +282,12 @@ class Kit implements EventKit {
       await this.pm.onEventDetectionEnd(ctx, detectionResult);
 
       if (detected) {
+        // Concise lifecycle parity: one info line per detected event (the executor
+        // logs the per-job + completed lines). Non-detections stay in the obs DB only.
+        createHandlerLogger(
+          { invocationId: invocation.invocationId, correlationId: invocation.correlationId, eventName: asEventName(module.name), scope: 'detection' },
+          entry => void this.pm.onLog(entry),
+        ).info(`${module.name} ⭐ detected`, { durationMs });
         out.push({
           module,
           event: {
