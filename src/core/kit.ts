@@ -27,6 +27,23 @@ export interface HandlerShortCircuit {
 }
 
 /**
+ * The raw HTTP invocation event handed to a `before` pre-check under the HTTP
+ * platform adapters (classic / lambda / background). Loose by design — every field
+ * is optional so the same shape works across Lambda v1, Netlify classic, and local
+ * `netlify dev`. The `netlifyV2Platform` adapter instead receives a Web `Request`;
+ * type that case explicitly via `handler<[Request]>({ before })`.
+ */
+export interface HttpRequestEvent {
+  httpMethod?: string;
+  headers?: Record<string, string | undefined>;
+  body?: string | null;
+  isBase64Encoded?: boolean;
+  queryStringParameters?: Record<string, string | undefined> | null;
+  path?: string;
+  rawUrl?: string;
+}
+
+/**
  * The outcome of one registered event during an invocation. Appears for an event
  * that DETECTED, or for one whose DETECTOR threw (so the crash is visible in the
  * returned payload — observability parity with the legacy runtime, which recorded
@@ -80,8 +97,8 @@ export interface EventKit {
    * A `before` pre-check returns a platform-agnostic `HandlerShortCircuit` to reject
    * (shaped by the adapter's `formatRejection`), or `void` to proceed.
    */
-  handler(opts?: {
-    before?: (...args: unknown[]) => HandlerShortCircuit | void | Promise<HandlerShortCircuit | void>;
+  handler<TArgs extends unknown[] = [HttpRequestEvent, ...unknown[]]>(opts?: {
+    before?: (...args: TArgs) => HandlerShortCircuit | void | Promise<HandlerShortCircuit | void>;
   }): (...args: unknown[]) => unknown;
   /** Manual entry: forward raw platform args (the adapter extracts payload + budget). */
   handle(rawPayloadOrArgs: unknown, request?: RequestContext | unknown): Promise<InvocationResult>;
