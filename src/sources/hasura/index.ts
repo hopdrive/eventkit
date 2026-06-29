@@ -11,7 +11,9 @@
 // stubbed until Phase 2.
 
 import type {
+  DetectorContext,
   DetectorFunction,
+  HandlerContext,
   HandlerFunction,
   DetectedEvent,
   EventKitPlugin,
@@ -27,11 +29,21 @@ import type {
   HasuraHandlerContext,
   HasuraCronContext,
 } from './types.js';
+import { normalizeHasuraEvent, buildHasuraDetectorContext, buildHasuraHandlerContext } from './adapter.js';
 
 export type * from './types.js';
+export {
+  columnChanged,
+  columnAdded,
+  columnRemoved,
+  getOperation,
+  getOldRow,
+  getNewRow,
+  getSession,
+} from './payload.js';
 
 const notImpl = (what: string): never => {
-  throw new NotImplementedError(`${what} — Hasura source runtime lands in Phase 2.`);
+  throw new NotImplementedError(`${what} — hasuraCron source runtime lands in Phase 5.`);
 };
 
 /** The `hasuraEvent` source adapter plus its authoring helpers. */
@@ -73,9 +85,15 @@ export const hasuraEvent: HasuraEventSource = {
   handler(fn) {
     return fn as unknown as HandlerFunction;
   },
-  // Shape-3 capability — Phase 2.
-  normalize(_raw: unknown, _request: RequestContext): EventEnvelope {
-    return notImpl('hasuraEvent.normalize');
+  // Shape-3 capabilities.
+  normalize(raw: unknown, request: RequestContext): EventEnvelope {
+    return normalizeHasuraEvent(raw, request) as EventEnvelope;
+  },
+  buildDetectorContext(envelope: EventEnvelope, base: DetectorContext): HasuraDetectorContext {
+    return buildHasuraDetectorContext(envelope as EventEnvelope<HasuraEventPayload>, base as DetectorContext<HasuraEventPayload>);
+  },
+  buildHandlerContext(envelope: EventEnvelope, base: HandlerContext) {
+    return buildHasuraHandlerContext(envelope as EventEnvelope<HasuraEventPayload>, base as HandlerContext<HasuraEventPayload>);
   },
 };
 

@@ -4,11 +4,12 @@ Source-agnostic business-event execution framework. The successor to
 `@hopdrive/hasura-event-detector` — Hasura becomes one *source adapter* rather than
 the center of the architecture.
 
-> **Status: Phase 1 (core runtime).** The kit detects + runs jobs end to end with an
-> in-memory source. Source/plugin/platform runtimes are still stubbed. Design source
-> of truth: `hasura-event-detector/docs/eventkit-rewrite/` (RFC v0.3.7 + kickoff).
+> **Status: Phase 2 (Hasura source adapter).** The kit detects + runs jobs end to end
+> with the real `hasuraEvent` source. Plugin/platform runtimes are still stubbed.
+> Design source of truth: `hasura-event-detector/docs/eventkit-rewrite/` (RFC v0.3.7 +
+> kickoff).
 
-## What works now (Phases 0–1)
+## What works now (Phases 0–2)
 
 - **Package skeleton** — dual ESM/CJS build, subpath `exports` map, three-tsconfig
   setup, marker `package.json` files, Changesets, and a CI **Netlify-bundle smoke
@@ -22,12 +23,16 @@ the center of the architecture.
   `JobDefinition[]`, `augmentJobContext` merge + ambient tracking token, per-job
   timeout, AbortSignal cancellation, retries). Plugin manager with lazy instantiation,
   registration-order notifications, delta transforms, and capability validation.
-- **Testing** (`@hopdrive/eventkit/testing`) — `fakeSource` + `defineFakeEvent`; 14
-  unit tests.
+- **`hasuraEvent` source** (`@hopdrive/eventkit/sources/hasura`) — `normalize` +
+  `buildDetectorContext` (operation/rows/`columnChanged()`/`manuallyInvoked()`/…) +
+  `buildHandlerContext` (`HasuraHandlerContext`). The `switch (ctx.operation)` detector
+  house style; `appointment.ready` example + tests.
+- **Testing** (`@hopdrive/eventkit/testing`) — `fakeSource`, `defineFakeEvent`,
+  `buildDetectorContextFor`, `buildHandlerContextFor`; 32 unit tests.
 - **Pure utilities**: `serializeError`, `serializeOutput`, `replaceCircularReferences`,
   `job()`, branded-id helpers.
-- **Stubbed until later phases** (throw `NotImplementedError`): the Hasura source
-  runtime (Phase 2), `batchJobs`/`observability` (Phase 3), platform adapters (Phase 4).
+- **Stubbed until later phases** (throw `NotImplementedError`): `hasuraCron` (Phase 5),
+  `batchJobs`/`observability` (Phase 3), platform adapters (Phase 4).
 
 ## Public surface
 

@@ -20,9 +20,14 @@ import { newUuid } from './ids.js';
 const isJobDefinition = (x: unknown): x is JobDefinition =>
   !!x && typeof x === 'object' && (x as { __eventkitJob?: unknown }).__eventkitJob === true;
 
+// `jobs` is `JobDefinition<any>[]`, not `JobDefinition[]`: each job carries its own
+// TInput, so a heterogeneous list needs the bidirectional `any` to be accepted —
+// `JobDefinition<undefined>[]` would reject every typed job, and `<unknown>` fails
+// on parameter contravariance. The ADR-018 brand (`__eventkitJob: true`) still makes
+// a non-job entry (e.g. `false` from `cond && job()`) a compile error regardless.
 export async function run<TResult = unknown>(
   event: DetectedEvent,
-  jobs: JobDefinition[],
+  jobs: JobDefinition<any>[],
   options?: RunOptions,
 ): Promise<JobExecution<TResult>[]> {
   // ADR-018: strict JobDefinition[]. Throw loudly on any non-job entry (e.g. a
