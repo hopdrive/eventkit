@@ -97,7 +97,10 @@ const jsonBody = (result: InvocationResult): string =>
     invocationId: result.invocationId,
     events: result.events.map(e => ({ name: e.name, detected: e.detected, jobs: e.jobs.length })),
     ...(result.timedOut ? { timedOut: true } : {}),
-    ...(result.error ? { error: result.error.message } : {}),
+    // `message` (alongside `error`) makes a framework-error 500 readable by callers that
+    // expect a `{ message }` body — e.g. Hasura Actions (which now use these generic HTTP
+    // platforms, not a dedicated adapter; ADR-026 amended).
+    ...(result.error ? { error: result.error.message, message: result.error.message } : {}),
   });
 
 /**
@@ -206,40 +209,5 @@ export function netlifyV2Platform(config: { maxExecutionMs?: number } = {}): Pla
     },
     // v2 needs a Web Response — a hand-shaped { statusCode } would be a malformed reply.
     formatRejection: (r: HandlerShortCircuit) => new Response(r.body ?? '', { status: r.status, headers: r.headers ?? {} }),
-  };
-}
-
-// ── hasuraActionPlatform — Hasura Actions request/response (§7.2, ADR-026) ────
-// Classic Netlify/Lambda style ({ statusCode, body }). Hasura POSTs the action
-// invocation as JSON and returns the handler's body to the GraphQL client synchronously:
-//   success → 2xx + the module's `resolve` output (the action's declared output type)
-//   error   → 4xx + { message, extensions: { code? } }   (a thrown ActionError/ClientError)
-// A `before`-hook rejection (auth) maps to its status + { message } so Hasura surfaces it.
-const actionResponse = (result: InvocationResult): { statusCode: number; body: string } => {
-  if (result.error) return { statusCode: 500, body: JSON.stringify({ message: result.error.message }) };
-  const r = result.resolved;
-  if (r?.error) return { statusCode: r.error.status ?? 400, body: errorBody(r.error) };
-  if (r?.hasResolved) return { statusCode: 200, body: outputBody(r.output) };
-  // No `resolve` declared — an action must return its output type, so there is nothing
-  // to send. (A fire-and-forget action is unusual; return an empty object as the body.)
-  return { statusCode: 200, body: '{}' };
-};
-
-export function hasuraActionPlatform(): PlatformAdapter {
-  return {
-    name: 'hasura-action-platform',
-    provides: ['platform', 'platform:hasura-action'],
-    detect: () => !!env()['NETLIFY'] || !!env()['AWS_LAMBDA_FUNCTION_NAME'],
-    extractPayload: (event: unknown) => extractHttpBody(event),
-    buildRequest: (event: unknown, context?: LambdaContext): RequestContext => {
-      const req: RequestContext = { meta: requestMeta(event) };
-      const get = nativeCountdown(context);
-      if (get) req.getRemainingTimeMs = get;
-      if (context?.functionName) req.sourceFunction = context.functionName;
-      return req;
-    },
-    formatResponse: (result: InvocationResult) => actionResponse(result),
-    // Hasura reads `message` from a non-2xx body; shape the auth/method short-circuit that way.
-    formatRejection: (r: HandlerShortCircuit) => ({ statusCode: r.status, body: JSON.stringify({ message: r.body ?? 'Unauthorized' }) }),
   };
 }

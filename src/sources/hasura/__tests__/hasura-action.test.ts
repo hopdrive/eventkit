@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createEventKit, defineEvent, job, ActionError, type JobContext } from '../../../index.js';
-import { hasuraActionPlatform } from '../../../platforms/index.js';
+import { netlifyPlatform } from '../../../platforms/index.js';
 import { buildDetectorContextFor, buildHandlerContextFor } from '../../../testing/index.js';
 import { hasuraAction } from '../index.js';
 import type { HasuraActionContext, HasuraActionHandlerContext } from '../types.js';
@@ -12,7 +12,7 @@ const loginPayload = (input: Record<string, unknown> = { email: 'a@b.co', passwo
   request_query: 'mutation { login(email: "a@b.co") { accessToken } }',
 });
 
-// Classic Netlify/Lambda event wrapping the action JSON body (hasuraActionPlatform style).
+// Classic Netlify/Lambda event wrapping the action JSON body (netlifyPlatform style).
 const actionEvent = (payload: unknown) => ({ httpMethod: 'POST', body: JSON.stringify(payload) });
 
 describe('hasuraAction source — payload parse + session extraction (§7.2)', () => {
@@ -34,10 +34,10 @@ describe('hasuraAction source — payload parse + session extraction (§7.2)', (
   });
 });
 
-describe('hasuraActionPlatform — resolve → 2xx; ActionError → 4xx {message,extensions}', () => {
+describe('hasuraAction over the generic netlifyPlatform — resolve → 2xx; ActionError → 4xx {message,extensions}', () => {
   const buildLoginKit = (resolve: HasuraActionSourceResolve) =>
     createEventKit(hasuraAction)
-      .use(hasuraActionPlatform)
+      .use(netlifyPlatform)
       .registerEvents([
         defineEvent({
           name: 'login',
@@ -71,10 +71,10 @@ describe('hasuraActionPlatform — resolve → 2xx; ActionError → 4xx {message
     expect(JSON.parse(res.body)).toEqual({ message: 'invalid credentials', extensions: { code: 'INVALID_CREDENTIALS' } });
   });
 
-  it('a no-resolve (fire-and-forget) action → 200 with an empty body, jobs still run', async () => {
+  it('a no-resolve (fire-and-forget) action → 200 ack, jobs still run', async () => {
     let ran = false;
     const handler = createEventKit(hasuraAction)
-      .use(hasuraActionPlatform)
+      .use(netlifyPlatform)
       .registerEvents([
         defineEvent({
           name: 'ping',
@@ -86,7 +86,7 @@ describe('hasuraActionPlatform — resolve → 2xx; ActionError → 4xx {message
     const res = (await handler(actionEvent({ action: { name: 'ping' }, input: {} }), {})) as { statusCode: number; body: string };
 
     expect(res.statusCode).toBe(200);
-    expect(res.body).toBe('{}');
+    expect(JSON.parse(res.body).ok).toBe(true); // the generic fire-and-forget ack
     expect(ran).toBe(true);
   });
 });
