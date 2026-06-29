@@ -9,7 +9,7 @@ import type { EventName, EventSourceName, InvocationId, CorrelationId } from './
  * first-class (§7). A Hasura DB trigger is `'database'`; a Hasura scheduled
  * trigger is `'cron'` (ADR-023).
  */
-export type EventSourceType = 'database' | 'webhook' | 'cron' | 'application' | 'queue' | 'manual';
+export type EventSourceType = 'database' | 'webhook' | 'cron' | 'action' | 'application' | 'queue' | 'manual';
 
 /**
  * Normalized representation of *what came in*. Source-agnostic: it MUST NOT

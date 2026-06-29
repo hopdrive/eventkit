@@ -9,7 +9,10 @@
 // imperative conditional inclusion (`if (x) jobs.push(...)`) is structurally
 // IMPOSSIBLE — there is nowhere to write it. The branded `JobDefinition` remains a
 // backstop against the one expressible form, `cond && job(...)` inside the array
-// literal (type `false | JobDefinition`), and against non-job entries. ADR-020
+// literal (type `false | JobDefinition`), and against non-job entries.
+//
+// ADR-026: a request/response module adds a module-level `resolve` and `jobs` become
+// optional (a resolve-only module is valid). `resolve` is NOT a job option. ADR-020
 // covers the typed job-context contribution.
 
 import { job, defineEvent } from '../index.js';
@@ -38,14 +41,23 @@ void defineEvent({ name: 'bad.lookalike', detector, jobs: [{ fn: work, name: 'x'
 // @ts-expect-error null is not a JobDefinition
 void defineEvent({ name: 'bad.null', detector, jobs: [null] });
 
-// ── ADR-025 guard: `jobs` is required — a module is not a handler ───────────
-// @ts-expect-error missing the required `jobs` array
-void defineEvent({ name: 'bad.nojobs', detector });
-
 // Note: there is no `handler` field to put an `if`/ternary/`.push` in — conditional
 // job inclusion is impossible by construction, not merely caught by the brand above.
 // A condition lives in the `detector` (a distinct business event) or inside a job
 // body (input-driven, runs every time and may no-op). See ADR-025 §19.1.
+
+// ── ADR-026: a request/response module compiles with `resolve` and NO `jobs` ──
+void defineEvent({ name: 'ok.resolve', detector, resolve: () => ({ accessToken: 't', userId: 1 }) });
+
+// ── ADR-026: `resolve` + optional `jobs` (fire-and-forget side effects) compiles ──
+void defineEvent({ name: 'ok.resolve.jobs', detector, resolve: () => 'ok', jobs: [job(work)] });
+
+// ── ADR-026 guard: `resolve` is MODULE-level, not a per-job option ──────────
+// @ts-expect-error `resolve` is not a JobOptions field — it belongs on the module
+void job(work, { resolve: () => 'nope' });
+
+// (A module with neither `jobs` nor `resolve` is a do-nothing config error — caught at
+// REGISTER time, not by the type, now that both are optional. See runtime tests.)
 
 // ── ADR-020: a valid job-context contribution type-checks ───────────────────
 const validPlugin: EventKitPlugin = {

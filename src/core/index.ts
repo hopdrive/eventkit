@@ -36,7 +36,7 @@ export type { LogLevel, LogEntry, DetectorLogger, HandlerLogger, JobLogger } fro
 
 // ── Errors + serialization ──────────────────────────────────────────────────
 export type { SerializedError, ErrorContext, ErrorPhase } from './errors.js';
-export { serializeError, serializeOutput, replaceCircularReferences } from './errors.js';
+export { serializeError, serializeOutput, replaceCircularReferences, ClientError, ActionError } from './errors.js';
 
 // ── Envelope + detected event ────────────────────────────────────────────────
 export type { EventSourceType, EventEnvelope, DetectedEvent } from './envelope.js';
@@ -72,6 +72,7 @@ export type {
   EventModuleMetadata,
   DetectorFunction,
   PrepareFunction,
+  ResolveFunction,
 } from './event-module.js';
 export { defineEvent } from './event-module.js';
 
@@ -87,4 +88,4 @@ export type {
 } from './plugin.js';
 
 // ── Kit / entry point (types only; createEventKit + run are runtime, re-exported from the root) ──
-export type { EventKit, InvocationResult, EventOutcome, PluginFactory, HandlerShortCircuit, HttpRequestEvent } from './kit.js';
+export type { EventKit, InvocationResult, EventOutcome, ResolvedOutcome, ResolvedError, PluginFactory, HandlerShortCircuit, HttpRequestEvent } from './kit.js';

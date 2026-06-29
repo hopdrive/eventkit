@@ -2,9 +2,10 @@
 // Hasura source types (§7, §8, §9.2, ADR-023)
 // =============================================================================
 // Source-specific types live with the source, not in /core, so core stays
-// domain- and transport-agnostic (§3.3). Two Hasura-origin adapters:
-//   hasuraEvent — DB event triggers   (sourceType: 'database')
-//   hasuraCron  — scheduled triggers  (sourceType: 'cron')
+// domain- and transport-agnostic (§3.3). Three Hasura-origin adapters:
+//   hasuraEvent  — DB event triggers     (sourceType: 'database')
+//   hasuraCron   — scheduled triggers    (sourceType: 'cron')
+//   hasuraAction — Actions (req/response) (sourceType: 'action', §7.2/ADR-026)
 
 import type { DetectorContext, HandlerContext } from '../../core/index.js';
 
@@ -86,6 +87,47 @@ export interface HasuraHandlerContext<
   userId: string | null;
   userEmail: string | null;
   receivedAt: Date;
+}
+
+// ── hasuraAction (request/response — §7.2, ADR-026) ──────────────────────────
+
+/** The raw payload a Hasura Action delivers (§7.2 — verbatim shape). */
+export interface HasuraActionPayload<TInput = Record<string, unknown>> {
+  action: { name: string };
+  input: TInput;
+  /** ALL keys lowercase, e.g. `x-hasura-role`, `x-hasura-user-id`. */
+  session_variables?: HasuraSessionVariables | null;
+  /** The originating GraphQL query/mutation. */
+  request_query?: string;
+}
+
+/** The session identity extracted from the lowercase `x-hasura-*` keys. */
+export interface HasuraActionSession {
+  role: string | null;
+  userId: string | null;
+  email: string | null;
+}
+
+/** What a `hasuraAction.detector` receives — typically matches `ctx.actionName`. */
+export interface HasuraActionContext<
+  TInput = Record<string, unknown>,
+  TMeta extends Record<string, unknown> = Record<string, unknown>,
+> extends DetectorContext<HasuraActionPayload<TInput>, TMeta> {
+  actionName: string;
+  input: TInput;
+  sessionVariables: HasuraActionSession;
+  requestQuery: string | undefined;
+}
+
+/** What a `hasuraAction.prepare`/`.resolve` receives — the action args + identity. */
+export interface HasuraActionHandlerContext<
+  TInput = Record<string, unknown>,
+  TMeta extends Record<string, unknown> = Record<string, unknown>,
+> extends HandlerContext<HasuraActionPayload<TInput>, TMeta> {
+  actionName: string;
+  input: TInput;
+  sessionVariables: HasuraActionSession;
+  requestQuery: string | undefined;
 }
 
 /** What a `hasuraCron.detector` receives — schedule + payload, no rows. */

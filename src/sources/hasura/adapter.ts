@@ -11,6 +11,10 @@ import {
 } from '../../core/index.js';
 import type { SourceMeta } from '../../core/index.js';
 import type {
+  HasuraActionContext,
+  HasuraActionHandlerContext,
+  HasuraActionPayload,
+  HasuraActionSession,
   HasuraCronContext,
   HasuraCronHandlerContext,
   HasuraCronPayload,
@@ -165,4 +169,68 @@ export function buildHasuraCronHandlerContext(
     scheduledAt: payload?.scheduled_time ? new Date(payload.scheduled_time) : envelope.receivedAt,
     payload: payload?.payload ?? {},
   };
+}
+
+// ── hasuraAction (request/response — §7.2, ADR-026) ──────────────────────────
+
+/** Session identity from the lowercase `x-hasura-*` keys (null when absent). */
+function actionSession(payload: HasuraActionPayload | undefined): HasuraActionSession {
+  const s = (payload?.session_variables ?? {}) as Record<string, string | undefined>;
+  return {
+    role: s['x-hasura-role'] ?? null,
+    userId: s['x-hasura-user-id'] ?? null,
+    email: s['x-hasura-user-email'] ?? null,
+  };
+}
+
+const actionFields = (envelope: EventEnvelope<HasuraActionPayload>) => {
+  const p = envelope.payload;
+  return {
+    actionName: p?.action?.name ?? '',
+    input: (p?.input ?? {}) as Record<string, unknown>,
+    sessionVariables: actionSession(p),
+    requestQuery: p?.request_query,
+  };
+};
+
+/**
+ * Hasura Action payload (`{ action, input, session_variables, request_query }`) →
+ * EventEnvelope. `sourceType: 'action'`. Correlation from the request or generated.
+ * Tolerant of malformed input (never throws — the detector decides).
+ */
+export function normalizeHasuraAction(raw: unknown, request: RequestContext): EventEnvelope<HasuraActionPayload> {
+  const payload = (raw ?? {}) as HasuraActionPayload;
+  const correlationId = asCorrelationId(request.correlationId ?? randomId());
+  const session = (payload?.session_variables ?? {}) as Record<string, string | undefined>;
+  const meta: SourceMeta = {};
+  if (payload?.action?.name) meta.sourceFunction = payload.action.name; // the action name identifies the function
+  if (session['x-hasura-user-email']) meta.sourceUserEmail = session['x-hasura-user-email'];
+  if (session['x-hasura-role']) meta.sourceUserRole = session['x-hasura-role'];
+
+  return {
+    id: randomId(),
+    source: asEventSourceName('hasura-action'),
+    sourceType: 'action',
+    receivedAt: new Date(),
+    correlationId,
+    payload,
+    meta: meta as Record<string, unknown>,
+    raw,
+  };
+}
+
+/** Build the action detector context (full ctx — actionName + input + session). */
+export function buildHasuraActionDetectorContext(
+  envelope: EventEnvelope<HasuraActionPayload>,
+  base: DetectorContext<HasuraActionPayload>,
+): HasuraActionContext {
+  return { ...base, ...actionFields(envelope) } as HasuraActionContext;
+}
+
+/** Build the action handler-context EXTENSION (data only; runtime merges onto base). */
+export function buildHasuraActionHandlerContext(
+  envelope: EventEnvelope<HasuraActionPayload>,
+  _base: HandlerContext<HasuraActionPayload>,
+): Omit<HasuraActionHandlerContext, keyof HandlerContext<HasuraActionPayload>> {
+  return actionFields(envelope);
 }

@@ -1,0 +1,922 @@
+
+<title>EventKit Conversation Audit — Expected vs Actual RFC</title>
+<meta name="description" content="Exhaustive analysis of what the ChatGPT planning conversation captured versus what survived into the EventKit RFC — with quotes, line numbers, and severity.">
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0F1117;
+    --surface:   #181C27;
+    --surface2:  #1E2333;
+    --border:    #252A3A;
+    --border2:   #2E3550;
+    --muted:     #6A7090;
+    --body:      #C0C6DC;
+    --heading:   #E8EAF4;
+    --accent:    #4EEBC8;
+    --accent-dim:#2A7A68;
+    --amber:     #E8A94A;
+    --amber-dim: #6B4A14;
+    --danger:    #E85E5E;
+    --danger-dim:#6B1A1A;
+    --info:      #6B9FE8;
+    --info-dim:  #1A3A6B;
+    --purple:    #A87FE8;
+    --purple-dim:#3A1A6B;
+
+    --mono: ui-monospace, 'Cascadia Code', 'Fira Code', 'SF Mono', 'Consolas', monospace;
+    --sans: system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+
+    --radius: 4px;
+    --col: 780px;
+  }
+
+  html {
+    background: var(--bg);
+    color: var(--body);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    max-width: var(--col);
+    margin: 0 auto;
+    padding: 48px 24px 96px;
+  }
+
+  /* ── Header ─────────────────────────────────────────── */
+  .doc-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 32px;
+    margin-bottom: 48px;
+  }
+
+  .doc-eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .doc-eyebrow::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--accent-dim);
+    opacity: 0.5;
+  }
+
+  h1 {
+    font-size: clamp(22px, 4vw, 30px);
+    font-weight: 700;
+    color: var(--heading);
+    line-height: 1.25;
+    text-wrap: balance;
+    margin-bottom: 16px;
+    letter-spacing: -0.02em;
+  }
+
+  .doc-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+
+  .doc-meta span { display: flex; align-items: center; gap: 5px; }
+
+  /* ── Section headers ─────────────────────────────────── */
+  .section {
+    margin-bottom: 56px;
+  }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+  }
+
+  .section-label.captured  { color: var(--accent);  }
+  .section-label.captured::after { background: var(--accent-dim); }
+  .section-label.lost      { color: var(--amber);   }
+  .section-label.lost::after { background: var(--amber-dim); }
+  .section-label.different { color: var(--info);    }
+  .section-label.different::after { background: var(--info-dim); }
+  .section-label.rejected  { color: var(--purple);  }
+  .section-label.rejected::after { background: var(--purple-dim); }
+  .section-label.risks     { color: var(--danger);  }
+  .section-label.risks::after { background: var(--danger-dim); }
+
+  h2 {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--heading);
+    line-height: 1.3;
+    text-wrap: balance;
+    margin-bottom: 20px;
+    letter-spacing: -0.01em;
+  }
+
+  h3 {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--heading);
+    letter-spacing: 0.01em;
+    margin-bottom: 10px;
+    margin-top: 30px;
+  }
+
+  h3:first-child { margin-top: 0; }
+
+  p { margin-bottom: 14px; }
+  p:last-child { margin-bottom: 0; }
+
+  /* ── Finding cards ───────────────────────────────────── */
+  .findings { display: flex; flex-direction: column; gap: 2px; }
+
+  .finding {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .finding-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px 18px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .finding-head:hover { background: var(--surface2); }
+
+  .finding-num {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--muted);
+    padding-top: 3px;
+    min-width: 28px;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+
+  .finding-title {
+    flex: 1;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--heading);
+    line-height: 1.4;
+  }
+
+  .finding-badge {
+    flex-shrink: 0;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 3px;
+    align-self: flex-start;
+    margin-top: 1px;
+  }
+
+  .badge-critical { background: var(--danger-dim); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent); }
+  .badge-notable  { background: var(--amber-dim);  color: var(--amber);  border: 1px solid color-mix(in srgb, var(--amber) 30%, transparent); }
+  .badge-minor    { background: var(--info-dim);   color: var(--info);   border: 1px solid color-mix(in srgb, var(--info) 30%, transparent); }
+  .badge-captured { background: var(--accent-dim); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+  .badge-rejected { background: var(--purple-dim); color: var(--purple); border: 1px solid color-mix(in srgb, var(--purple) 30%, transparent); }
+
+  .finding-body {
+    padding: 0 18px 20px 58px;
+    border-top: 1px solid var(--border);
+  }
+
+  .finding-body p {
+    margin-top: 14px;
+    font-size: 14px;
+    color: var(--body);
+  }
+
+  /* ── Quote blocks ────────────────────────────────────── */
+  .quote {
+    border-left: 3px solid var(--accent);
+    background: color-mix(in srgb, var(--accent) 5%, var(--surface2));
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 3px 3px 0;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: var(--body);
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .quote-amber {
+    border-left-color: var(--amber);
+    background: color-mix(in srgb, var(--amber) 5%, var(--surface2));
+  }
+
+  .quote-info {
+    border-left-color: var(--info);
+    background: color-mix(in srgb, var(--info) 5%, var(--surface2));
+  }
+
+  .quote-danger {
+    border-left-color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 5%, var(--surface2));
+  }
+
+  .quote-meta {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--muted);
+    margin-bottom: 4px;
+    letter-spacing: 0.04em;
+  }
+
+  /* ── Inline code ─────────────────────────────────────── */
+  code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: var(--accent);
+  }
+
+  /* ── Separator ───────────────────────────────────────── */
+  .sep {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 48px 0;
+  }
+
+  /* ── TOC ─────────────────────────────────────────────── */
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    margin-bottom: 48px;
+  }
+
+  .toc-title {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+
+  .toc ol {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .toc li { display: flex; align-items: baseline; gap: 8px; }
+
+  .toc-num {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    min-width: 20px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .toc a {
+    color: var(--body);
+    text-decoration: none;
+    font-size: 13.5px;
+    line-height: 1.4;
+  }
+
+  .toc a:hover { color: var(--accent); }
+
+  .toc-tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  /* ── Summary bar ─────────────────────────────────────── */
+  .summary-bar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 2px;
+    margin-bottom: 40px;
+  }
+
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 16px 16px 14px;
+    border-radius: var(--radius);
+    text-align: center;
+  }
+
+  .stat-num {
+    font-family: var(--mono);
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1;
+    margin-bottom: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stat-label {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .stat.s-captured .stat-num { color: var(--accent); }
+  .stat.s-lost     .stat-num { color: var(--amber); }
+  .stat.s-diff     .stat-num { color: var(--info); }
+  .stat.s-rejected .stat-num { color: var(--purple); }
+  .stat.s-risks    .stat-num { color: var(--danger); }
+
+  /* ── Minimal expanding details ───────────────────────── */
+  details summary { list-style: none; }
+  details summary::-webkit-details-marker { display: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+
+  @media (max-width: 600px) {
+    body { padding: 28px 16px 64px; }
+    h1 { font-size: 20px; }
+    .summary-bar { grid-template-columns: repeat(3, 1fr); }
+  }
+</style>
+
+<!-- HEADER -->
+<header class="doc-header">
+  <div class="doc-eyebrow">EventKit RFC Audit</div>
+  <h1>Conversation vs RFC: What Survived, What Didn't, What Changed</h1>
+  <div class="doc-meta">
+    <span>Source conversation — 71 messages, Jun 19–26 2026</span>
+    <span>RFC — EventKit Architecture RFC (living draft v0.1)</span>
+    <span>Audited — 2026-06-28</span>
+  </div>
+</header>
+
+<!-- SUMMARY BAR -->
+<div class="summary-bar">
+  <div class="stat s-captured"><div class="stat-num">8</div><div class="stat-label">Captured in RFC</div></div>
+  <div class="stat s-lost"><div class="stat-num">9</div><div class="stat-label">Lost / under-spec'd</div></div>
+  <div class="stat s-diff"><div class="stat-num">5</div><div class="stat-label">Decided differently</div></div>
+  <div class="stat s-rejected"><div class="stat-num">4</div><div class="stat-label">Explicitly rejected</div></div>
+  <div class="stat s-risks"><div class="stat-num">6</div><div class="stat-label">Risks RFC ignores</div></div>
+</div>
+
+<!-- TOC -->
+<nav class="toc" aria-label="Sections">
+  <div class="toc-title">Contents</div>
+  <ol>
+    <li><span class="toc-num">1</span><a href="#s-captured">Concepts captured in RFC</a></li>
+    <li><span class="toc-num">2</span><a href="#s-lost">Concepts discussed but lost or under-specified</a></li>
+    <li><span class="toc-num">3</span><a href="#s-different">Decisions made differently in conversation vs RFC</a></li>
+    <li><span class="toc-num">4</span><a href="#s-rejected">Explicitly rejected ideas</a></li>
+    <li><span class="toc-num">5</span><a href="#s-risks">Notable concerns and risks the RFC ignores</a></li>
+  </ol>
+</nav>
+
+<!-- SECTION 1: CAPTURED -->
+<section class="section" id="s-captured">
+  <div class="section-label captured">Section 01</div>
+  <h2>Concepts Captured in RFC</h2>
+  <p style="font-size:14px; color:var(--muted); margin-bottom:24px;">These ideas from the conversation are clearly present in the RFC. Noted briefly — no gaps to fill here.</p>
+
+  <div class="findings">
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">01</div>
+        <div class="finding-title">Three-layer model: Expected Flow / Observed Flow / Compare Mode</div>
+        <div class="finding-badge badge-captured">Captured</div>
+      </div>
+      <div class="finding-body">
+        <p>The conversation's central insight at line 1504–1515 — three named layers with the color-coded UI semantics (green/gray/yellow/red/purple) — made it fully into RFC §14 and §16. The guiding principle "Expected Flow is the contract. Observed Flow is the evidence. Compare Mode is the truth-finding layer" appears verbatim in both (conversation ~line 2474, RFC §14).</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">02</div>
+        <div class="finding-title">Flow Manifests as source-controlled YAML contracts</div>
+        <div class="finding-badge badge-captured">Captured</div>
+      </div>
+      <div class="finding-body">
+        <p>The YAML schema (id, name, source, nodes with id/kind/eventName/jobName/required/condition, edges) was sketched at line 1534–1568 and refined in the message-68 design proposal at line 1860–1902. RFC §15 reproduces this faithfully including the TypeScript type shapes for <code>FlowManifest</code>, <code>FlowNode</code>, <code>FlowEdge</code>.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">03</div>
+        <div class="finding-title">Invocation → Event → Job observability hierarchy</div>
+        <div class="finding-badge badge-captured">Captured</div>
+      </div>
+      <div class="finding-body">
+        <p>Described in the conversation at line 1496 ("invocation → event executions → job executions → logs") and fully catalogued in the message-68 design proposal at lines 2038–2079. RFC §13 reproduces the three record types with their field lists.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">04</div>
+        <div class="finding-title">Runtime matching metadata: flowId, expectedNodeId, matchConfidence</div>
+        <div class="finding-badge badge-captured">Captured</div>
+      </div>
+      <div class="finding-body">
+        <p>Defined at conversation lines 2088–2093 with the <code>exact | inferred | unmatched</code> enum. RFC §13 reproduces this exactly.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">05</div>
+        <div class="finding-title">Matcher priority order (7 levels)</div>
+        <div class="finding-badge badge-captured">Captured</div>
+      </div>
+      <div class="finding-body">
+        <p>Priority order at conversation lines 2209–2215. RFC §14 reproduces the same seven-level priority list word-for-word.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">06</div>
+        <div class="finding-title">Compare Mode classification vocabulary</div>
+        <div class="finding-badge badge-captured">Captured</div>
+      </div>
+      <div class="finding-body">
+        <p>Classifications defined in the design proposal (lines 2221–2295) including <code>expected_missing</code>, <code>optional_not_taken</code>, <code>condition_not_met</code>, <code>unexpected_observed</code>, <code>out_of_order</code>, <code>extra_invocation_chain</code>. RFC §14 reproduces all. <code>retrying</code>, <code>timed_out</code>, <code>cancelled</code> added in RFC §16 node-states list.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">07</div>
+        <div class="finding-title">Machine-readable console APIs</div>
+        <div class="finding-badge badge-captured">Captured</div>
+      </div>
+      <div class="finding-body">
+        <p>Defined at conversation lines 2452–2454 (<code>GET /flows/:flowId</code>, <code>GET /observations/:invocationId</code>, <code>GET /compare/:flowId/:invocationId</code>). RFC §16 reproduces these endpoints exactly.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">08</div>
+        <div class="finding-title">CI validation with three strictness levels and triggered paths</div>
+        <div class="finding-badge badge-captured">Captured</div>
+      </div>
+      <div class="finding-body">
+        <p>Conversation lines 2298–2382 define the warn/strict/release levels, the trigger paths, and the generated artifact list. RFC §21 and §8 of the conversation design proposal reproduce this faithfully.</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- SECTION 2: LOST / UNDER-SPECIFIED -->
+<section class="section" id="s-lost">
+  <div class="section-label lost">Section 02</div>
+  <h2>Concepts Discussed but Lost or Under-Specified in RFC</h2>
+  <p style="font-size:14px; color:var(--muted); margin-bottom:24px;">These were discussed with meaningful detail in the conversation and did not fully survive the translation to the RFC. Quoted with approximate line numbers from the source file.</p>
+
+  <div class="findings">
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">01</div>
+        <div class="finding-title">ObservabilityPlugin transport: 'graphql' — the existing implementation detail and its performance concern</div>
+        <div class="finding-badge badge-critical">Critical</div>
+      </div>
+      <div class="finding-body">
+        <p>At conversation line 1496, the assistant notes the existing observability plugin "already tracks invocations, detected events, handlers, job executions, correlation IDs, durations, errors, and job results" and at line 1579 confirms the data model is already working with <code>source_job_id</code> for chained flows. The conversation references actual filecite links to the existing ObservabilityPlugin code — meaning <strong>the existing plugin already uses <code>transport: 'graphql'</code> and makes synchronous per-job GraphQL writes</strong>.</p>
+        <div class="quote-meta">conversation ~line 1496, 1579</div>
+        <div class="quote quote-amber">"Its data model already mirrors the runtime execution chain: invocation → event executions → job executions → logs."
+"Your data model already has the right relationship for chained flows: a job execution can trigger another invocation via source_job_id."</div>
+        <p>The RFC (§13) specifies what the observability plugin SHOULD capture, but says <strong>nothing</strong> about the current transport mechanism, whether synchronous GraphQL writes on the hot path are acceptable, or what the migration path looks like from the existing implementation. The field <code>transport: 'graphql'</code> and its hot-path write cost are completely absent from the RFC.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">02</div>
+        <div class="finding-title">Buffering / batching vs. synchronous writes — the explicit performance mitigation discussed</div>
+        <div class="finding-badge badge-critical">Critical</div>
+      </div>
+      <div class="finding-body">
+        <p>The conversation design proposal at lines 2086–2096 states "Runtime execution must not fail because no Flow Manifest exists" and the message-68 design proposal for the observability plugin recommends the plugin operate as a lifecycle observer that <em>buffers and flushes</em>. The conversation at line 2028 specifies "Observability should capture runtime execution using the EventKit lifecycle model" — not: "Observability should block on synchronous writes per job."</p>
+        <div class="quote-meta">conversation ~line 1592, RFC §11</div>
+        <div class="quote quote-amber">"Plugins SHOULD avoid long blocking work inside hot lifecycle hooks. If a plugin needs to persist large payloads, send network requests, or perform expensive computation, it should batch, buffer, or defer that work where possible and flush at invocation end or shutdown."</div>
+        <p>The RFC's §11 does include this guidance for plugins in general. <strong>But the RFC never explicitly calls out the observability plugin's existing synchronous-GraphQL pattern as the specific concern this guidance is meant to address.</strong> An implementer reading §13 alone has no visibility that the current implementation does synchronous per-job GraphQL writes and that buffering is the required mitigation. The RFC should name this tension explicitly.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <invoke name="dummy"/>
+      <div class="finding-head">
+        <div class="finding-num">03</div>
+        <div class="finding-title">Observability plugin failure must not block business execution — stated only in the non-goals, not in the plugin spec</div>
+        <div class="finding-badge badge-critical">Critical</div>
+      </div>
+      <div class="finding-body">
+        <p>The conversation design proposal at line 2296 is unambiguous: "EventKit should not block runtime execution because of flow differences. These are observability and validation concerns." The same idea appears earlier in the assistant's message about plugin failures at conversation line 563: "A plugin failure should be recorded and surfaced, but the framework should define which hooks are allowed to fail the invocation and which hooks are best-effort."</p>
+        <div class="quote-meta">conversation ~line 563, design proposal ~line 2296</div>
+        <div class="quote quote-amber">"Observability write failures, for example, should usually not prevent business execution unless the application explicitly configures strict behavior."</div>
+        <p>The RFC's §2.3 non-goals mentions this for flow comparison, but §11 (Plugin Architecture) and §13 (Observability Plugin) <strong>never state</strong> that the observability plugin is classified as best-effort, that write failures should be swallowed and logged rather than re-thrown, or that there is a configurable strict mode. An implementer building the plugin hooks has no normative guidance on exception handling behavior. This is one of the most operationally dangerous gaps.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">04</div>
+        <div class="finding-title">Loop prevention / tracking tokens / detecting the system's own writes</div>
+        <div class="finding-badge badge-critical">Critical</div>
+      </div>
+      <div class="finding-body">
+        <p>The existing hasura-event-detector has a tracking token / <code>updated_by</code> provenance mechanism to prevent the system from reacting to its own database writes and entering infinite loops. The conversation references this indirectly through the filecite links to the existing implementation and via the field <code>tracking token</code> appearing in both the invocation record spec and the machine-readable API surface at line 2044 and in the conversation's invocation field list.</p>
+        <div class="quote-meta">conversation design proposal ~line 2044</div>
+        <div class="quote quote-amber">Invocation Records should include:
+— tracking token
+— source job ID if invocation was triggered by a previous job</div>
+        <p>The RFC §13 lists <code>tracking token</code> as a field to capture in invocation records. But neither the RFC's observability section, source adapter section, nor the migration section ever addresses <strong>how loop prevention actually works</strong>: how the tracking token is propagated when a job writes to the DB, how the Hasura adapter reads and checks it, and how the system avoids reacting to its own writes. This is a critical operational correctness concern that the conversation surfaced through the source code references but the RFC reduced to a single field name.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">05</div>
+        <div class="finding-title">How chained invocations are correlated — source_job_id threading end-to-end</div>
+        <div class="finding-badge badge-notable">Notable</div>
+      </div>
+      <div class="finding-body">
+        <p>The conversation at line 1579 makes a specific point about cross-invocation correlation using <code>source_job_id</code>: a job triggers another DB write → Hasura fires a new invocation → that invocation records its <code>source_job_id</code> linking back to the originating job execution. This makes cross-invocation cascade graphs possible in the viewer.</p>
+        <div class="quote-meta">conversation ~line 1579</div>
+        <div class="quote">"Your data model already has the right relationship for chained flows: a job execution can trigger another invocation via source_job_id. That is important because it lets the viewer show cross-invocation cascades, not just one handler call."</div>
+        <p>The RFC §13 lists <code>source job ID when an invocation was triggered by a previous job</code> in the invocation record fields. But nowhere in the RFC is the <strong>threading mechanism explained</strong>: who writes the source_job_id, when (before or after the job executes), whether it's injected automatically by the runtime or manually set by job code, or how the console stitches chains together for rendering. The conversation treated this as a load-bearing design detail; the RFC treats it as a field name.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">06</div>
+        <div class="finding-title">Generated flow manifests vs. hand-authored — the hybrid model and CI enforcement</div>
+        <div class="finding-badge badge-notable">Notable</div>
+      </div>
+      <div class="finding-body">
+        <p>The conversation at lines 1582–1603 explicitly distinguishes generated structure (facts that can be derived from code: Hasura trigger name, handler path, event module names, job function names, package imports) from declared manifest content (business meaning: required/optional status, conditions, terminal criteria, ownership). The rule articulated at line 1939: "The manifest describes meaning. The generator verifies structure."</p>
+        <div class="quote-meta">conversation ~line 1582</div>
+        <div class="quote">"Use generated structure for facts:
+— Hasura trigger name, watched table, trigger operation, handler/function path, event module names, job function names, package imports
+
+Use declared flow manifests for business meaning:
+— this is the 'mobile service dispatch' flow, these branches are optional,
+— this job is expected only when customer notifications are enabled,
+— this path terminates when status is dispatched, this failure is retryable, this job is safety critical"</div>
+        <p>The RFC §15 carries the "manifest describes meaning, generator verifies structure" rule. But it <strong>never describes how the generator works</strong>: what tool runs it, what inputs it consumes (Hasura metadata YAML? event module exports? package.json graphs?), what outputs it produces, or when it runs in CI. The distinction exists in principle in the RFC but the generation pipeline is entirely unspecified.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">07</div>
+        <div class="finding-title">Redaction / PII / large-payload handling — granularity of decisions</div>
+        <div class="finding-badge badge-notable">Notable</div>
+      </div>
+      <div class="finding-body">
+        <p>The conversation's design proposal (message 68, around lines 2038–2050) specifies that invocation records include a <em>source payload reference</em> (not the full payload), implying a reference-vs-inline decision. The RFC §13 mentions this: "The plugin SHOULD support payload redaction and payload references. Full raw payloads may contain sensitive data or large objects."</p>
+        <div class="quote-meta">conversation design proposal ~line 2044</div>
+        <div class="quote">"source payload reference" (not "source payload")</div>
+        <p>But the conversation's earlier context (the Airbnb rule at line 728: "If a diagram cannot be regenerated, it is untrusted") plus the Stripe-style event-as-product framing implicitly raised the question: should every observability record be queryable without ever needing to re-fetch the original payload? The RFC never specifies <strong>what is stored inline vs. by reference</strong>, what the reference format is (S3 key? DB row ID? content hash?), or how the console renders redacted fields. For an observability plugin dealing with GDPR-sensitive carrier data, this needs more than a SHOULD.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">08</div>
+        <div class="finding-title">Stable node IDs: file paths explicitly rejected as identifiers</div>
+        <div class="finding-badge badge-notable">Notable</div>
+      </div>
+      <div class="finding-body">
+        <p>The conversation design proposal at lines 2199–2205 explicitly called out file paths as unstable:</p>
+        <div class="quote-meta">conversation design proposal ~line 2199</div>
+        <div class="quote">"Do not use file paths alone as stable node IDs. File paths can change during refactors. Prefer semantic names such as event name, job name, source trigger, or exported metadata."</div>
+        <p>The RFC §15 carries the stable-ID node naming convention (<code>node:&lt;flowId&gt;:&lt;kind&gt;:&lt;semanticName&gt;</code>) but <strong>does not include the anti-pattern warning about file paths</strong>. This is the kind of nuance an implementer will discover painfully after the first refactor breaks all observability links.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">09</div>
+        <div class="finding-title">Optional metadata hints on event modules and job exports for improved matching</div>
+        <div class="finding-badge badge-minor">Minor</div>
+      </div>
+      <div class="finding-body">
+        <p>The conversation design proposal at lines 2005–2023 described optional <code>metadata</code> exports from event modules and jobs to improve matcher accuracy:</p>
+        <div class="quote-meta">conversation design proposal ~lines 2007–2023</div>
+        <div class="quote">export const metadata = {
+  flowHints: ["mobile-service-dispatch"],
+  eventName: "mobility.run.dispatch.requested",
+};
+
+export const jobMetadata = {
+  name: "sendDriverPushNotification",
+  sideEffect: "push-notification",
+  retryable: true,
+};</div>
+        <p>The RFC §18 mentions <code>metadata</code> in the EventModule registration config as an optional field that "may include description, tags, flow hints, owner, deprecated status, and related documentation." But the specific pattern of exporting metadata from within the event module file (so the generator can introspect it statically) is not preserved. The RFC's framing is registration-time metadata, not module-level export metadata. These are different patterns with different static-analysis implications.</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- SECTION 3: DIFFERENT -->
+<section class="section" id="s-different">
+  <div class="section-label different">Section 03</div>
+  <h2>Decisions Made Differently in Conversation vs RFC</h2>
+
+  <div class="findings">
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">01</div>
+        <div class="finding-title">Confidence in the matcher: "buildable" in conversation, assumed solved in RFC</div>
+        <div class="finding-badge badge-notable">Notable</div>
+      </div>
+      <div class="finding-body">
+        <p>The conversation treated the matcher as something to be proven incrementally. At lines 1642–1652, the recommended path was: "Add flowId and expectedNodeId concepts. Create one expected flow manifest for a high-value flow. Add a matcher that maps observability records onto expected nodes. Do not try to model the whole platform first."</p>
+        <div class="quote-meta">conversation ~line 1652</div>
+        <div class="quote">"Do not try to model the whole platform first. Pick one flow and prove the loop."</div>
+        <p>The RFC presents the matcher's seven-level priority order, the full classification taxonomy, and the summary format as settled design. <strong>The conversation's acknowledged uncertainty about whether this is buildable in practice is completely absent from the RFC.</strong> The RFC reads as if Compare Mode is already solved, whereas the conversation treated it as a hypothesis to validate.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">02</div>
+        <div class="finding-title">Flow Manifests: SHOULD in RFC vs. clearly core-path in conversation</div>
+        <div class="finding-badge badge-notable">Notable</div>
+      </div>
+      <div class="finding-body">
+        <p>In the conversation at lines 1494–1496, flow manifests were positioned as the natural next step from what's already built: "So the natural next step is not a separate tool. It is: Expected vs actual event flow viewer." The conversation treated this as the primary product direction after the basic observability plumbing works.</p>
+        <div class="quote-meta">RFC §2.1</div>
+        <div class="quote quote-info">EventKit SHOULD support Flow Manifests as architecture-as-code artifacts.
+EventKit SHOULD provide a Console capable of viewing Expected Flow, Observed Flow, and Compare Mode.</div>
+        <p>The RFC downgrades both to SHOULD under Secondary Goals (§2.1), making them optional. The conversation positioned them as the <em>point</em> of the whole effort — the architectural insight that differentiates this from plain observability. The softening to SHOULD may be a pragmatic RFC choice, but it could lead future readers to deprioritize what the conversation considered the killer feature.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">03</div>
+        <div class="finding-title">Console's role: "interactive architecture explorer" vs. "observability viewer evolving"</div>
+        <div class="finding-badge badge-notable">Notable</div>
+      </div>
+      <div class="finding-body">
+        <p>In the conversation at line 1783: "Rather than replacing it, the console should become the interactive architecture explorer for the entire platform." The conversation frames the console as an architecture product, not an engineering debug tool.</p>
+        <div class="quote-meta">conversation ~line 1783</div>
+        <div class="quote">"The existing React Flow visualization in the Observability console is already well suited for this evolution. Rather than replacing it, the console should become the interactive architecture explorer for the entire platform."</div>
+        <p>The RFC §16 says the Console "should evolve from an observability viewer into an architecture explorer." That's the right direction but the phrasing "evolve from" subtly implies a migration rather than a re-framing of the product's identity. The conversation was making a bolder claim: the console <em>is</em> the architecture platform, not a debug tool that gains some architecture features.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">04</div>
+        <div class="finding-title">Observability plugin storage schema: conversation implies Hasura/GraphQL tables, RFC is storage-agnostic</div>
+        <div class="finding-badge badge-minor">Minor</div>
+      </div>
+      <div class="finding-body">
+        <p>The conversation references the existing plugin via filecite links to the actual implementation (using <code>transport: 'graphql'</code>). When the conversation says "observability data is already working" it means it's working against Hasura-backed tables via GraphQL mutations. The conversation design proposal specifies the invocation/event/job record fields assuming they map to database tables.</p>
+        <div class="quote-meta">RFC §13</div>
+        <div class="quote quote-info">"The plugin SHOULD provide a stable storage schema that supports the Console, CLI tools, tests, and AI context APIs. Runtime trace data should be queryable by invocation ID, correlation ID, event name..."</div>
+        <p>The RFC deliberately abstracts away the storage backend (the word "Hasura" does not appear in §13), which is architecturally correct for a generic framework. But this means the existing GraphQL-transport implementation is now architecturally positioned as "a storage adapter choice" — without any guidance on how to implement that adapter interface, what the schema migration looks like, or whether the existing Hasura tables are the reference implementation.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">05</div>
+        <div class="finding-title">Business flow graph as "the most valuable graph" — framing lost in RFC</div>
+        <div class="finding-badge badge-minor">Minor</div>
+      </div>
+      <div class="finding-body">
+        <p>The conversation at lines 1386–1388 made a strong prioritization claim that the business event/flow graph is more valuable than the package dependency graph for HopDrive specifically. This framing motivated why Compare Mode matters.</p>
+        <div class="quote-meta">conversation ~line 1386</div>
+        <div class="quote">"The most valuable graph for HopDrive is probably not the dependency graph. It's the business flow graph."</div>
+        <p>The RFC describes all the pieces but does not reproduce this prioritization reasoning. A future reader of the RFC will not understand why flow manifests receive so much design attention relative to, say, the package graph or the data graph. The motivating argument — that change impact in an event-driven logistics platform is primarily a business-event tracing problem, not a code-import problem — is not in the RFC.</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- SECTION 4: REJECTED -->
+<section class="section" id="s-rejected">
+  <div class="section-label rejected">Section 04</div>
+  <h2>Explicitly Rejected Ideas</h2>
+
+  <div class="findings">
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">01</div>
+        <div class="finding-title">Hand-maintained architecture prose / wiki diagrams</div>
+        <div class="finding-badge badge-rejected">Rejected</div>
+      </div>
+      <div class="finding-body">
+        <p>Rejected at lines 499–501 and reinforced by the Airbnb rule at line 728.</p>
+        <div class="quote-meta">conversation ~line 499, 728</div>
+        <div class="quote">"The unsafe version is a separate hand-written diagram that says one thing while the code does another. The safe version is a generated graph with annotations."
+
+"If a diagram cannot be regenerated, it is untrusted." — Airbnb's rule, cited approvingly</div>
+        <p>This is clearly reflected in the RFC's CI validation and generated artifact requirements. The rejection is preserved.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">02</div>
+        <div class="finding-title">Compare Mode as a production execution gate</div>
+        <div class="finding-badge badge-rejected">Rejected</div>
+      </div>
+      <div class="finding-body">
+        <p>Explicitly rejected at conversation design proposal line 2296: "EventKit should not block runtime execution because of flow differences. These are observability and validation concerns." Preserved in RFC §2.3 Non-Goals and §14.</p>
+        <div class="quote-meta">conversation design proposal ~line 2296</div>
+        <div class="quote">"EventKit should not block runtime execution because of flow differences. These are observability and validation concerns. CI and tests may enforce strictness separately."</div>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">03</div>
+        <div class="finding-title">Nx as primary build system (for current HopDrive scale)</div>
+        <div class="finding-badge badge-rejected">Rejected</div>
+      </div>
+      <div class="finding-body">
+        <p>Explicitly rejected at lines 1104–1117 in favor of Turborepo + Dependency Cruiser. The conversation notes Nx brings "more framework, more magic, more configuration, higher onboarding burden" and that agents "frequently need Nx-specific context."</p>
+        <div class="quote-meta">conversation ~line 1104</div>
+        <div class="quote">"I would not start with Nx. If HopDrive reaches 50+ apps/packages/functions, then reevaluate. Right now Turborepo gives 80% of the value for 20% of the complexity."</div>
+        <p>This rejection is not in the RFC at all (the RFC is scoped to EventKit, not monorepo tooling). But it is worth noting this decision was made definitively.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">04</div>
+        <div class="finding-title">Backstage as Phase 1 tooling</div>
+        <div class="finding-badge badge-rejected">Rejected</div>
+      </div>
+      <div class="finding-body">
+        <p>Backstage was evaluated at lines 1230–1303 and deferred explicitly: "Not first. I'd wait until after monorepo consolidation. Maybe phase 2." The EventKit Console was positioned as the HopDrive-specific replacement for Backstage's service-catalog and architecture-explorer functions.</p>
+        <div class="quote-meta">conversation ~line 1299</div>
+        <div class="quote">"Not first. I'd wait until after monorepo consolidation. Maybe phase 2."</div>
+        <p>This rejection provides important strategic context for the Console's ambitions in §16 — the Console is intentionally filling the gap Backstage would otherwise fill, at lower operational cost. The RFC does not explain this positioning.</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- SECTION 5: RISKS -->
+<section class="section" id="s-risks">
+  <div class="section-label risks">Section 05</div>
+  <h2>Notable Concerns and Risks the RFC Ignores</h2>
+
+  <div class="findings">
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">01</div>
+        <div class="finding-title">Synchronous per-job GraphQL writes on the hot execution path</div>
+        <div class="finding-badge badge-critical">Critical</div>
+      </div>
+      <div class="finding-body">
+        <p>The existing observability plugin makes synchronous GraphQL mutations for each invocation, event detection, and job execution record. In a Netlify function processing a Hasura trigger, this means every invocation does N+1 serial round-trips to Hasura on the critical path before returning. The conversation implicitly acknowledged this by recommending the plugin model with buffering and flush-at-end.</p>
+        <div class="quote-meta">RFC §11 (general plugin guidance)</div>
+        <div class="quote quote-danger">"Plugins SHOULD avoid long blocking work inside hot lifecycle hooks... it should batch, buffer, or defer that work where possible and flush at invocation end or shutdown."</div>
+        <p>The RFC puts this in §11's general plugin guidance but never calls out the observability plugin specifically as the high-risk case. An implementer who doesn't connect these dots will build an observability plugin that adds 200–400ms of GraphQL latency to every production invocation. The RFC needs a normative statement in §13: the observability plugin MUST buffer writes and flush at <code>onInvocationEnd</code> rather than writing synchronously in <code>onJobEnd</code>.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">02</div>
+        <div class="finding-title">Matcher speculative complexity — risk of over-engineering before validation</div>
+        <div class="finding-badge badge-critical">Critical</div>
+      </div>
+      <div class="finding-body">
+        <p>The conversation explicitly stated: "Do not try to model the whole platform first. Pick one flow and prove the loop." (line 1652). The seven-level matcher priority, full classification taxonomy, and summary format are in the RFC as if already proven. There is a real risk that Compare Mode as specified is too complex to implement well before the simpler pieces (basic observability, one flow manifest, one comparison) have proven the value.</p>
+        <div class="quote-meta">conversation ~line 1652</div>
+        <div class="quote">"Start narrow: Add flowId and expectedNodeId concepts. Create one expected flow manifest for a high-value flow, probably mobile-service dispatch. Generate React Flow nodes/edges from that manifest. Add a matcher that maps observability records onto expected nodes."</div>
+        <p>The RFC has no phasing for Compare Mode. It specifies the full design end-state without indicating which parts are MVP vs. future. The conversation's caution about validating the loop first before modeling the whole platform is completely absent.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">03</div>
+        <div class="finding-title">Loop prevention mechanism has no specification</div>
+        <div class="finding-badge badge-critical">Critical</div>
+      </div>
+      <div class="finding-body">
+        <p>HopDrive's existing hasura-event-detector has a mechanism (tracking token / <code>updated_by</code> field checking) to prevent an event handler that writes to the DB from triggering itself infinitely. This is a correctness-critical invariant. The RFC carries the <code>tracking token</code> field in the observability record spec but never explains how the mechanism works at the source adapter level.</p>
+        <div class="quote-meta">RFC §13 (invocation record fields)</div>
+        <div class="quote quote-danger">Invocation records should include: [...] tracking token</div>
+        <p>Questions left unanswered by the RFC: Does the Hasura source adapter check the tracking token before invoking the runtime? Does the tracking token propagate into job context so jobs can stamp their writes? Is loop prevention the adapter's responsibility or the application's? Without this spec, the migration from hasura-event-detector breaks a correctness property silently.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">04</div>
+        <div class="finding-title">Observability plugin failure behavior: no normative error-handling contract</div>
+        <div class="finding-badge badge-notable">Notable</div>
+      </div>
+      <div class="finding-body">
+        <p>The RFC §11 notes plugin failures "must be handled carefully" and that "Observability write failures, for example, should usually not prevent business execution." "Should usually not" is not normative enough for a safety-critical logistics platform where a flaky Hasura connection during observability writes must never drop a legitimate dispatch event.</p>
+        <div class="quote-meta">RFC §11</div>
+        <div class="quote quote-danger">"Plugin failures must be handled carefully. A plugin failure should be recorded and surfaced, but the framework should define which hooks are allowed to fail the invocation and which hooks are best-effort."</div>
+        <p>The RFC says the framework "should define" this — but then does not define it. Which hooks for the observability plugin are best-effort? All of them? Only <code>onJobEnd</code>? What about <code>flush()</code> failure — should that fail the invocation? This needs a concrete contract, not a statement that a contract should exist.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">05</div>
+        <div class="finding-title">Flow manifests potentially becoming stale faster than CI catches them</div>
+        <div class="finding-badge badge-notable">Notable</div>
+      </div>
+      <div class="finding-body">
+        <p>The conversation's Airbnb rule (line 728) and the CI strictness levels exist precisely because manifests will drift. But the RFC only specifies CI-level enforcement. It does not address: what happens when a job is renamed mid-sprint but the manifest CI check runs only on PR? Local development will show manifest mismatch warnings but the developer may ignore them. The RFC's warn/strict/release levels are defined but there is no guidance on how developers are expected to discover that their local manifest is stale before pushing.</p>
+        <div class="quote-meta">RFC §21</div>
+        <div class="quote quote-danger">"local development: warn; pull request: strict; release branch: release"</div>
+        <p>No developer tooling is specified for local manifest staleness discovery — no <code>eventkit flow check</code> IDE integration, no watch-mode validation, no pre-commit hook guidance. The RFC specifies CI levels but not the local feedback loop.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <div class="finding-num">06</div>
+        <div class="finding-title">The Console requires its own backend — completely unaddressed</div>
+        <div class="finding-badge badge-notable">Notable</div>
+      </div>
+      <div class="finding-body">
+        <p>The Console as described in RFC §16 needs to serve <code>GET /flows/:flowId</code>, <code>GET /observations/:invocationId</code>, and <code>GET /compare/:flowId/:invocationId</code>. These are not Netlify function endpoints — they're query APIs over observability tables and generated flow manifests. The conversation assumed the existing React Flow console would evolve, but the existing console reads from Hasura directly via GraphQL.</p>
+        <div class="quote-meta">conversation ~line 1496 (filecite references to existing console)</div>
+        <div class="quote">"The console already renders those runtime nodes and edges with React Flow, using invocations plus correlated invocations as graph input."</div>
+        <p>The RFC specifies machine-readable API endpoints as if they exist, but provides zero guidance on: where these APIs run (Netlify function? separate service?), how they query the observability storage, or how they merge flow manifest JSON with observability records at query time. This is a significant implementation gap that the conversation's scoping left implicit.</p>
+      </div>
+    </div>
+
+  </div>
+</section>

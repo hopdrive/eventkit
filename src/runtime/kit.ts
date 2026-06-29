@@ -27,6 +27,8 @@ import {
   type JobInputContext,
   type PluginFactory,
   type RequestContext,
+  type ResolvedError,
+  type ResolvedOutcome,
   type SerializedError,
 } from '../core/index.js';
 import { PluginManager } from './plugin-manager.js';
@@ -36,6 +38,21 @@ import { newInvocationId, newCorrelationId, newUuid } from './ids.js';
 
 const isJobDefinition = (x: unknown): boolean =>
   !!x && typeof x === 'object' && (x as { __eventkitJob?: unknown }).__eventkitJob === true;
+
+/**
+ * Map a thrown value from `resolve`/`prepare` into the platform-mappable shape. Reads
+ * `ClientError.status` and `ActionError.code`/`extensions` DUCK-TYPED — `instanceof`
+ * across bundled copies of the package is unreliable, and the error classes carry these
+ * as plain fields for exactly this reason (ADR-026).
+ */
+function toResolvedError(err: unknown): ResolvedError {
+  const e = (err ?? {}) as { message?: unknown; status?: unknown; code?: unknown; extensions?: unknown };
+  const out: ResolvedError = { message: typeof e.message === 'string' ? e.message : String(err) };
+  if (typeof e.status === 'number') out.status = e.status;
+  if (typeof e.code === 'string') out.code = e.code;
+  if (e.extensions && typeof e.extensions === 'object') out.extensions = e.extensions as Record<string, unknown>;
+  return out;
+}
 
 /** Milliseconds reserved before the serverless budget expires, for best-effort flush. */
 const FLUSH_SAFETY_MARGIN_MS = 200;
@@ -62,21 +79,30 @@ class Kit implements EventKit {
     if (module.prepare !== undefined && typeof module.prepare !== 'function') {
       throw new Error(`Event '${module.name}': prepare must be a function if provided.`);
     }
-    // ADR-025: `jobs` is a static array of branded job(...) entries. Validate at
-    // REGISTER time (earlier than the old run-time check) — a non-job entry (a bare
-    // function, a look-alike object, a `false` from `cond && job()`) is a config
-    // error in the module declaration, surfaced before any invocation runs.
-    if (!Array.isArray(module.jobs)) {
-      throw new Error(`Event '${module.name}': jobs must be a static array of job(...) entries (ADR-025).`);
+    if (module.resolve !== undefined && typeof module.resolve !== 'function') {
+      throw new Error(`Event '${module.name}': resolve must be a function if provided.`);
     }
-    module.jobs.forEach((entry, i) => {
-      if (!isJobDefinition(entry)) {
-        throw new Error(
-          `Event '${module.name}': jobs[${i}] is not a job(...) (ADR-025). Every entry must be a job(fn, {…}); ` +
-            `put conditions in the detector (a named event) or inside a job, never at the array level.`,
-        );
+    // ADR-025/026: a module declares `jobs` (fire-and-forget) and/or `resolve`
+    // (request/response). A module with neither does nothing — a config error.
+    if (module.jobs === undefined && module.resolve === undefined) {
+      throw new Error(`Event '${module.name}': must declare 'jobs' and/or 'resolve' (a module with neither does nothing).`);
+    }
+    // `jobs`, if present, is a static array of branded job(...) entries. Validate at
+    // REGISTER time (earlier than the old run-time check) — a non-job entry (a bare
+    // function, a look-alike object, a `false` from `cond && job()`) is a config error.
+    if (module.jobs !== undefined) {
+      if (!Array.isArray(module.jobs)) {
+        throw new Error(`Event '${module.name}': jobs must be a static array of job(...) entries (ADR-025).`);
       }
-    });
+      module.jobs.forEach((entry, i) => {
+        if (!isJobDefinition(entry)) {
+          throw new Error(
+            `Event '${module.name}': jobs[${i}] is not a job(...) (ADR-025). Every entry must be a job(fn, {…}); ` +
+              `put conditions in the detector (a named event) or inside a job, never at the array level.`,
+          );
+        }
+      });
+    }
     if (this.moduleNames.has(module.name)) throw new Error(`Duplicate event name registered: '${module.name}'.`);
     this.moduleNames.add(module.name);
     this.modules.push(module);
@@ -231,7 +257,7 @@ class Kit implements EventKit {
     await this.pm.onInvocationStart(invocation);
 
     const detected = await this.detect(envelope, invocation);
-    const events = await this.dispatch(detected, envelope, invocation, runtime);
+    const { events, resolved } = await this.dispatch(detected, envelope, invocation, runtime);
 
     const result: InvocationResult = {
       ok: events.every(e => e.jobs.every(j => j.status === 'completed' || j.status === 'skipped')),
@@ -240,6 +266,7 @@ class Kit implements EventKit {
       durationMs: Date.now() - start,
     };
     if (timedOut) result.timedOut = true;
+    if (resolved) result.resolved = resolved;
 
     await this.pm.onInvocationEnd(invocation, result);
     await this.pm.onFlush();
@@ -342,8 +369,11 @@ class Kit implements EventKit {
     envelope: EventEnvelope,
     invocation: InvocationContext,
     runtime: InvocationRuntime,
-  ): Promise<EventOutcome[]> {
+  ): Promise<{ events: EventOutcome[]; resolved?: ResolvedOutcome }> {
     const events: EventOutcome[] = [];
+    // The FIRST detected module with a `resolve` provides the invocation's response
+    // (ADR-026). Captured here and surfaced on InvocationResult for the platform.
+    let resolved: ResolvedOutcome | undefined;
     for (const entry of detected) {
       const { module, event } = entry;
 
@@ -375,15 +405,36 @@ class Kit implements EventKit {
       const handlerStart = Date.now();
       let jobs: JobExecution[] = [];
       let error: ReturnType<typeof serializeError> | undefined;
+      let moduleResolved: ResolvedOutcome | undefined;
       try {
-        // prepare() runs ONCE before the jobs; its result is shared into every job's
-        // input (data only — never job selection). Then run the static job set.
+        // prepare() runs ONCE before the jobs + resolve; its result is shared into the
+        // job input AND the resolve context (data only — never job selection).
         const prepared = module.prepare ? ((await module.prepare(ctx)) as Record<string, unknown>) : {};
         const jobInputCtx: JobInputContext = { ...(ctx as HandlerContext), prepared };
-        jobs = await runJobs(runtime, event, module.jobs, module.run, jobInputCtx);
+        // Kick off jobs (fire-and-forget, never reject) and resolve (the response)
+        // CONCURRENTLY — they are sibling-ignorant (ADR-025/026); resolve never reads
+        // job results. Await both so serverless doesn't freeze mid-side-effect.
+        const jobsPromise = runJobs(runtime, event, module.jobs ?? [], module.run, jobInputCtx);
+        if (module.resolve) {
+          try {
+            const output = await module.resolve(jobInputCtx);
+            moduleResolved = { hasResolved: true, output };
+          } catch (rErr) {
+            error = serializeError(rErr);
+            moduleResolved = { hasResolved: true, error: toResolvedError(rErr) };
+            await this.pm.reportError(rErr, 'handle', {
+              invocationId: invocation.invocationId,
+              correlationId: invocation.correlationId,
+              eventName: event.name,
+            });
+          }
+        }
+        jobs = await jobsPromise;
       } catch (err) {
-        // A prepare() crash (the jobs themselves never reject — runJobs isolates them).
+        // A prepare() crash — neither jobs nor resolve produced anything. For a
+        // request/response module this becomes the error response.
         error = serializeError(err);
+        if (module.resolve) moduleResolved = { hasResolved: true, error: toResolvedError(err) };
         await this.pm.reportError(err, 'handle', {
           invocationId: invocation.invocationId,
           correlationId: invocation.correlationId,
@@ -396,13 +447,16 @@ class Kit implements EventKit {
       if (error !== undefined) handlerResult.error = error;
       await this.pm.onEventHandlerEnd(ctx, handlerResult);
 
-      // detected stays true even on a prepare crash (the event WAS detected); the
-      // error is surfaced separately. `ok` is computed from job status only.
+      // detected stays true even on a prepare/resolve crash (the event WAS detected);
+      // the error is surfaced separately. `ok` is computed from job status only — a
+      // resolve crash maps to the wire error response, not to a job-failure retry.
       const outcome: EventOutcome = { name: event.name, detected: true, jobs };
       if (error !== undefined) outcome.error = error;
       events.push(outcome);
+
+      if (moduleResolved && !resolved) resolved = moduleResolved; // first resolve wins
     }
-    return events;
+    return resolved ? { events, resolved } : { events };
   }
 
   async shutdown(): Promise<void> {

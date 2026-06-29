@@ -16,6 +16,7 @@ import type {
   DetectorFunction,
   HandlerContext,
   PrepareFunction,
+  ResolveFunction,
   EventKitPlugin,
   EventEnvelope,
   EventSourceType,
@@ -24,10 +25,13 @@ import type {
 import type {
   HasuraEventPayload,
   HasuraCronPayload,
+  HasuraActionPayload,
   HasuraDetectorContext,
   HasuraHandlerContext,
   HasuraCronContext,
   HasuraCronHandlerContext,
+  HasuraActionContext,
+  HasuraActionHandlerContext,
 } from './types.js';
 import {
   normalizeHasuraEvent,
@@ -36,6 +40,9 @@ import {
   normalizeHasuraCron,
   buildHasuraCronDetectorContext,
   buildHasuraCronHandlerContext,
+  normalizeHasuraAction,
+  buildHasuraActionDetectorContext,
+  buildHasuraActionHandlerContext,
 } from './adapter.js';
 
 export type * from './types.js';
@@ -69,6 +76,21 @@ export interface HasuraCronSource extends EventKitPlugin {
   prepare<TPayload = Record<string, unknown>, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
     fn: (ctx: HasuraCronHandlerContext<TPayload>) => TPrepared | Promise<TPrepared>,
   ): PrepareFunction<HasuraCronPayload<TPayload>>;
+}
+
+/** The `hasuraAction` request/response source adapter plus its authoring helpers (§7.2, ADR-026). */
+export interface HasuraActionSource extends EventKitPlugin {
+  sourceType: EventSourceType;
+  detector<TInput = Record<string, unknown>>(
+    fn: (ctx: HasuraActionContext<TInput>) => boolean | Promise<boolean>,
+  ): DetectorFunction<HasuraActionPayload<TInput>>;
+  prepare<TInput = Record<string, unknown>, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
+    fn: (ctx: HasuraActionHandlerContext<TInput>) => TPrepared | Promise<TPrepared>,
+  ): PrepareFunction<HasuraActionPayload<TInput>>;
+  /** Computes the action's synchronous response body (§7.2). Throw `ActionError`/`ClientError` for a 4xx. */
+  resolve<TInput = Record<string, unknown>, TOutput = unknown>(
+    fn: (ctx: HasuraActionHandlerContext<TInput> & { prepared: Record<string, unknown> }) => TOutput | Promise<TOutput>,
+  ): ResolveFunction<HasuraActionPayload<TInput>>;
 }
 
 export const hasuraEvent: HasuraEventSource = {
@@ -112,5 +134,29 @@ export const hasuraCron: HasuraCronSource = {
   },
   buildHandlerContext(envelope: EventEnvelope, base: HandlerContext) {
     return buildHasuraCronHandlerContext(envelope as EventEnvelope<HasuraCronPayload>, base as HandlerContext<HasuraCronPayload>);
+  },
+};
+
+export const hasuraAction: HasuraActionSource = {
+  name: 'hasura-action',
+  provides: ['source', 'source:hasura-action'],
+  sourceType: 'action',
+  detector(fn) {
+    return fn as unknown as DetectorFunction;
+  },
+  prepare(fn) {
+    return fn as unknown as PrepareFunction;
+  },
+  resolve(fn) {
+    return fn as unknown as ResolveFunction;
+  },
+  normalize(raw: unknown, request: RequestContext): EventEnvelope {
+    return normalizeHasuraAction(raw, request) as EventEnvelope;
+  },
+  buildDetectorContext(envelope: EventEnvelope, base: DetectorContext): HasuraActionContext {
+    return buildHasuraActionDetectorContext(envelope as EventEnvelope<HasuraActionPayload>, base as DetectorContext<HasuraActionPayload>);
+  },
+  buildHandlerContext(envelope: EventEnvelope, base: HandlerContext) {
+    return buildHasuraActionHandlerContext(envelope as EventEnvelope<HasuraActionPayload>, base as HandlerContext<HasuraActionPayload>);
   },
 };

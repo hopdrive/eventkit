@@ -1,0 +1,1236 @@
+
+<title>EventKit Chat Analysis — Design Concepts vs RFC</title>
+<meta name="description" content="Exhaustive extraction of every design concept, decision, constraint, and risk from the ChatGPT EventKit consolidation conversation, compared against the final RFC.">
+
+<style>
+/* ── Reset & base ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+@font-face {
+  font-family: 'JetBrainsMono';
+  font-style: normal;
+  font-weight: 400 700;
+  src: local('JetBrains Mono'), local('JetBrainsMono');
+}
+
+:root {
+  --ink:     #1a1f2e;
+  --ground:  #f7f8fb;
+  --surface: #ffffff;
+  --rule:    #dde1ea;
+  --accent:  #3d5afe;
+  --warn:    #c84b11;
+  --ok:      #1b7f4f;
+  --muted:   #64748b;
+  --mono:    'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  --sans:    ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+html { font-size: 16px; scroll-behavior: smooth; }
+
+body {
+  font-family: var(--sans);
+  background: var(--ground);
+  color: var(--ink);
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Layout shell ─────────────────────────────────────────── */
+.shell {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  grid-template-areas: "nav main";
+  min-height: 100vh;
+  max-width: 1180px;
+  margin: 0 auto;
+  gap: 0;
+}
+
+/* ── Nav rail ─────────────────────────────────────────────── */
+nav.rail {
+  grid-area: nav;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 2.5rem 1.25rem 2.5rem 1.5rem;
+  background: var(--surface);
+  border-right: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.rail-title {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 1.25rem;
+  line-height: 1.3;
+}
+
+.rail-title span {
+  display: block;
+  color: var(--ink);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  font-weight: 700;
+  text-transform: none;
+  margin-top: 0.25rem;
+}
+
+nav.rail a {
+  display: block;
+  font-size: 0.775rem;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 0.3rem 0.5rem;
+  border-left: 2px solid transparent;
+  margin-left: -0.5rem;
+  line-height: 1.4;
+  transition: color 0.15s, border-color 0.15s;
+}
+nav.rail a:hover { color: var(--ink); border-left-color: var(--rule); }
+nav.rail a.active { color: var(--accent); border-left-color: var(--accent); font-weight: 600; }
+
+.rail-section-label {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--rule);
+  padding: 1rem 0 0.25rem 0;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 0.25rem;
+}
+
+/* ── Main content ─────────────────────────────────────────── */
+main {
+  grid-area: main;
+  padding: 2.5rem 3rem 6rem 3rem;
+  max-width: 780px;
+}
+
+/* ── Doc header ───────────────────────────────────────────── */
+.doc-header {
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 1.5rem;
+  margin-bottom: 3rem;
+}
+
+.doc-meta {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.doc-meta span::before { content: '// '; opacity: 0.4; }
+
+h1.doc-title {
+  font-size: 1.85rem;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  text-wrap: balance;
+  margin-bottom: 0.75rem;
+}
+
+.doc-subtitle {
+  font-size: 0.95rem;
+  color: var(--muted);
+  max-width: 56ch;
+  line-height: 1.6;
+}
+
+/* ── Section banner (the one bold graphic move) ───────────── */
+.section-banner {
+  background: var(--ink);
+  color: #fff;
+  padding: 0.55rem 1rem;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin: 3.5rem -3rem 2rem -3rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.section-banner.warn { background: var(--warn); }
+.section-banner.ok   { background: var(--ok); }
+.section-banner.accent { background: var(--accent); }
+
+.section-banner .banner-num {
+  opacity: 0.5;
+  font-size: 0.6rem;
+}
+
+/* ── Section headings ─────────────────────────────────────── */
+.section-intro {
+  margin-bottom: 2rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.section-intro p {
+  font-size: 0.9rem;
+  color: var(--muted);
+  max-width: 60ch;
+  line-height: 1.7;
+}
+
+/* ── Finding cards ────────────────────────────────────────── */
+.finding {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  margin-bottom: 1.5rem;
+  overflow: hidden;
+}
+
+.finding-header {
+  padding: 0.9rem 1.25rem 0.75rem;
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.finding-num {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  padding: 0.1em 0.45em;
+  border-radius: 3px;
+  flex-shrink: 0;
+  letter-spacing: 0.04em;
+}
+
+.finding-num.critical {
+  background: #fff1ec;
+  border-color: #f4b8a0;
+  color: var(--warn);
+}
+
+.finding-num.decision {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: var(--accent);
+}
+
+.finding-num.rejected {
+  background: #f9fafb;
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.finding h3 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+.finding-body {
+  padding: 1rem 1.25rem;
+}
+
+.finding-body p {
+  font-size: 0.88rem;
+  line-height: 1.75;
+  color: #374151;
+  margin-bottom: 0.75rem;
+}
+.finding-body p:last-child { margin-bottom: 0; }
+
+.finding-body strong { color: var(--ink); font-weight: 700; }
+
+/* Quote blocks */
+.quote {
+  border-left: 3px solid var(--accent);
+  background: #f3f5ff;
+  padding: 0.65rem 1rem;
+  margin: 0.75rem 0;
+  border-radius: 0 3px 3px 0;
+}
+
+.quote p {
+  font-size: 0.84rem !important;
+  font-style: italic;
+  color: #374151 !important;
+  margin: 0 !important;
+}
+
+.quote-loc {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--muted);
+  margin-top: 0.3rem;
+  display: block;
+}
+
+.quote.warn-quote {
+  border-left-color: var(--warn);
+  background: #fff5f0;
+}
+
+/* Code blocks */
+.code-wrap {
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+
+pre, code {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  background: #1e2433;
+  color: #c9d1d9;
+  border-radius: 4px;
+}
+
+code {
+  padding: 0.1em 0.35em;
+  font-size: 0.82em;
+  background: #eef0f5;
+  color: #3d4a66;
+  border-radius: 3px;
+}
+
+pre {
+  padding: 1rem 1.25rem;
+  line-height: 1.6;
+}
+pre code { background: none; color: inherit; padding: 0; font-size: inherit; border-radius: 0; }
+
+.kw { color: #79c0ff; }
+.type-c { color: #ffa657; }
+.str { color: #a5d6ff; }
+.cmt { color: #8b949e; font-style: italic; }
+.fn { color: #d2a8ff; }
+.num { color: #79c0ff; }
+
+/* Priority badge */
+.priority-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.15em 0.6em;
+  border-radius: 100px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.prio-1 { background: #fff1ec; color: var(--warn); border: 1px solid #f4b8a0; }
+.prio-2 { background: #fffbeb; color: #92400e; border: 1px solid #fcd34d; }
+.prio-3 { background: #f0fdf4; color: #166534; border: 1px solid #86efac; }
+
+/* Comparison table */
+.compare-table-wrap { overflow-x: auto; margin: 0.75rem 0; }
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.83rem;
+}
+.compare-table th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0.5rem 0.75rem;
+  border-bottom: 2px solid var(--rule);
+  background: var(--ground);
+  font-weight: 700;
+}
+.compare-table td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  line-height: 1.5;
+}
+.compare-table tr:last-child td { border-bottom: none; }
+.compare-table .in-chat { color: var(--accent); }
+.compare-table .in-rfc { color: var(--ok); }
+.compare-table .missing { color: var(--warn); font-style: italic; }
+
+/* Priority summary table at top */
+.summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin: 2rem 0 3rem;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 1rem 1.25rem;
+}
+.stat-num {
+  font-family: var(--mono);
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1;
+  margin-bottom: 0.3rem;
+  font-variant-numeric: tabular-nums;
+}
+.stat-num.warn { color: var(--warn); }
+.stat-num.accent { color: var(--accent); }
+.stat-num.muted { color: var(--muted); }
+.stat-label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.3;
+}
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media (max-width: 760px) {
+  .shell { grid-template-columns: 1fr; grid-template-areas: "main"; }
+  nav.rail { display: none; }
+  main { padding: 1.5rem 1.25rem 4rem; }
+  .section-banner { margin-left: -1.25rem; margin-right: -1.25rem; }
+  .summary-grid { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+</style>
+
+<div class="shell">
+
+<!-- ── Navigation Rail ──────────────────────────────────────── -->
+<nav class="rail" aria-label="Document navigation">
+  <div class="rail-title">EventKit Analysis<span>Chat vs RFC</span></div>
+
+  <div class="rail-section-label">Overview</div>
+  <a href="#overview">Summary</a>
+  <a href="#captured">Captured in RFC</a>
+
+  <div class="rail-section-label">Lost / Gaps</div>
+  <a href="#data-flow">1. Data flow into jobs</a>
+  <a href="#exec-mode">2. Execution mode default</a>
+  <a href="#invocation-config">3. Per-invocation config</a>
+  <a href="#loop-prevention">4. Loop prevention</a>
+  <a href="#package-import">5. Package import form</a>
+  <a href="#run-signature">6. run() signature</a>
+  <a href="#async-detector">7. Async detector perf</a>
+  <a href="#detection-order">8. Detection ordering</a>
+  <a href="#handler-sig">9. Handler signature</a>
+  <a href="#durable-opts">10. DurableJobOptions</a>
+  <a href="#manually-invoked">11. manuallyInvoked()</a>
+  <a href="#why-exists">12. "Why EventKit Exists"</a>
+
+  <div class="rail-section-label">Decisions</div>
+  <a href="#decisions">Chat vs RFC diffs</a>
+
+  <div class="rail-section-label">Rejected</div>
+  <a href="#rejected">Rejected ideas</a>
+
+  <div class="rail-section-label">Migration</div>
+  <a href="#migration">Phasing & risks</a>
+
+  <div class="rail-section-label">Concerns</div>
+  <a href="#concerns">RFC blind spots</a>
+
+  <div class="rail-section-label">Priority</div>
+  <a href="#priority">Top 10 gaps</a>
+</nav>
+
+<!-- ── Main ─────────────────────────────────────────────────── -->
+<main>
+
+  <!-- Doc header -->
+  <header class="doc-header" id="overview">
+    <div class="doc-meta">
+      <span>Source: chatgpt-project-plan-consolidation-20260628.md</span>
+      <span>134 messages · 5,755 lines</span>
+      <span>2026-06-26</span>
+    </div>
+    <h1 class="doc-title">EventKit Chat Analysis:<br>What the Consolidation Conversation Said</h1>
+    <p class="doc-subtitle">Exhaustive extraction of every design concept, decision, requirement, constraint, concern, and migration nuance from the ChatGPT planning session — with direct quotes, line numbers, and a comparison against the final RFC.</p>
+  </header>
+
+  <!-- Summary stats -->
+  <div class="summary-grid">
+    <div class="stat-card">
+      <div class="stat-num warn">12</div>
+      <div class="stat-label">Concepts discussed but lost or under-specified in RFC</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num accent">5</div>
+      <div class="stat-label">Decisions made differently in chat vs RFC</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num muted">6</div>
+      <div class="stat-label">Explicitly rejected ideas (should appear as RFC ADRs)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num warn">8</div>
+      <div class="stat-label">Notable concerns the RFC ignores</div>
+    </div>
+  </div>
+
+  <!-- ── Section 1: Captured in RFC ──────────────────────────── -->
+  <div class="section-banner ok" id="captured">
+    <span class="banner-num">§1</span>
+    CONCEPTS CAPTURED IN RFC — confirmed agreed
+  </div>
+
+  <div class="section-intro">
+    <p>These concepts were explicitly agreed in the conversation and appear to be reflected in the final RFC. They are listed here for orientation and completeness.</p>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num">CONFIRMED</span>
+      <h3>Agreed concepts that appear in the RFC</h3>
+    </div>
+    <div class="finding-body">
+      <p>The following were explicitly resolved in the conversation (primarily messages [9]–[16], lines 583–2379) and are confirmed present in the RFC:</p>
+      <ul style="font-size:0.88rem;line-height:1.8;color:#374151;padding-left:1.25rem;">
+        <li>Source-agnostic runtime chain: <code>EventEnvelope → DetectorContext → DetectedEvent → HandlerContext → run() → JobExecution[]</code></li>
+        <li><code>createEventKit({sources, plugins, events})</code> with explicit module registration — no filesystem auto-discovery</li>
+        <li><code>job(fn, JobOptions)</code> factory; <code>JobOptions = {name, timeoutMs, retries, tags, metadata, durable, continueOnFailure}</code></li>
+        <li><code>run(event, jobs, options)</code> with <code>mode: 'parallel' | 'series'</code></li>
+        <li><code>EventKitPlugin</code> lifecycle hooks (full set: <code>onInvocationStart</code> → <code>onJobEnd</code>, etc.)</li>
+        <li>BatchJobs as durability plugin: Core owns retry mechanics; BatchJobs owns persisted retry state/history</li>
+        <li>One detector per event module; detector always first; handler below</li>
+        <li>Single <code>@hopdrive/eventkit</code> package with subpath exports</li>
+        <li>Source-specific detector contexts: <code>HasuraDetectorContext</code>, <code>WebhookDetectorContext</code>, <code>CronDetectorContext</code></li>
+        <li>Flow Manifests (design-time contract), Expected/Observed/Compare modes, console architecture</li>
+        <li>ADRs, testing strategy, CI validation with strictness levels (<code>warn</code>/<code>strict</code>/<code>release</code>)</li>
+        <li>Compatibility facade for <code>@hopdrive/hasura-event-detector</code> (duration deferred)</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── Section 2: Lost / Under-specified ───────────────────── -->
+  <div class="section-banner warn" id="data-flow">
+    <span class="banner-num">§2</span>
+    CONCEPTS LOST OR UNDER-SPECIFIED IN RFC
+  </div>
+
+  <div class="section-intro">
+    <p>These were discussed and resolved in the conversation but appear to be absent or vague in the final RFC. Each entry includes a direct quote with line number.</p>
+  </div>
+
+  <!-- Finding 1 -->
+  <div class="finding" id="data-flow">
+    <div class="finding-header">
+      <span class="finding-num critical">GAP 1</span>
+      <h3>How a handler passes data into jobs — the input/deps channel</h3>
+      <span class="priority-badge prio-1">P1 Critical</span>
+    </div>
+    <div class="finding-body">
+      <p>The conversation made an explicit, firm decision that <code>DetectorContext</code> does NOT survive into handlers or jobs, and that handlers access source data via <code>ctx.envelope.payload</code> (not by re-fetching). This was stated twice:</p>
+      <div class="quote warn-quote">
+        <p>"Handlers should not use detector-only helpers like <code>columnChanged()</code>. If handlers need source data, they use <code>ctx.envelope.payload</code> or source adapter-provided handler context extensions."</p>
+        <span class="quote-loc">Lines 2063–2065</span>
+      </div>
+      <div class="quote warn-quote">
+        <p>"Important decision: <code>DetectedEvent</code> should not carry <code>DetectorContext</code>. Detector helpers are for detection only."</p>
+        <span class="quote-loc">Lines 2007–2008</span>
+      </div>
+      <p>The conversation also defined a <code>HasuraHandlerContext</code> extension that gives handlers typed <code>oldRow</code> / <code>newRow</code> access without the detector helpers:</p>
+      <div class="code-wrap">
+        <pre><code><span class="kw">export interface</span> <span class="type-c">HasuraHandlerContext</span>&lt;<span class="type-c">TNewRow</span>, <span class="type-c">TOldRow</span> = <span class="type-c">TNewRow</span>&gt;
+  <span class="kw">extends</span> <span class="type-c">HandlerContext</span>&lt;<span class="type-c">HasuraEventPayload</span>&lt;<span class="type-c">TNewRow</span>&gt;&gt; {
+  operation: <span class="type-c">HasuraOperation</span>;
+  oldRow: <span class="type-c">TOldRow</span> | <span class="kw">null</span>;
+  newRow: <span class="type-c">TNewRow</span> | <span class="kw">null</span>;
+}</code></pre>
+      </div>
+      <p><strong>Why it matters:</strong> The current <code>hasura-event-detector</code> passes business data in the job options bag. The RFC defines <code>JobContext</code> with <code>event.envelope.payload</code> but does not explicitly state that jobs consume the raw Hasura payload directly (no intermediary typed input). If unspecified, implementers may invent their own data-passing convention — exactly the inconsistency the RFC should prevent.</p>
+    </div>
+  </div>
+
+  <!-- Finding 2 -->
+  <div class="finding" id="exec-mode">
+    <div class="finding-header">
+      <span class="finding-num critical">GAP 2</span>
+      <h3>Execution mode default and failure isolation — no default stated</h3>
+      <span class="priority-badge prio-1">P1 Critical</span>
+    </div>
+    <div class="finding-body">
+      <p>The conversation defined <code>RunOptions</code> with <code>mode?: 'parallel' | 'series'</code> but <strong>never stated a default value</strong>. The current library uses <code>Promise.allSettled</code> (parallel, failures do not stop other jobs). This is load-bearing behavior.</p>
+      <div class="code-wrap">
+        <pre><code><span class="kw">export interface</span> <span class="type-c">RunOptions</span> {
+  mode?: <span class="str">'parallel'</span> | <span class="str">'series'</span>;
+  continueOnFailure?: <span class="type-c">boolean</span>;
+  timeoutMs?: <span class="type-c">number</span>;
+  metadata?: <span class="type-c">Record</span>&lt;<span class="type-c">string</span>, <span class="kw">unknown</span>&gt;;
+}</code></pre>
+      </div>
+      <p>An earlier handler example (line 773) showed <code>Promise.all</code> usage, but that was user-authored code, not a framework default specification.</p>
+      <div class="quote warn-quote">
+        <p>"The framework shouldn't prescribe orchestration beyond providing <code>run()</code>."</p>
+        <span class="quote-loc">Line 778</span>
+      </div>
+      <p><strong>Why it matters:</strong> If the RFC's default is <code>series</code> or if <code>continueOnFailure</code> defaults to <code>false</code>, migrating consumers will silently change behavior. The conversation never locked this in. The RFC must state the default explicitly — and the current library's <code>Promise.allSettled</code> behavior (parallel + isolated failures) is the most natural default to match.</p>
+    </div>
+  </div>
+
+  <!-- Finding 3 -->
+  <div class="finding" id="invocation-config">
+    <div class="finding-header">
+      <span class="finding-num critical">GAP 3</span>
+      <h3>Tracking token — mentioned in observability data but dropped from public types</h3>
+      <span class="priority-badge prio-1">P1 Critical</span>
+    </div>
+    <div class="finding-body">
+      <p>The observability section listed <code>trackingToken</code> as a first-class invocation correlation concept alongside <code>correlationId</code> and <code>traceId</code>:</p>
+      <div class="quote">
+        <p>"Invocation Records: invocation ID, source adapter kind, source function, correlation ID, trace ID, <strong>tracking token</strong>, source payload reference..."</p>
+        <span class="quote-loc">Lines 1068–1078</span>
+      </div>
+      <div class="quote">
+        <p>"Load observed invocations by invocation ID, correlation ID, trace ID, or <strong>tracking token</strong>."</p>
+        <span class="quote-loc">Line 1155</span>
+      </div>
+      <p>But the final agreed <code>EventEnvelope</code> type (lines 1968–1981) has: <code>id, source, sourceType, receivedAt, correlationId, payload, meta, raw?</code> — <strong>no <code>trackingToken</code></strong>. The concept was captured in the observability data model but never wired into the framework's public types or specified as to its origin (header? generated? caller-supplied?).</p>
+      <p><strong>Why it matters:</strong> The current library uses <code>x-hasura-client-name</code> for loop-prevention and updated_by provenance. <code>trackingToken</code> appears to be the EventKit successor to that mechanism, but it was not resolved where it lives in the type hierarchy.</p>
+    </div>
+  </div>
+
+  <!-- Finding 4 -->
+  <div class="finding" id="loop-prevention">
+    <div class="finding-header">
+      <span class="finding-num critical">GAP 4</span>
+      <h3>Loop prevention / updated_by provenance — noted in observability, not in framework types</h3>
+      <span class="priority-badge prio-1">P1 Critical</span>
+    </div>
+    <div class="finding-body">
+      <p>The observability data model included a critical anti-loop field:</p>
+      <div class="quote warn-quote">
+        <p>"source job ID if invocation was triggered by a previous job"</p>
+        <span class="quote-loc">Line 1079</span>
+      </div>
+      <p>This field implies the framework can detect when a Hasura event was generated by a prior job's DB write — the core mechanism for preventing event storms. But neither the <code>EventEnvelope</code> type, the <code>DetectorContext</code>, nor any plugin lifecycle hook was specified as the mechanism for surfacing this at runtime. It appears only as an observability data field, not as a framework control primitive.</p>
+      <p><strong>Why it matters:</strong> Event storms are a real operational risk in any event-driven system. The conversation captured the concern in the data model but left the enforcement mechanism completely unspecified. The RFC must answer: who populates <code>sourceJobId</code>? How do detectors or the framework use it to suppress loops?</p>
+    </div>
+  </div>
+
+  <!-- Finding 5 -->
+  <div class="finding" id="package-import">
+    <div class="finding-header">
+      <span class="finding-num">GAP 5</span>
+      <h3>Package import convention — code examples are inconsistent throughout</h3>
+      <span class="priority-badge prio-2">P2 Medium</span>
+    </div>
+    <div class="finding-body">
+      <p>Three competing import forms appear in the conversation, even after the agreed form was established:</p>
+      <div class="compare-table-wrap">
+        <table class="compare-table">
+          <thead><tr><th>Form</th><th>Appearance</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td><code>'@hopdrive/eventkit-source-hasura'</code></td><td>Lines 1776, 1800, 2299</td><td class="missing">Pre-decision; rejected at line 851</td></tr>
+            <tr><td><code>'@hopdrive/eventkit/sources/hasura'</code></td><td>Lines 851, 1894</td><td class="in-rfc">Agreed form</td></tr>
+            <tr><td><code>'@hopdrive/eventkit-plugin-batchjobs'</code></td><td>Lines 1801, 2301</td><td class="missing">Pre-decision; rejected at line 851</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>GPT acknowledged this at lines 1891–1903 and recommended fixing all examples to the subpath form, but did not do so. The BatchJobs end-to-end example (lines 2297–2318) still uses the multi-package form.</p>
+      <p><strong>Why it matters:</strong> The RFC must normalize all code examples to the agreed subpath imports, otherwise implementers will copy the wrong form.</p>
+    </div>
+  </div>
+
+  <!-- Finding 6 -->
+  <div class="finding" id="run-signature">
+    <div class="finding-header">
+      <span class="finding-num">GAP 6</span>
+      <h3><code>run()</code> signature — two different call shapes in the conversation</h3>
+      <span class="priority-badge prio-1">P1 Critical</span>
+    </div>
+    <div class="finding-body">
+      <p>Two distinct <code>run()</code> shapes appear:</p>
+      <p><strong>Shape A — standalone import (final agreed type, lines 2156–2163):</strong></p>
+      <div class="code-wrap">
+        <pre><code><span class="kw">export async function</span> <span class="fn">run</span>&lt;<span class="type-c">TPayload</span>, <span class="type-c">TMeta</span>&gt;(
+  event: <span class="type-c">DetectedEvent</span>&lt;<span class="type-c">TPayload</span>, <span class="type-c">TMeta</span>&gt;,
+  jobs: <span class="type-c">JobDefinition</span>[],
+  options?: <span class="type-c">RunOptions</span>,
+): <span class="type-c">Promise</span>&lt;<span class="type-c">JobExecution</span>[]&gt;;</code></pre>
+      </div>
+      <p><strong>Shape B — context-injected (earlier example, line 760):</strong></p>
+      <div class="code-wrap">
+        <pre><code><span class="kw">export const</span> handler = <span class="kw">async</span> ({ run }) => {
+  <span class="kw">await</span> <span class="fn">run</span>(sendNotificationJob);
+  <span class="kw">await</span> <span class="fn">run</span>(updateAnalyticsJob);
+};</code></pre>
+      </div>
+      <p>In Shape B, <code>run</code> is destructured from the handler context and called with a single job — a fundamentally different API. The conversation ended with Shape A but Shape B appeared in discussion and was never explicitly dismissed.</p>
+      <p><strong>Why it matters:</strong> The handler's public API shape determines the entire developer experience for every event module author. This must be unambiguous in the RFC.</p>
+    </div>
+  </div>
+
+  <!-- Finding 7 -->
+  <div class="finding" id="async-detector">
+    <div class="finding-header">
+      <span class="finding-num">GAP 7</span>
+      <h3>Async detectors — performance concern never discussed</h3>
+      <span class="priority-badge prio-2">P2 Medium</span>
+    </div>
+    <div class="finding-body">
+      <p>The agreed <code>DetectorFunction</code> type allows async detectors:</p>
+      <div class="code-wrap">
+        <pre><code><span class="kw">export type</span> <span class="type-c">DetectorFunction</span>&lt;<span class="type-c">TContext</span> <span class="kw">extends</span> <span class="type-c">DetectorContext</span>&gt; =
+  (ctx: <span class="type-c">TContext</span>) => <span class="type-c">boolean</span> | <span class="type-c">Promise</span>&lt;<span class="type-c">boolean</span>&gt;;</code></pre>
+      </div>
+      <p>This means detectors can make DB or API calls. In a system with 50–100+ event modules, an async detector that hits the DB runs for every invocation against every registered module. The conversation never discussed:</p>
+      <ul style="font-size:0.88rem;line-height:1.8;color:#374151;padding-left:1.25rem;">
+        <li>Whether async detectors are allowed in practice or just in type</li>
+        <li>Whether they run concurrently or serially per invocation</li>
+        <li>Latency implications of N-module × M-DB-call evaluation</li>
+        <li>Timeout/cancellation for async detectors</li>
+      </ul>
+      <p><strong>Why it matters:</strong> Latency amplification from naive async detector evaluation could make EventKit unacceptable in production without prior guidance. The RFC should state the expected usage convention even if the type allows async.</p>
+    </div>
+  </div>
+
+  <!-- Finding 8 -->
+  <div class="finding" id="detection-order">
+    <div class="finding-header">
+      <span class="finding-num">GAP 8</span>
+      <h3>Detection ordering — first-match vs all-match never resolved</h3>
+      <span class="priority-badge prio-2">P2 Medium</span>
+    </div>
+    <div class="finding-body">
+      <p>The conversation never specified whether all registered detectors are evaluated for every invocation, or whether the framework stops at the first positive match.</p>
+      <p>This has significant correctness and performance implications:</p>
+      <ul style="font-size:0.88rem;line-height:1.8;color:#374151;padding-left:1.25rem;">
+        <li>In the current library, all modules are evaluated (all-match)</li>
+        <li>All-match allows multiple business events per invocation — is this intended?</li>
+        <li>First-match would be a behavioral regression from the current library</li>
+        <li>If all-match, do their handlers run concurrently or in registration order?</li>
+      </ul>
+      <p>The RFC must define this guarantee explicitly, since it affects both performance modeling and correctness of event authoring.</p>
+    </div>
+  </div>
+
+  <!-- Finding 9 -->
+  <div class="finding" id="handler-sig">
+    <div class="finding-header">
+      <span class="finding-num">GAP 9</span>
+      <h3>Handler function signature — type definition and examples show different shapes</h3>
+      <span class="priority-badge prio-2">P2 Medium</span>
+    </div>
+    <div class="finding-body">
+      <p><strong>Agreed type (lines 2216–2221):</strong></p>
+      <div class="code-wrap">
+        <pre><code><span class="kw">export type</span> <span class="type-c">HandlerFunction</span>&lt;<span class="type-c">TCtx</span> <span class="kw">extends</span> <span class="type-c">HandlerContext</span>&gt; = (
+  event: <span class="type-c">DetectedEvent</span>,
+  ctx: <span class="type-c">TCtx</span>,
+) => <span class="type-c">Promise</span>&lt;<span class="type-c">JobExecution</span>[]&gt; | <span class="type-c">JobExecution</span>[];</code></pre>
+      </div>
+      <p><strong>Example code throughout (e.g., line 2224):</strong></p>
+      <div class="code-wrap">
+        <pre><code><span class="kw">export const</span> handler = <span class="kw">async</span> (event, ctx) => {
+  <span class="kw">return</span> <span class="fn">run</span>(event, [
+    <span class="fn">job</span>(updateMoveTimeline),
+    <span class="fn">job</span>(notifyDealer),
+  ]);
+};</code></pre>
+      </div>
+      <p>The two-argument form <code>(event, ctx)</code> is the agreed type. The single-argument destructuring form <code>({ run })</code> appeared earlier and was never explicitly deprecated. The RFC should confirm the two-argument form as canonical and explain that <code>run</code> is a named import, not a handler context property.</p>
+    </div>
+  </div>
+
+  <!-- Finding 10 -->
+  <div class="finding" id="durable-opts">
+    <div class="finding-header">
+      <span class="finding-num">GAP 10</span>
+      <h3><code>DurableJobOptions</code> type — referenced but never defined</h3>
+      <span class="priority-badge prio-2">P2 Medium</span>
+    </div>
+    <div class="finding-body">
+      <p><code>JobOptions.durable</code> is typed as <code>boolean | DurableJobOptions</code> (line 2109), and the BatchJobs example shows:</p>
+      <div class="code-wrap">
+        <pre><code><span class="fn">job</span>(runARBatchV2, {
+  durable: <span class="fn">batchJobs.record</span>(ctx.newRow),
+})</code></pre>
+      </div>
+      <p>But what <code>batchJobs.record()</code> returns, and what shape <code>DurableJobOptions</code> takes, was never specified in the conversation. Similarly, the <code>progress()</code> and <code>checkpoint()</code> methods on <code>JobContext</code> (lines 2132–2134) were listed without specifying what they persist to, who reads them, or whether this is a Core or BatchJobs feature.</p>
+      <p><strong>Why it matters:</strong> These are the primary BatchJobs integration points. Leaving them undefined means the BatchJobs plugin author must invent the contract, which is exactly what the RFC should prevent.</p>
+    </div>
+  </div>
+
+  <!-- Finding 11 -->
+  <div class="finding" id="manually-invoked">
+    <div class="finding-header">
+      <span class="finding-num">GAP 11</span>
+      <h3><code>manuallyInvoked()</code> — helper present, usage convention absent</h3>
+      <span class="priority-badge prio-3">P3 Low</span>
+    </div>
+    <div class="finding-body">
+      <p>The agreed <code>HasuraDetectorContext</code> includes <code>manuallyInvoked(): boolean</code> (line 1657), but the conversation never explained its purpose, when to use it, or the convention for detectors that should suppress re-detection on Hasura console re-delivery. In Hasura, "manually invoked" means the event was triggered via the Console "Redeliver" button or the <code>x-hasura-event-type: manual</code> header.</p>
+      <p><strong>Why it matters:</strong> Without documentation, detectors that need idempotency guarantees on re-delivery will not know to check <code>manuallyInvoked()</code>. This is directly related to the loop prevention / event storm concern.</p>
+    </div>
+  </div>
+
+  <!-- Finding 12 -->
+  <div class="finding" id="why-exists">
+    <div class="finding-header">
+      <span class="finding-num">GAP 12</span>
+      <h3>"Why EventKit Exists" strategic framing — added to Google Doc, may be absent from RFC</h3>
+      <span class="priority-badge prio-2">P2 Medium</span>
+    </div>
+    <div class="finding-body">
+      <p>The very last substantive exchange in the conversation (lines 5701–5754) established the strategic framing section that Rob explicitly requested:</p>
+      <div class="quote">
+        <p>"EventKit is one of the foundational abstractions that HopDrive intends to build upon for the next decade. It standardizes how business events are discovered, executed, observed, documented, and reasoned about by both humans and AI agents. Its purpose is not simply to replace the Hasura Event Detector, but to establish a stable architectural language that survives changes to infrastructure, event sources, and execution environments."</p>
+        <span class="quote-loc">Lines 5715–5720</span>
+      </div>
+      <p>GPT added this to the Google Doc in message [134] and also proposed the architectural philosophy:</p>
+      <div class="quote">
+        <p>"Infrastructure detects. Business events describe. Handlers respond. Plugins observe."</p>
+        <span class="quote-loc">Lines 5750–5751</span>
+      </div>
+      <p><strong>Why it matters:</strong> This framing appeared at the END of the conversation, after the RFC chapters were already generated. The RFC Markdown files (RFC-01 through RFC-09) were produced before this framing was added to the Google Doc. It may be missing from the RFC entirely. This is the document's "north star" and should appear near the top.</p>
+    </div>
+  </div>
+
+  <!-- ── Section 3: Decisions Made Differently ──────────────── -->
+  <div class="section-banner accent" id="decisions">
+    <span class="banner-num">§3</span>
+    DECISIONS MADE DIFFERENTLY — chat vs RFC
+  </div>
+
+  <div class="section-intro">
+    <p>Cases where the conversation reached a clear resolution that may be represented differently (or incorrectly) in the final RFC.</p>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num decision">DIFF 1</span>
+      <h3>Package naming — agreed subpath form vs lingering multi-package form in examples</h3>
+    </div>
+    <div class="finding-body">
+      <div class="compare-table-wrap">
+        <table class="compare-table">
+          <thead><tr><th>In conversation (agreed)</th><th>In conversation code examples (pre-decision)</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="in-chat"><code>@hopdrive/eventkit/sources/hasura</code><br><small>Lines 851, 1894, 1924–1931</small></td>
+              <td class="missing"><code>@hopdrive/eventkit-source-hasura</code><br><small>Lines 1776, 1800, 2268 — not updated after decision</small></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>GPT noted the discrepancy at lines 1891–1903 and recommended fixing it, but did not update prior examples. The BatchJobs E2E example (lines 2297–2318) still uses the multi-package form.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num decision">DIFF 2</span>
+      <h3>Retry ownership — explicit split agreed after a noted contradiction</h3>
+    </div>
+    <div class="finding-body">
+      <p>A contradiction was identified in the source files between two descriptions of retry ownership (lines 501–525). The agreed resolution (lines 668–673):</p>
+      <div class="compare-table-wrap">
+        <table class="compare-table">
+          <thead><tr><th>Core owns</th><th>BatchJobs owns</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Execution semantics, lifecycle, retry algorithm, retry decisions</td>
+              <td>Persistence, retry scheduling, state transitions, retry history, delayed execution, durability</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>If the RFC assigns retries differently — e.g., giving all retry logic to BatchJobs — it contradicts the explicit consensus resolution.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num decision">DIFF 3</span>
+      <h3><code>DetectedEvent</code> must NOT carry <code>DetectorContext</code> — explicit decision</h3>
+    </div>
+    <div class="finding-body">
+      <p>An earlier draft of <code>DetectedEvent</code> (in message [13], lines 1852–1868) included <code>detectorContext: TSourceContext</code>. The final agreed type (lines 1987–2005) removed it. The decision was stated explicitly:</p>
+      <div class="quote warn-quote">
+        <p>"Important decision: DetectedEvent should not carry DetectorContext. Detector helpers are for detection only."</p>
+        <span class="quote-loc">Lines 2007–2008</span>
+      </div>
+      <p>If the RFC's <code>DetectedEvent</code> interface includes <code>detectorContext</code> or <code>sourceContext</code>, it directly contradicts this consensus. Check the RFC's type definition carefully.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num decision">DIFF 4</span>
+      <h3>Flow Manifests are explicitly post-MVP — not a Phase 1 requirement</h3>
+    </div>
+    <div class="finding-body">
+      <div class="quote">
+        <p>"Flow Manifests should not block the MVP rewrite. They should be included in the architecture and package design, but likely implemented after the core execution, BatchJobs, and Observability foundations are stable."</p>
+        <span class="quote-loc">Lines 1490–1491</span>
+      </div>
+      <div class="quote">
+        <p>"EventKit should not block runtime execution because of flow differences. These are observability and validation concerns. CI and tests may enforce strictness separately."</p>
+        <span class="quote-loc">Lines 1303–1304</span>
+      </div>
+      <p>The intended phase ordering: <strong>Core → BatchJobs → Observability → Flow Manifests → Compare Mode → Console</strong>. If the RFC presents Flow Manifests alongside core execution as co-equal requirements, this phasing decision is lost.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num decision">DIFF 5</span>
+      <h3>Single-detector rule — the consequent rule for future sources was stated but may be missing</h3>
+    </div>
+    <div class="finding-body">
+      <p>The reasoning behind one-detector-per-module was explicit:</p>
+      <div class="quote">
+        <p>"If another source can detect the same business event in the future, I'd rather have a second event module than complicate the primary authoring model. We can always revisit this years from now if it becomes a real need."</p>
+        <span class="quote-loc">Lines 688–689</span>
+      </div>
+      <p>This means: if a business event must be detected from a second source, create a <strong>second event module</strong> (possibly with a variant name), not a second detector in the existing module. This consequent rule was stated in the conversation but may not appear explicitly in the RFC.</p>
+    </div>
+  </div>
+
+  <!-- ── Section 4: Explicitly Rejected ──────────────────────── -->
+  <div class="section-banner" id="rejected">
+    <span class="banner-num">§4</span>
+    EXPLICITLY REJECTED IDEAS — must appear as ADRs
+  </div>
+
+  <div class="section-intro">
+    <p>These alternatives were explicitly considered and rejected during the conversation. They should each have a corresponding ADR in the RFC so future contributors do not re-open settled debates.</p>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num rejected">REJ 1</span>
+      <h3>Multiple detectors per event module</h3>
+    </div>
+    <div class="finding-body">
+      <p><strong>Reason rejected:</strong> Complicates the authoring model. "One detector keeps the authoring experience extremely simple... If another source can detect the same business event, I'd rather have a second event module." (Lines 679–689)</p>
+      <p><strong>Future path:</strong> Revisit only if a real multi-source need emerges; create a second module in the interim.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num rejected">REJ 2</span>
+      <h3>Filesystem auto-discovery of event modules</h3>
+    </div>
+    <div class="finding-body">
+      <p><strong>Reason rejected:</strong> "Trying to discover modules dynamically in serverless environments almost always becomes more complicated than it's worth." Non-deterministic, bundler-hostile, not tree-shakeable. (Lines 748–749)</p>
+      <p><strong>Chosen alternative:</strong> Explicit registration in <code>createEventKit({ events: [...] })</code>.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num rejected">REJ 3</span>
+      <h3>Separate npm packages per adapter and plugin</h3>
+    </div>
+    <div class="finding-body">
+      <p><strong>Reason rejected:</strong> "I'd rather not have a separate package for each plugin and adapter. I'm worried it will clutter the HopDrive scope." Maintenance overhead, namespace pollution. (Lines 656–658)</p>
+      <p><strong>Chosen alternative:</strong> Single <code>@hopdrive/eventkit</code> with subpath exports.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num rejected">REJ 4</span>
+      <h3>HopDrive domain logic inside source adapters or plugins</h3>
+    </div>
+    <div class="finding-body">
+      <p><strong>Reason rejected:</strong> Breaks source-agnosticism. "Framework code may understand Hasura concepts such as: operations, rows, schemas, tables. It must never understand business concepts such as: moves, drivers, appointments, dealerships." (Lines 3499–3508)</p>
+      <p>Application helpers (e.g., <code>isRideMove(row)</code>) belong in <code>event-handlers/lib/</code>.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num rejected">REJ 5</span>
+      <h3>Manually maintained architecture diagrams</h3>
+    </div>
+    <div class="finding-body">
+      <p><strong>Reason rejected:</strong> "Rather than maintaining architecture diagrams by hand, the system should generate dependency graphs directly from source code, package imports, Hasura metadata, event triggers, Netlify function manifests, GraphQL operations, and SDK definitions." (Lines 153–157)</p>
+      <p>Diagrams drift from reality; architecture-as-code preferred.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num rejected">REJ 6</span>
+      <h3>Compatibility facade as a permanent strategy</h3>
+    </div>
+    <div class="finding-body">
+      <p>Duration explicitly deferred: "Not sure but I don't really care about depreciation right now." (Line 658). The facade is a time-limited migration aid, not a long-term commitment. GPT noted: "Compatibility facade duration: Not important right now. Can mark as 'defer.'" (Lines 1506–1507)</p>
+    </div>
+  </div>
+
+  <!-- ── Section 5: Migration nuances ────────────────────────── -->
+  <div class="section-banner" id="migration">
+    <span class="banner-num">§5</span>
+    MIGRATION / PHASING NUANCES AND RISKS
+  </div>
+
+  <div class="section-intro">
+    <p>Issues raised in the conversation about sequencing, scope, and risk that the RFC should reflect accurately.</p>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num">RISK 1</span>
+      <h3>Compatibility facade scope is unknown — could be trivial or massive</h3>
+    </div>
+    <div class="finding-body">
+      <p>The conversation listed the compatibility facade for <code>@hopdrive/hasura-event-detector</code> as a migration tool but never analyzed what APIs the facade must emulate. The conversation never established how many event modules, job functions, or consumers use the current library's public surface. Without this, the migration phase estimates are speculative.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num">RISK 2</span>
+      <h3>RFC Markdown files are acknowledged as compressed/incomplete drafts</h3>
+    </div>
+    <div class="finding-body">
+      <div class="quote warn-quote">
+        <p>"I can't generate a true 40 to 60 page, fully realized RFC with hundreds of code examples, diagrams, and API reference in a single response. That exceeds the model's output limits, even if I write it directly to a file."</p>
+        <span class="quote-loc">Lines 3114–3116</span>
+      </div>
+      <div class="quote warn-quote">
+        <p>"While these chapters accurately capture the architecture and decisions we've made, they're intentionally concise because of generation limits."</p>
+        <span class="quote-loc">Lines 4145–4146</span>
+      </div>
+      <p>The Google Doc was intended as the canonical living spec; the RFC Markdown files (RFC-01 through RFC-09) were acknowledged as compressed summaries. The "final RFC" being compared may be less complete than what was iteratively added to the Google Doc through messages 66–134. The Google Doc at <code>docs.google.com/document/d/18Qk0-fufGjF-46hPvLR-wF7Iq-QJ5vdyY4-F5_odgtI</code> (line 4371) may be more complete.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num">RISK 3</span>
+      <h3>ADR count mismatch — 7 named in conversation, RFC lists 10</h3>
+    </div>
+    <div class="finding-body">
+      <p>The conversation explicitly named 6 ADRs (lines 2541–2558) plus one more in message [58] (ADR-007: One Detector Per Event Module, lines 4289–4316) = 7 total. The RFC lists "ADRs 001-010" — three additional ADRs were added during RFC generation and were never reviewed or confirmed with Rob. Those three unreviewed ADRs should be identified and verified.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num">RISK 4</span>
+      <h3>Phasing: Flow Manifests explicitly deferred to post-Core/BatchJobs/Observability</h3>
+    </div>
+    <div class="finding-body">
+      <p>The intended implementation sequence (from message [12], lines 1490–1491):</p>
+      <ol style="font-size:0.88rem;line-height:1.8;color:#374151;padding-left:1.25rem;">
+        <li>Core execution pipeline</li>
+        <li>BatchJobs plugin</li>
+        <li>Observability plugin</li>
+        <li>Flow Manifests + CI validation</li>
+        <li>Compare Mode</li>
+        <li>Console architecture explorer</li>
+      </ol>
+      <p>If the RFC presents all phases as co-equal or in a different order, this phasing decision is lost — and Flow Manifests become a gate on an otherwise-ready core rewrite.</p>
+    </div>
+  </div>
+
+  <!-- ── Section 6: Notable Concerns ─────────────────────────── -->
+  <div class="section-banner warn" id="concerns">
+    <span class="banner-num">§6</span>
+    NOTABLE CONCERNS THE RFC IGNORES
+  </div>
+
+  <div class="section-intro">
+    <p>Issues that were either not discussed or only briefly acknowledged in the conversation, and which appear to be absent from the RFC's surface.</p>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num critical">CONCERN 1</span>
+      <h3>Re-fetching data per job — GraphQL round-trips unaddressed</h3>
+    </div>
+    <div class="finding-body">
+      <p>Jobs receive <code>ctx.event.envelope.payload</code> (the raw Hasura snapshot payload). Jobs that need the <em>current</em> database state must re-fetch. The conversation never addressed:</p>
+      <ul style="font-size:0.88rem;line-height:1.8;color:#374151;padding-left:1.25rem;">
+        <li>Whether jobs are expected to re-fetch or use the snapshot</li>
+        <li>Whether a shared data layer or request cache is recommended</li>
+        <li>Cost/latency of N jobs each making independent GraphQL calls</li>
+        <li>Consistency guarantees between the event snapshot and re-fetched data</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num critical">CONCERN 2</span>
+      <h3>Blast radius unknown — no count of existing modules, jobs, or consumers</h3>
+    </div>
+    <div class="finding-body">
+      <p>The conversation never established how many event modules, job functions, or consumers currently exist in <code>hasura-event-detector</code>. Without a blast-radius estimate, migration phase timing and compatibility facade scope are unanchored. A single "surprises the team" number here could substantially change the migration plan.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num">CONCERN 3</span>
+      <h3>Detector readability is "above all else" — enforcement mechanism unresolved</h3>
+    </div>
+    <div class="finding-body">
+      <div class="quote">
+        <p>"The framework should optimize for this style above all else."</p>
+        <span class="quote-loc">Lines 111–113</span>
+      </div>
+      <p>Whether this strong preference is enforced (lint rules, CI checks on detector style) or merely encouraged was never resolved. The RFC should state the enforcement strategy, even if the answer is "convention only for now."</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num">CONCERN 4</span>
+      <h3>Console and Compare Mode are long-term features presented as co-equal with core</h3>
+    </div>
+    <div class="finding-body">
+      <p>The console architecture (Expected/Observed/Compare modes) is explicitly long-term vision. The conversation recommended starting with a single high-value flow (Mobile Service Dispatch) and proving the pattern before scaling. If the RFC presents the console as a Phase 1 requirement alongside core execution, it inflates MVP scope significantly.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num">CONCERN 5</span>
+      <h3>Monorepo/Turborepo stack conflated with EventKit rewrite</h3>
+    </div>
+    <div class="finding-body">
+      <p>One of the source snippets described a platform-level monorepo consolidation (pnpm workspaces, Turborepo, Dependency Cruiser — lines 144–157). This is a separate, massive project from the EventKit rewrite. EventKit does not require the monorepo. If the RFC conflates these, it creates false dependencies and inflated scope.</p>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num">CONCERN 6</span>
+      <h3><code>AbortSignal</code>, <code>progress()</code>, and <code>checkpoint()</code> — in types but never specified</h3>
+    </div>
+    <div class="finding-body">
+      <p>Three <code>JobContext</code> members (lines 2132–2135) — <code>signal?: AbortSignal</code>, <code>progress()</code>, <code>checkpoint()</code> — appear in the agreed types but were never discussed. Cancellation semantics (who signals, what guarantees jobs honor it) and the persistence target for progress/checkpoint events are completely unspecified. This is implementation-detail debt that the RFC leaves to implementers.</p>
+    </div>
+  </div>
+
+  <!-- ── Section 7: Priority Summary ─────────────────────────── -->
+  <div class="section-banner" id="priority">
+    <span class="banner-num">§7</span>
+    TOP 10 GAPS — priority order for RFC review
+  </div>
+
+  <div class="finding">
+    <div class="finding-header">
+      <span class="finding-num critical">PRIORITY LIST</span>
+      <h3>Critical gaps, in order of risk to implementation correctness</h3>
+    </div>
+    <div class="finding-body">
+      <div class="compare-table-wrap">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Gap</th>
+              <th>Risk if unresolved</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="priority-badge prio-1">P1</span></td>
+              <td><strong>Execution mode default</strong> — parallel or series? <code>allSettled</code> or first-failure?</td>
+              <td>Silent behavioral regression for every migrated consumer</td>
+            </tr>
+            <tr>
+              <td><span class="priority-badge prio-1">P1</span></td>
+              <td><strong>Data flow into jobs</strong> — envelope payload is the path; <code>HasuraHandlerContext</code> extension must be specified</td>
+              <td>Inconsistent data-passing conventions across event modules</td>
+            </tr>
+            <tr>
+              <td><span class="priority-badge prio-1">P1</span></td>
+              <td><strong>Loop prevention / tracking token</strong> — mechanism for suppressing job-generated events</td>
+              <td>Event storms in production</td>
+            </tr>
+            <tr>
+              <td><span class="priority-badge prio-1">P1</span></td>
+              <td><strong><code>DurableJobOptions</code> type</strong> — BatchJobs integration contract is undefined</td>
+              <td>BatchJobs plugin author must invent the contract</td>
+            </tr>
+            <tr>
+              <td><span class="priority-badge prio-1">P1</span></td>
+              <td><strong>Detection ordering</strong> — first-match vs all-match per invocation</td>
+              <td>Multiple events firing unexpectedly, or behavioral regression from current library</td>
+            </tr>
+            <tr>
+              <td><span class="priority-badge prio-1">P1</span></td>
+              <td><strong><code>run()</code> import shape</strong> — standalone function vs context-injected; both or one?</td>
+              <td>Handler authoring inconsistency across the codebase</td>
+            </tr>
+            <tr>
+              <td><span class="priority-badge prio-2">P2</span></td>
+              <td><strong><code>DetectedEvent</code> must not carry <code>DetectorContext</code></strong> — confirm RFC enforces this boundary</td>
+              <td>Detector helpers used outside detection, breaking source-agnosticism</td>
+            </tr>
+            <tr>
+              <td><span class="priority-badge prio-2">P2</span></td>
+              <td><strong>Flow Manifests are post-MVP</strong> — RFC must clearly phase-gate this</td>
+              <td>Inflated MVP scope, delayed core delivery</td>
+            </tr>
+            <tr>
+              <td><span class="priority-badge prio-2">P2</span></td>
+              <td><strong>Google Doc vs Markdown RFC</strong> — which is the canonical spec? The Doc may be more complete</td>
+              <td>Implementation diverges from authoritative design</td>
+            </tr>
+            <tr>
+              <td><span class="priority-badge prio-2">P2</span></td>
+              <td><strong>"Why EventKit Exists" strategic framing</strong> — added to Google Doc at end of conversation, may be absent from RFC</td>
+              <td>RFC lacks the "north star" that explains architectural decisions to future contributors</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</main>
+</div>
+
+<script>
+// Active nav link on scroll
+const sections = document.querySelectorAll('[id]');
+const navLinks = document.querySelectorAll('nav.rail a');
+
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      navLinks.forEach(a => a.classList.remove('active'));
+      const active = document.querySelector(`nav.rail a[href="#${entry.target.id}"]`);
+      if (active) active.classList.add('active');
+    }
+  });
+}, { rootMargin: '-20% 0px -70% 0px' });
+
+sections.forEach(s => observer.observe(s));
+</script>

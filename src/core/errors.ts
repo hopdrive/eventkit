@@ -130,3 +130,41 @@ function safeStringify(value: unknown): string {
     return String(value);
   }
 }
+
+// =============================================================================
+// Request/response error classes (ADR-026)
+// =============================================================================
+// Thrown from a module's `resolve` (or a job) to signal a non-2xx wire response.
+// Carry their mapping data as plain fields so the runtime/platform can read them
+// duck-typed (instanceof across bundled module copies is unreliable). The runtime
+// surfaces these onto `InvocationResult.resolved.error`; the source's platform
+// adapter maps them to the wire (HTTP status / Hasura `{message,extensions}`).
+
+/**
+ * Map the outcome to a specific HTTP status. For status-contract webhook vendors
+ * (e.g. Stripe), throwing `ClientError(400, …)` makes the platform respond 400.
+ */
+export class ClientError extends Error {
+  override readonly name = 'ClientError';
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/**
+ * A Hasura Action error (§7.2). Maps to HTTP 4xx with body
+ * `{ message, extensions: { code? } }` — the exact shape Hasura surfaces to the
+ * GraphQL client. `code` is optional; extra `extensions` keys are merged.
+ */
+export class ActionError extends Error {
+  override readonly name = 'ActionError';
+  readonly code?: string;
+  readonly extensions?: Record<string, unknown>;
+  constructor(message: string, code?: string, extensions?: Record<string, unknown>) {
+    super(message);
+    if (code !== undefined) this.code = code;
+    if (extensions !== undefined) this.extensions = extensions;
+  }
+}

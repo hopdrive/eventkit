@@ -1,0 +1,1518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EventKit — The Rewrite</title>
+<meta name="description" content="How HopDrive's hasura-event-detector becomes EventKit: a source-agnostic event framework, and what changes in the event-handlers repo.">
+<style>
+  :root{
+    --petrol:#0B3539; --petrol-2:#0E4045; --petrol-3:#103C41;
+    --paper:#F4F6F5; --surface:#FFFFFF; --ink:#10262A; --muted:#566769;
+    --faint:#8A9A9B; --hair:#DFE6E4; --hair-2:#EAEFED;
+    --brass:#C2872E; --brass-2:#A8721F; --brass-soft:#F4E9D4; --brass-line:#E3C892;
+    --teal:#2E7D78; --teal-soft:#E2F0EE;
+    --now:#7C8A8C; --now-soft:#EDEFEE;
+    --rose:#B4232E; --green:#2F7D4E;
+    --code-bg:#0C2E32; --code-ink:#CFE0DD; --code-dim:#6E8C8E; --code-str:#D8B777; --code-kw:#7FB8C9;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --maxw:1080px;
+  }
+  *{box-sizing:border-box;}
+  html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto;}}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px;}
+  .narrow{max-width:760px;}
+  h1,h2,h3,h4{text-wrap:balance;}
+  code{font-family:var(--mono);}
+
+  /* eyebrow */
+  .eyebrow{font:700 12px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--brass);margin:0 0 16px;}
+  .eyebrow.on-dark{color:var(--brass-line);}
+
+  /* ---------- HERO ---------- */
+  .hero{background:var(--petrol);color:#EAF2F0;position:relative;overflow:hidden;border-bottom:3px solid var(--brass);}
+  .hero::before{content:"";position:absolute;inset:0;background:
+     radial-gradient(900px 400px at 80% -10%, rgba(194,135,46,.16), transparent 60%),
+     radial-gradient(700px 500px at 0% 110%, rgba(46,125,120,.18), transparent 55%);pointer-events:none;}
+  .hero .wrap{position:relative;padding:64px 24px 52px;}
+  .hero h1{font-size:clamp(34px,6vw,60px);line-height:1.02;letter-spacing:-.03em;font-weight:800;margin:0 0 20px;color:#FFFFFF;}
+  .hero h1 .accent{color:var(--brass-line);}
+  .hero .lede{font-size:clamp(17px,2.2vw,21px);line-height:1.5;color:#BFD2CF;max-width:60ch;margin:0 0 14px;}
+  .fromto{display:inline-flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:22px;font:600 13px/1 var(--mono);}
+  .fromto .old{color:#9FB3B2;text-decoration:line-through;text-decoration-color:rgba(180,35,46,.7);text-decoration-thickness:2px;}
+  .fromto .arrow{color:var(--brass-line);}
+  .fromto .new{color:#fff;background:rgba(194,135,46,.18);border:1px solid rgba(227,200,146,.4);padding:7px 11px;border-radius:7px;}
+
+  /* pipeline */
+  .pipe-frame{margin-top:42px;border:1px solid rgba(159,179,178,.25);border-radius:14px;background:rgba(255,255,255,.03);padding:22px;}
+  .pipe-cap{font:700 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:#8FA8A6;margin:0 0 16px;display:flex;gap:8px;align-items:center;}
+  .pipe-scroll{overflow-x:auto;padding-bottom:6px;}
+  .pipe{display:flex;align-items:stretch;gap:0;min-width:760px;}
+  .node{flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;gap:4px;background:rgba(255,255,255,.04);border:1px solid rgba(159,179,178,.28);border-radius:10px;padding:11px 13px;min-width:104px;}
+  .node .nlabel{font:700 9.5px/1.2 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:#85A09E;}
+  .node .nname{font:650 13px/1.25 var(--sans);color:#EAF2F0;}
+  .node.biz{background:rgba(194,135,46,.14);border-color:var(--brass-line);}
+  .node.biz .nname{color:#FBEAC9;}
+  .node.biz .nlabel{color:var(--brass-line);}
+  .node.srcgroup{min-width:120px;gap:6px;}
+  .src-chips{display:flex;flex-wrap:wrap;gap:4px;}
+  .src-chips span{font:600 10px/1 var(--mono);color:#CFE0DD;background:rgba(255,255,255,.06);border:1px solid rgba(159,179,178,.3);border-radius:5px;padding:4px 6px;}
+  .src-chips span.first{color:#FBEAC9;border-color:var(--brass-line);background:rgba(194,135,46,.16);}
+  .conn{flex:0 0 auto;align-self:center;width:26px;height:2px;background:linear-gradient(90deg,rgba(159,179,178,.5),rgba(159,179,178,.5));position:relative;}
+  .conn::after{content:"";position:absolute;right:-1px;top:-3px;border-left:6px solid rgba(159,179,178,.65);border-top:4px solid transparent;border-bottom:4px solid transparent;}
+  .plugins-band{margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font:600 12px/1 var(--sans);color:#9FB3B2;}
+  .plugins-band .pl{font:600 11px/1 var(--mono);color:#CFE0DD;background:rgba(46,125,120,.18);border:1px solid rgba(46,125,120,.4);border-radius:6px;padding:6px 9px;}
+  .plugins-band .lead{font:700 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#85A09E;}
+
+  /* ---------- SECTIONS ---------- */
+  section{padding:60px 0;}
+  section.tint{background:var(--surface);border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);}
+  .sec-head{margin-bottom:30px;}
+  h2{font-size:clamp(26px,3.6vw,36px);line-height:1.1;letter-spacing:-.02em;font-weight:800;margin:8px 0 12px;}
+  .sec-sub{font-size:17px;color:var(--muted);max-width:70ch;margin:0;}
+  h3{font-size:20px;font-weight:700;letter-spacing:-.01em;margin:0 0 8px;}
+  p{margin:0 0 16px;}
+
+  /* three questions */
+  .three{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:8px;}
+  @media(max-width:780px){.three{grid-template-columns:1fr;}}
+  .qcard{background:var(--surface);border:1px solid var(--hair);border-radius:13px;padding:22px;position:relative;}
+  .qcard .qn{font:700 12px/1 var(--mono);color:var(--brass);letter-spacing:.04em;}
+  .qcard .qq{font-size:17px;font-weight:650;margin:12px 0 12px;color:var(--ink);}
+  .qcard .maps{font:600 12px/1 var(--mono);color:var(--muted);display:flex;align-items:center;gap:8px;border-top:1px dashed var(--hair);padding-top:12px;}
+  .qcard .maps b{color:var(--teal);font-weight:700;}
+
+  /* shift table */
+  .shifts{display:flex;flex-direction:column;gap:1px;background:var(--hair);border:1px solid var(--hair);border-radius:13px;overflow:hidden;}
+  .shift{display:grid;grid-template-columns:168px 1fr 1fr;gap:18px;background:var(--surface);padding:15px 18px;align-items:center;}
+  @media(max-width:820px){.shift{grid-template-columns:1fr;gap:7px;}}
+  .shift .dim{font:700 11px/1.3 var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--faint);}
+  .shift .was{color:var(--muted);font-size:14px;}
+  .shift .now-val{font-size:14px;color:var(--ink);position:relative;padding-left:20px;}
+  .shift .now-val::before{content:"→";position:absolute;left:0;color:var(--brass);font-weight:700;}
+  @media(max-width:820px){.shift .now-val{padding-left:20px;}}
+  .shift code{font:600 12.5px/1.4 var(--mono);background:var(--hair-2);padding:1px 5px;border-radius:4px;}
+  .shift .now-val code{background:var(--brass-soft);color:#6a4a12;}
+
+  /* ---------- CODE COMPARE ---------- */
+  .cmp-block{margin:34px 0 0;}
+  .cmp-title{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px;}
+  .cmp-title .num{font:700 13px/1 var(--mono);color:var(--brass);background:var(--brass-soft);border-radius:6px;padding:5px 8px;}
+  .cmp-title h3{margin:0;}
+  .cmp-title .file{font:600 12px/1 var(--mono);color:var(--faint);margin-left:auto;}
+  .cmp-note{font-size:14.5px;color:var(--muted);margin:6px 0 14px;max-width:80ch;}
+  .cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;}
+  @media(max-width:880px){.cmp{grid-template-columns:1fr;}}
+  .pane{border-radius:12px;overflow:hidden;border:1px solid var(--hair);background:var(--code-bg);}
+  .pane-head{display:flex;align-items:center;gap:9px;padding:9px 14px;font:700 11px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;}
+  .pane.was .pane-head{background:var(--now-soft);color:var(--now);}
+  .pane.becomes .pane-head{background:var(--brass-soft);color:var(--brass-2);}
+  .pane-head .tagdot{width:8px;height:8px;border-radius:50%;}
+  .pane.was .tagdot{background:var(--now);}
+  .pane.becomes .tagdot{background:var(--brass);}
+  .pane-head .sig{margin-left:auto;font-weight:600;letter-spacing:0;text-transform:none;opacity:.85;}
+  pre{margin:0;padding:15px 16px;overflow-x:auto;font:500 12.5px/1.62 var(--mono);color:var(--code-ink);background:var(--code-bg);tab-size:2;}
+  pre .c{color:var(--code-dim);font-style:italic;}
+  pre .s{color:var(--code-str);}
+  pre .k{color:var(--code-kw);}
+  pre .hl{background:rgba(194,135,46,.20);border-radius:3px;padding:0 2px;box-decoration-break:clone;-webkit-box-decoration-break:clone;}
+  pre .dim{color:var(--code-dim);}
+
+  /* feature cards */
+  .feats{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;}
+  @media(max-width:780px){.feats{grid-template-columns:1fr;}}
+  .feat{background:var(--surface);border:1px solid var(--hair);border-radius:13px;padding:22px;border-top:3px solid var(--brass);}
+  .feat.guard{border-top-color:var(--rose);}
+  .feat.obs{border-top-color:var(--teal);}
+  .feat.phased{border-top-color:var(--now);}
+  .feat h3{display:flex;align-items:center;gap:9px;}
+  .feat .ic{font:700 11px/1 var(--mono);color:var(--brass);}
+  .feat p{font-size:14.5px;color:var(--muted);margin:6px 0 0;}
+  .feat p b{color:var(--ink);font-weight:650;}
+  .feat .pico{font:600 11px/1 var(--mono);color:var(--faint);margin-top:12px;display:block;}
+
+  /* payoff note */
+  .payoff{margin-top:18px;display:flex;gap:13px;align-items:flex-start;background:var(--teal-soft);border:1px solid #BFE0DC;border-radius:12px;padding:16px 18px;font-size:14.5px;color:var(--ink);}
+  .payoff .pk{font:700 11px/1.3 var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--teal);flex:0 0 auto;padding-top:2px;}
+  .payoff code{font:600 12.5px/1.4 var(--mono);background:#fff;border:1px solid #CDE6E2;padding:1px 5px;border-radius:4px;}
+
+  /* split mini-cards (plugin independence + core api) */
+  .split2{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:stretch;}
+  @media(max-width:820px){.split2{grid-template-columns:1fr;}}
+  .minicard{background:var(--surface);border:1px solid var(--hair);border-radius:13px;padding:20px 22px;}
+  .minicard h3{font-size:17px;margin:0 0 12px;}
+  .minicard ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:10px;}
+  .minicard li{font-size:14px;line-height:1.5;color:var(--muted);padding-left:22px;position:relative;}
+  .minicard li::before{content:"→";position:absolute;left:0;color:var(--brass);font-weight:700;}
+  .minicard li b{color:var(--ink);font-weight:650;}
+  .minicard code{font:600 12px/1.4 var(--mono);background:var(--hair-2);padding:1px 5px;border-radius:4px;}
+
+  /* secrets flow */
+  .secrets{counter-reset:s;display:flex;flex-direction:column;gap:0;margin:6px 0 0;}
+  .secrets .st{counter-increment:s;display:grid;grid-template-columns:38px 1fr;gap:16px;padding:13px 0;border-bottom:1px solid var(--hair);align-items:start;}
+  .secrets .st:last-child{border-bottom:0;}
+  .secrets .st::before{content:counter(s);font:800 14px/1 var(--mono);color:var(--brass-2);background:var(--brass-soft);border-radius:8px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;}
+  .secrets .st .sb{font-size:14.5px;color:var(--muted);}
+  .secrets .st .sb b{color:var(--ink);font-weight:650;}
+  .secrets .st code{font:600 12.5px/1.4 var(--mono);background:var(--hair-2);padding:1px 5px;border-radius:4px;}
+
+  /* planned plugins list */
+  .plugins-list{display:flex;flex-direction:column;gap:1px;background:var(--hair);border:1px solid var(--hair);border-radius:13px;overflow:hidden;margin-top:6px;}
+  .prow{display:grid;grid-template-columns:188px 1fr 132px;gap:18px;background:var(--surface);padding:15px 18px;align-items:start;}
+  @media(max-width:820px){.prow{grid-template-columns:1fr;gap:6px;}}
+  .prow .pname{font:700 13.5px/1.35 var(--mono);color:var(--ink);}
+  .prow .pdesc{font-size:13.5px;line-height:1.5;color:var(--muted);}
+  .prow .pdesc .sec{display:inline-block;font:600 10.5px/1 var(--mono);color:var(--brass-2);background:var(--brass-soft);border-radius:5px;padding:4px 6px;margin-top:7px;}
+  .prow .home{font:600 10.5px/1.3 var(--mono);color:var(--muted);border:1px solid var(--hair);border-radius:6px;padding:5px 8px;display:inline-block;align-self:start;}
+  .prow .home.app{color:var(--teal);border-color:#BFE0DC;background:var(--teal-soft);}
+
+  /* bidirectional chips */
+  .bidir{display:flex;gap:10px;flex-wrap:wrap;margin:2px 0 18px;}
+  .bidir .dir{display:flex;align-items:center;gap:9px;font:600 12.5px/1 var(--mono);color:var(--muted);background:var(--surface);border:1px solid var(--hair);border-radius:9px;padding:10px 13px;}
+  .bidir .dir b{color:var(--ink);}
+  .bidir .dir .ar{color:var(--brass);font-weight:700;}
+
+  /* per-plugin spec cards */
+  .pspec{background:var(--surface);border:1px solid var(--hair);border-top:3px solid var(--brass);border-radius:14px;padding:24px 26px;margin:0 0 16px;}
+  .pspec.obs{border-top-color:var(--teal);} .pspec.guard{border-top-color:var(--rose);} .pspec.log{border-top-color:#6B7A7C;}
+  .pspec-top{display:flex;align-items:baseline;gap:11px;flex-wrap:wrap;margin-bottom:2px;}
+  .pspec-top .nm{font:700 19px/1.15 var(--mono);color:var(--ink);letter-spacing:-.01em;}
+  .pspec-top .home{font:600 10.5px/1.3 var(--mono);color:var(--muted);border:1px solid var(--hair);border-radius:6px;padding:4px 8px;}
+  .pspec-top .home.app{color:var(--teal);border-color:#BFE0DC;background:var(--teal-soft);}
+  .pspec-top .req{font:600 10.5px/1.3 var(--mono);color:var(--brass-2);background:var(--brass-soft);border-radius:6px;padding:4px 8px;}
+  .pspec .reg{font:600 12.5px/1.55 var(--mono);background:var(--code-bg);color:var(--code-ink);border-radius:9px;padding:11px 13px;margin:12px 0 15px;overflow-x:auto;}
+  .pspec .reg .k{color:var(--code-kw);} .pspec .reg .s{color:var(--code-str);} .pspec .reg .c{color:var(--code-dim);}
+  .pspec-lead{color:var(--ink);margin:0 0 17px;max-width:86ch;font-size:15px;}
+  .pspec-cols{display:grid;grid-template-columns:1.25fr 1fr;gap:26px;}
+  @media(max-width:760px){.pspec-cols{grid-template-columns:1fr;gap:18px;}}
+  .pspec-cols h4{font:700 11px/1 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--faint);margin:0 0 10px;}
+  .pspec-cols ul{margin:0 0 16px;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;}
+  .pspec-cols li{font-size:13.5px;line-height:1.5;color:var(--muted);padding-left:18px;position:relative;}
+  .pspec-cols li::before{content:"›";position:absolute;left:2px;color:var(--brass);font-weight:700;}
+  .pspec-cols li b{color:var(--ink);font-weight:650;}
+  .pspec code{font:600 12px/1.4 var(--mono);background:var(--hair-2);padding:1px 5px;border-radius:4px;}
+  .hooks{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;}
+  .hooks .hk{font:600 11px/1 var(--mono);color:var(--brass-2);background:var(--brass-soft);border:1px solid var(--brass-line);border-radius:5px;padding:5px 7px;}
+  .gain{background:var(--teal-soft);border:1px solid #CDE6E2;border-radius:9px;padding:11px 13px;font-size:13.5px;line-height:1.5;color:var(--ink);}
+  .gain b{color:var(--teal);}
+  @media(max-width:680px){.budget-buckets{grid-template-columns:1fr !important;}}
+
+  /* migration arc */
+  .arc{display:flex;flex-direction:column;gap:0;}
+  .phase{display:grid;grid-template-columns:44px 1fr;gap:18px;padding:16px 0;border-bottom:1px solid var(--hair);align-items:start;}
+  .phase:last-child{border-bottom:0;}
+  .phase .pn{font:800 18px/1 var(--mono);color:var(--brass);font-variant-numeric:tabular-nums;padding-top:2px;}
+  .phase .pbody h4{margin:0 0 4px;font-size:16px;font-weight:700;}
+  .phase .pbody p{margin:0;font-size:14.5px;color:var(--muted);}
+  .phase .risk{display:inline-block;font:700 10px/1 var(--mono);letter-spacing:.05em;text-transform:uppercase;padding:4px 7px;border-radius:5px;margin-top:7px;}
+  .risk.low{background:var(--teal-soft);color:var(--teal);}
+  .risk.rewrite{background:var(--brass-soft);color:var(--brass-2);}
+  .risk.crit{background:#F6E1E2;color:var(--rose);}
+
+  .callout{background:var(--petrol);color:#DCE8E6;border-radius:14px;padding:26px 28px;margin-top:14px;}
+  .callout .eyebrow{margin-bottom:10px;}
+  .callout p{margin:0;font-size:16px;color:#CADAD7;}
+  .callout p b{color:#fff;}
+
+  footer{background:var(--petrol);color:#9FB3B2;padding:40px 0 64px;border-top:3px solid var(--brass);}
+  footer .status{display:inline-flex;align-items:center;gap:9px;font:700 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--brass-line);border:1px solid rgba(227,200,146,.35);border-radius:999px;padding:8px 13px;margin-bottom:18px;}
+  footer .files{font:500 12.5px/2 var(--mono);color:#7E9492;}
+  footer .files b{color:#BFD2CF;font-weight:600;}
+
+  a{color:var(--brass-2);}
+  :focus-visible{outline:2px solid var(--brass);outline-offset:3px;border-radius:3px;}
+
+  @media (prefers-reduced-motion:no-preference){
+    .reveal{opacity:0;transform:translateY(14px);animation:rise .7s cubic-bezier(.2,.7,.2,1) forwards;}
+    .hero h1{animation-delay:.05s;} .hero .lede{animation-delay:.14s;} .fromto{animation-delay:.22s;} .pipe-frame{animation-delay:.3s;}
+    @keyframes rise{to{opacity:1;transform:none;}}
+    .conn{background-size:200% 100%;background-image:linear-gradient(90deg,rgba(159,179,178,.25),rgba(227,200,146,.9),rgba(159,179,178,.25));animation:flow 3.4s linear infinite;}
+    @keyframes flow{from{background-position:200% 0;}to{background-position:-200% 0;}}
+  }
+  /* ── API reference ── */
+  .refgroup{margin:0 0 30px;}
+  .refgroup > h3{font:700 15px/1.2 var(--mono);color:var(--ink);margin:0 0 3px;letter-spacing:-.01em;}
+  .refgroup > .ghint{font-size:13px;color:var(--muted);margin:0 0 14px;max-width:80ch;}
+  .refentry{border-top:1px solid var(--hair);padding:15px 0 4px;}
+  .refentry .rsig{font:600 13px/1.55 var(--mono);color:var(--ink);background:var(--hair-2);border-radius:8px;padding:9px 13px;overflow-x:auto;white-space:pre;margin:0 0 8px;}
+  .refentry > p{margin:0 0 8px;font-size:13.5px;line-height:1.55;color:var(--muted);max-width:84ch;}
+  .refentry .rfields{margin:0 0 4px;padding:0;list-style:none;display:flex;flex-direction:column;gap:5px;}
+  .refentry .rfields li{font-size:12.5px;line-height:1.5;color:var(--muted);padding-left:15px;position:relative;}
+  .refentry .rfields li::before{content:"\2192";position:absolute;left:0;color:var(--brass);font-weight:700;}
+  .refentry .rfields b, .refentry > p b{color:var(--ink);font-weight:650;}
+  .refgroup code{font:600 12px/1.4 var(--mono);background:var(--hair-2);padding:1px 5px;border-radius:4px;color:var(--ink);}
+  .refbadge{font:700 9.5px/1 var(--mono);text-transform:uppercase;letter-spacing:.05em;padding:3px 6px;border-radius:5px;margin-left:9px;vertical-align:middle;white-space:nowrap;}
+  .refbadge.shipped{color:var(--teal);background:var(--teal-soft);}
+  .refbadge.planned{color:var(--brass-2);background:var(--brass-soft);}
+  .refcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 36px;}
+</style>
+</head>
+<body>
+
+
+<!-- ============ HERO ============ -->
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow on-dark reveal">EventKit · Architecture Rewrite · v0.2 draft</p>
+    <h1 class="reveal">Hasura stops being the framework.<br><span class="accent">Business events</span> become the center.</h1>
+    <p class="lede reveal">EventKit is the source-agnostic evolution of <code>hasura-event-detector</code>. The readable event-module authoring model is preserved; the runtime around it is generalized so a Hasura row change, a vendor webhook, a cron tick, and an app event all flow through one pipeline and one vocabulary.</p>
+    <div class="fromto reveal">
+      <span class="old">@hopdrive/hasura-event-detector</span>
+      <span class="arrow">→</span>
+      <span class="new">@hopdrive/eventkit</span>
+    </div>
+
+    <div class="pipe-frame reveal">
+      <p class="pipe-cap">The runtime pipeline · one path, any source</p>
+      <div class="pipe-scroll">
+        <div class="pipe">
+          <div class="node srcgroup">
+            <span class="nlabel">Sources</span>
+            <span class="src-chips"><span class="first">Hasura</span><span>Webhook</span><span>Cron</span><span>App</span></span>
+          </div>
+          <div class="conn"></div>
+          <div class="node"><span class="nlabel">normalize</span><span class="nname">EventEnvelope</span></div>
+          <div class="conn"></div>
+          <div class="node"><span class="nlabel">detector()</span><span class="nname">boolean</span></div>
+          <div class="conn"></div>
+          <div class="node biz"><span class="nlabel">business event</span><span class="nname">DetectedEvent</span></div>
+          <div class="conn"></div>
+          <div class="node"><span class="nlabel">jobs[]</span><span class="nname">declared</span></div>
+          <div class="conn"></div>
+          <div class="node"><span class="nlabel">runtime</span><span class="nname">runs them</span></div>
+          <div class="conn"></div>
+          <div class="node biz"><span class="nlabel">result</span><span class="nname">JobExecution[]</span></div>
+        </div>
+      </div>
+      <div class="plugins-band">
+        <span class="lead">Plugins around the runtime</span>
+        <span class="pl">Observability</span>
+        <span class="pl">BatchJobs · durability</span>
+        <span class="pl">Tracking · loop guard</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ============ THE REFRAME ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head narrow">
+      <p class="eyebrow">The reframe</p>
+      <h2>Three questions, one vocabulary</h2>
+      <p class="sec-sub">EventKit answers the same three questions for every inbound signal, regardless of where it came from. That answer set is the runtime&rsquo;s entire data model — and the foundation everything else (observability, durability, flow comparison) builds on.</p>
+    </div>
+    <div class="three">
+      <div class="qcard">
+        <div class="qn">01</div>
+        <div class="qq">What came into the system?</div>
+        <div class="maps">normalized to <b>EventEnvelope</b></div>
+      </div>
+      <div class="qcard">
+        <div class="qn">02</div>
+        <div class="qq">What business event did it represent?</div>
+        <div class="maps">named as <b>DetectedEvent</b></div>
+      </div>
+      <div class="qcard">
+        <div class="qn">03</div>
+        <div class="qq">What work ran because of it?</div>
+        <div class="maps">recorded as <b>JobExecution</b></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FRAMEWORK CONTRACT SHIFTS ============ -->
+<section class="tint">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Framework · hasura-event-detector → eventkit</p>
+      <h2>What changes in the contract</h2>
+      <p class="sec-sub">The authoring experience you like — one detector, named by the business event — is kept. What changes is everything underneath: the handler becomes a declarative job set, plus the data contracts, the entry point, and the boundaries between framework, source, and HopDrive domain code.</p>
+    </div>
+    <div class="shifts">
+      <div class="shift"><span class="dim">Framework identity</span><span class="was">Hasura <i>is</i> the framework</span><span class="now-val">Hasura is one <code>SourceAdapter</code> among many</span></div>
+      <div class="shift"><span class="dim">Hasura sources</span><span class="was">one detector for DB events; cron handled ad hoc</span><span class="now-val">named by transport: <code>hasuraEvent</code> (DB triggers) + <code>hasuraCron</code> (Hasura scheduled triggers — a sibling payload)</span></div>
+      <div class="shift"><span class="dim">Detector input</span><span class="was"><code>(eventName, hasuraEvent)</code> + <code>parseHasuraEvent()</code></span><span class="now-val"><code>hasuraEvent.detector(ctx)</code> with typed helpers</span></div>
+      <div class="shift"><span class="dim">Handler data</span><span class="was">re-derive <code>old/new/role</code> via <code>parseHasuraEvent</code></span><span class="now-val">typed <code>HasuraHandlerContext</code> — <code>oldRow</code>, <code>newRow</code>, <code>role</code></span></div>
+      <div class="shift"><span class="dim">Job data</span><span class="was">one options bag (config + live clients + closures)</span><span class="now-val"><code>input</code> (live, never persisted) + <code>metadata</code> (serializable)</span></div>
+      <div class="shift"><span class="dim">Job signature</span><span class="was"><code>(event, hasuraEvent, options)</code></span><span class="now-val"><code>(ctx)</code> — one typed context, plugin-agnostic</span></div>
+      <div class="shift"><span class="dim">Handler shape</span><span class="was">handler body builds &amp; runs jobs (<code>cond &amp;&amp; job(...)</code> — hidden branch)</span><span class="now-val">no handler body — module declares a static <code>jobs</code> array the runtime runs (+ <code>prepare</code> for shared input); conditions move to detection or into the job</span></div>
+      <div class="shift"><span class="dim">Entry point</span><span class="was"><code>listenTo()</code> + plugins registered <i>per invocation</i></span><span class="now-val"><code>createEventKit(hasuraEvent)</code> once, then <code>kit.use()</code> / <code>kit.handler({ before })</code></span></div>
+      <div class="shift"><span class="dim">run() default</span><span class="was">parallel + isolated (implicit <code>allSettled</code>)</span><span class="now-val">parallel + continue-on-failure, <i>pinned</i>; series opt-in</span></div>
+      <div class="shift"><span class="dim">Durability</span><span class="was"><code>batchJob()</code> wrapper inside job code</span><span class="now-val">emergent from registering the BatchJobs plugin — no flag; it injects the row&rsquo;s input &amp; persists state, job stays batch-unaware</span></div>
+      <div class="shift"><span class="dim">Loop prevention</span><span class="was">tracking token, informal convention</span><span class="now-val">specified inbound/outbound provenance mechanism</span></div>
+      <div class="shift"><span class="dim">Observability</span><span class="was">synchronous GraphQL write per job</span><span class="now-val">buffered, flushed once at invocation end</span></div>
+      <div class="shift"><span class="dim">Console edits</span><span class="was"><code>case 'MANUAL': return false</code></span><span class="now-val">preserved — still a <code>case 'MANUAL'</code> branch (or the <code>ctx.manuallyInvoked()</code> helper)</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ IN YOUR CODE: BEFORE/AFTER ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">In the event-handlers repo</p>
+      <h2>What an event module becomes</h2>
+      <p class="sec-sub">The real <code>appointment.ready</code> module (authored 2022, stable), the job behind it, a durable batch consumer, and the entrypoint that dispatches them — today on the left, under EventKit on the right. Highlighted lines are where the change lives. Every example shows its imports; nothing appears from nowhere.</p>
+    </div>
+
+    <!-- 1. detector -->
+    <div class="cmp-block">
+      <div class="cmp-title"><span class="num">01</span><h3>The detector</h3><span class="file">events/appointment.ready</span></div>
+      <p class="cmp-note">The <code>switch</code> over the operation is <b>kept</b> — it&rsquo;s the readable house style. Named boolean facts live inside each case, and each case&rsquo;s <code>return</code> reads like a sentence. The only changes: the typed <code>ctx</code> API (<code>ctx.operation</code> / <code>ctx.columnChanged</code> / <code>ctx.newRow</code>) replaces <code>parseHasuraEvent</code>, the row is strongly typed, and <code>MANUAL</code> stays a suppressing case (with <code>ctx.manuallyInvoked()</code> available as sugar).</p>
+      <div class="cmp">
+        <div class="pane was">
+          <div class="pane-head"><span class="tagdot"></span>Now<span class="sig">hasura-event-detector</span></div>
+<pre><span class="k">const</span> { run, columnHasChanged, parseHasuraEvent } =
+  <span class="k">require</span>(<span class="s">'@hopdrive/hasura-event-detector'</span>);
+
+module.exports.detector = <span class="k">async</span> (eventName, hasuraEvent) =&gt; {
+  <span class="k">const</span> { dbEvent, operation } = parseHasuraEvent(hasuraEvent);
+  <span class="k">switch</span> (operation) {
+    <span class="k">case</span> <span class="s">'INSERT'</span>:
+      <span class="c">// Spark inserts as 'pending' for address resolution</span>
+      <span class="k">return</span> dbEvent?.new?.status === <span class="s">'ready'</span>;
+    <span class="k">case</span> <span class="s">'UPDATE'</span>:
+      <span class="k">const</span> statusChanged = columnHasChanged(<span class="s">'status'</span>, dbEvent);
+      <span class="k">const</span> isReady = dbEvent?.new?.status === <span class="s">'ready'</span>;
+      <span class="k">return</span> statusChanged &amp;&amp; isReady;
+    <span class="k">case</span> <span class="s">'DELETE'</span>: <span class="k">return</span> <span class="k">false</span>;
+    <span class="hl"><span class="k">case</span> <span class="s">'MANUAL'</span>: <span class="k">return</span> <span class="k">false</span>;</span>
+    <span class="k">default</span>: <span class="k">return</span> <span class="k">false</span>;
+  }
+};</pre>
+        </div>
+        <div class="pane becomes">
+          <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">eventkit</span></div>
+<pre><span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources/hasura'</span>;
+<span class="k">import type</span> { AppointmentRow } <span class="k">from</span> <span class="s">'./types'</span>;
+
+<span class="k">export const</span> detector = hasuraEvent.detector<span class="k">&lt;AppointmentRow&gt;</span>((ctx) =&gt; {
+  <span class="k">const</span> { operation, newRow } = ctx;
+  <span class="k">switch</span> (operation) {
+    <span class="k">case</span> <span class="s">'INSERT'</span>: {
+      <span class="c">// Spark inserts as 'pending' first; only fire if it arrives ready.</span>
+      <span class="k">const</span> insertedReady = newRow?.status === <span class="s">'ready'</span>;
+      <span class="k">return</span> insertedReady;
+    }
+    <span class="k">case</span> <span class="s">'UPDATE'</span>: {
+      <span class="k">const</span> statusChanged = ctx.columnChanged(<span class="s">'status'</span>);   <span class="c">// helper: stays on ctx</span>
+      <span class="k">const</span> isReady       = newRow?.status === <span class="s">'ready'</span>;
+      <span class="k">return</span> statusChanged &amp;&amp; isReady;
+    }
+    <span class="k">case</span> <span class="s">'DELETE'</span>:
+      <span class="k">return</span> <span class="k">false</span>;
+    <span class="hl"><span class="k">case</span> <span class="s">'MANUAL'</span>:   <span class="c">// suppress Hasura console edits</span>
+      <span class="k">return</span> <span class="k">false</span>;</span>
+    <span class="k">default</span>:
+      <span class="k">return</span> <span class="k">false</span>;
+  }
+});</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. handler -->
+    <div class="cmp-block">
+      <div class="cmp-title"><span class="num">02</span><h3>The job set — declared, not run</h3><span class="file">events/appointment.ready</span></div>
+      <p class="cmp-note"><b>There is no handler function anymore.</b> The module <i>declares</i> its jobs as a static array and the <b>runtime</b> runs them (ADR-025) — no <code>run()</code> call, no function body to branch in. The legacy handler&rsquo;s shared setup — the near-universal <code>sdk.apollo.initialize(...)</code> threaded into every job — becomes <code>prepare(ctx)</code>, which runs once and whose result is merged into every job&rsquo;s <code>ctx.input</code> automatically. Per-job <code>input</code> (a static object or a pure <code>(ctx) =&gt; …</code> mapper) layers on top for job-specific data. Run options (<code>parallel</code> / <code>continueOnFailure</code>) move onto the module. The whole module is now a declarative record an engineer — or the flow tooling — can read top to bottom without executing anything.</p>
+      <div class="cmp">
+        <div class="pane was">
+          <div class="pane-head"><span class="tagdot"></span>Now<span class="sig">handler runs the jobs</span></div>
+<pre><span class="k">const</span> { run, parseHasuraEvent } = <span class="k">require</span>(<span class="s">'@hopdrive/hasura-event-detector'</span>);
+<span class="k">const</span> { job } = <span class="k">require</span>(<span class="s">'../../~lib/scoped-job'</span>);
+<span class="k">const</span> { sendOfferSMS, sendAppointmentOfferedEmailToOrg } = <span class="k">require</span>(<span class="s">'../jobs'</span>);
+<span class="k">const</span> config = <span class="k">require</span>(<span class="s">'../../~lib/config.backend'</span>);
+
+module.exports.handler = <span class="k">async</span> (eventName, hasuraEvent) =&gt; {
+  <span class="k">const</span> { dbEvent } = parseHasuraEvent(hasuraEvent);
+  <span class="k">const</span> sdk = <span class="k">require</span>(<span class="s">'@hopdrive/sdk'</span>);
+
+  <span class="c">// shared setup, threaded into every job by hand ↓ (this is the `prepare` case)</span>
+  sdk.apollo.initialize({ admin_secret: config.graphqlSecret, … });
+
+  <span class="k">let</span> jobs = [];
+  jobs.push(job(sendOfferSMS,                 { sdk, appointment: dbEvent?.new }));
+  jobs.push(job(sendAppointmentOfferedEmailToOrg, { sdk, appointment: dbEvent?.new }));
+  <span class="k">return await</span> run(eventName, hasuraEvent, jobs);   <span class="c">// handler executes them</span>
+};</pre>
+        </div>
+        <div class="pane becomes">
+          <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">defineEvent — declarative</span></div>
+<pre><span class="k">import</span> { defineEvent, job } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
+<span class="k">import</span> { detector } <span class="k">from</span> <span class="s">'./appointment.ready.detector'</span>;   <span class="c">// the switch from §01</span>
+<span class="k">import</span> { initSdk } <span class="k">from</span> <span class="s">'../~lib/sdk'</span>;
+<span class="k">import</span> { sendOfferSMS, sendAppointmentOfferedEmailToOrg } <span class="k">from</span> <span class="s">'./jobs'</span>;
+<span class="k">import type</span> { AppointmentRow } <span class="k">from</span> <span class="s">'./types'</span>;
+
+<span class="k">export default</span> defineEvent<span class="k">&lt;AppointmentRow&gt;</span>({
+  name: <span class="s">'appointment.ready'</span>,
+  detector,
+  <span class="hl"><span class="c">// runs ONCE; its result is merged into every job's ctx.input</span>
+  prepare: (ctx) =&gt; ({ sdk: initSdk(), appointment: ctx.newRow }),
+  <span class="c">// a STATIC list — the runtime runs them. No run() call, no body to branch in.</span>
+  jobs: [
+    job(sendOfferSMS),                       <span class="c">// inherits { sdk, appointment }</span>
+    job(sendAppointmentOfferedEmailToOrg),
+  ],</span>
+  run: { mode: <span class="s">'parallel'</span>, continueOnFailure: <span class="k">true</span> },   <span class="c">// optional — these are the defaults</span>
+});</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- RULE: no conditional jobs -->
+    <div style="margin-top:18px;border:1px solid var(--hair);border-left:4px solid var(--rose);border-radius:13px;padding:22px 24px;background:var(--surface)">
+      <p style="font:700 12px/1 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--rose);margin:0 0 11px">The rule we&rsquo;re cementing — no conditional jobs</p>
+      <p style="margin:0 0 14px;color:var(--ink);max-width:82ch">Because <code>jobs</code> is a <b>static array</b> and the runtime runs it, there is <b>no handler body to branch in</b> — conditional inclusion is impossible <i>by construction</i>, not merely caught by a type check (ADR-025). The branded <code>job()</code> + a runtime throw remain as a backstop, but the real defense is the shape. This matters because a conditional branch in a handler is invisible to the observability / react-flow views and the Flow Manifests — exactly the layers EventKit exists to make legible. So a condition gets one of two homes — pick by asking: <i>does it decide which business event occurred, or just whether this one job has work to do?</i></p>
+      <div class="split2">
+        <div class="minicard" style="border-top:3px solid var(--teal)">
+          <h3 style="color:var(--teal)">Pattern A · promote to a new event</h3>
+          <p style="margin:0;color:var(--muted);font-size:14px;line-height:1.55">When the condition is a <b>distinct business fact</b>, it <i>defines</i> an event. Put it in a detector and give it a name; move the gated job there. Both modules keep a constant job set, and the branch becomes a visible, observable, documentable node instead of a hidden handler <code>if</code>.</p>
+        </div>
+        <div class="minicard" style="border-top:3px solid var(--teal)">
+          <h3 style="color:var(--teal)">Pattern B · short-circuit inside the job</h3>
+          <p style="margin:0;color:var(--muted);font-size:14px;line-height:1.55">When the condition is just <b>data presence</b> (&ldquo;nothing to do without a driver&rdquo;), keep the job in the static array and <code>return</code> early at the top of the job on its own <code>ctx.input</code>. The job still appears in every flow and trace; it simply no-ops when its input says so.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- migration: the 14 conditional sites -->
+    <div class="cmp-block" style="margin-top:18px">
+      <div class="cmp-title"><span class="num">⤳</span><h3>Migrating the ≈14 conditional sites</h3><span class="file">RFC §19.1</span></div>
+      <p class="cmp-note">Two real sites from <code>event-handlers</code>, one per pattern. Each existing gate must be classified explicitly during migration and the choice recorded — never reintroduce the gate at the array level.</p>
+      <div class="cmp">
+        <div class="pane was">
+          <div class="pane-head"><span class="tagdot"></span>Now<span class="sig">db-moves/move.active.change</span></div>
+<pre><span class="k">let</span> jobs = [];
+jobs.push(job(runAR,        { moveId, sdk, user, role }));
+jobs.push(job(runARV2,      { moveId, eventKey, sdk, user, role }));
+jobs.push(job(runDriverPay, { move: dbEvent?.new, hasuraEventId }));
+<span class="hl">driverStatusIsActionable &amp;&amp; !isFromDriver &amp;&amp; !moveIsOperationallyDone &amp;&amp;
+  jobs.push(job(sendDriverSilentPushNotification, { oldMove, newMove, sdk }));</span>
+<span class="k">return await</span> run(eventName, hasuraEvent, jobs);</pre>
+        </div>
+        <div class="pane becomes">
+          <div class="pane-head"><span class="tagdot"></span>Pattern A<span class="sig">that gate IS an event</span></div>
+<pre><span class="c">// move.active.change — keeps its three unconditional jobs</span>
+<span class="k">export default</span> defineEvent({ name: <span class="s">'move.active.change'</span>, detector,
+  jobs: [ job(runAR), job(runARV2), job(runDriverPay) ] });
+
+<span class="c">// the compound condition was a business fact → its own event</span>
+<span class="k">export default</span> defineEvent({
+  name: <span class="s">'move.driver-actionable'</span>,
+  <span class="hl">detector: hasuraEvent.detector((ctx) =&gt; {        <span class="c">// the gate, now named</span>
+    <span class="k">const</span> becameActionable = driverStatusActionable(ctx);
+    <span class="k">const</span> fromOps          = ctx.role !== <span class="s">'driver'</span>;
+    <span class="k">const</span> stillRunning     = !moveOperationallyDone(ctx.oldRow);
+    <span class="k">return</span> becameActionable &amp;&amp; fromOps &amp;&amp; stillRunning;
+  }),</span>
+  jobs: [ job(sendDriverSilentPushNotification) ],
+});</pre>
+        </div>
+      </div>
+      <div class="cmp" style="margin-top:14px">
+        <div class="pane was">
+          <div class="pane-head"><span class="tagdot"></span>Now<span class="sig">db-outcomes/outcome.resolving</span></div>
+<pre><span class="hl"><span class="k">if</span> (driverId) {
+  jobs.push(job(notifyDriverOnResolution, { sdk, outcome, move, … }));
+}</span>
+jobs.push(job(sendOutcomeResolvedEmail, { sdk, moveId, outcome, … }));</pre>
+        </div>
+        <div class="pane becomes">
+          <div class="pane-head"><span class="tagdot"></span>Pattern B<span class="sig">data presence → no-op</span></div>
+<pre><span class="c">// the job stays in the static array, unconditionally</span>
+jobs: [
+  job(notifyDriverOnResolution),
+  job(sendOutcomeResolvedEmail),
+],
+
+<span class="c">// …and short-circuits on its own input — observable as a run that no-op'd</span>
+<span class="k">export async function</span> notifyDriverOnResolution(ctx) {
+  <span class="hl"><span class="k">const</span> { driverId } = ctx.input;
+  <span class="k">if</span> (!driverId) <span class="k">return</span> { skipped: <span class="s">'no driver'</span> };</span>   <span class="c">// not a different event — same event, less to do</span>
+  …
+}</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- run controls reference -->
+    <div class="cmp-block">
+      <div class="cmp-title"><span class="num">⚙</span><h3>Controlling how the jobs run</h3><span class="file">module run: {} + job(fn, opts?)</span></div>
+      <p class="cmp-note">Two declarative levels. The <b>module</b> sets the batch policy in <code>run: {}</code>; each <b>job</b> can add or override its own in <code>job(fn, { … })</code>. The defaults match the legacy <code>Promise.allSettled</code> fan-out, but they are now a <b>pinned contract</b> (ADR-014), not implicit behavior — <code>mode</code> defaults to <code>parallel</code> and <code>continueOnFailure</code> to <code>true</code>, so a flaky job can never block a sibling on the money path. Note these only control <i>execution</i>; they can never change <i>which</i> jobs run (ADR-025).</p>
+      <div class="split2">
+        <div class="minicard" style="border-top:3px solid var(--brass-2)">
+          <h3>Module · <code>run: { … }</code></h3>
+          <ul>
+            <li><b><code>mode</code></b> — <code>'parallel'</code> (default) or <code>'series'</code>. Parallel launches all jobs at once; series awaits each before the next.</li>
+            <li><b><code>continueOnFailure</code></b> — default <code>true</code>. A job failure never stops its siblings; <code>run</code> returns a complete <code>JobExecution[]</code> of successes <i>and</i> failures. In <code>series</code> with this <code>false</code>, the first failure stops the rest, which are marked <code>skipped</code>.</li>
+            <li><b><code>timeoutMs</code></b> — a batch-level budget across the whole set.</li>
+          </ul>
+        </div>
+        <div class="minicard" style="border-top:3px solid var(--teal)">
+          <h3 style="color:var(--teal)">Per-job · <code>job(fn, { … })</code></h3>
+          <ul>
+            <li><b><code>retries</code></b> — in-process retry attempts core makes (<i>durable, delayed</i> retries are BatchJobs&rsquo; job, not this).</li>
+            <li><b><code>timeoutMs</code></b> — per-job deadline; the runtime races the job and marks it <code>timed_out</code>.</li>
+            <li><b><code>continueOnFailure</code></b> — per-job override of the module default.</li>
+            <li><b><code>name</code></b> — stable job identity for observability / flow (else <code>fn.name</code>; set it explicitly so a bundler can&rsquo;t mangle it).</li>
+            <li><b><code>tags</code></b> — labels for filtering &amp; grouping in the trace.</li>
+            <li><b><code>input</code></b> — live request-scoped data (a static object or a pure <code>(ctx) =&gt; …</code> mapper); merges <i>highest</i>, over <code>prepare</code> and plugin baselines.</li>
+            <li><b><code>metadata</code></b> — serializable annotations, persisted by BatchJobs and recorded by Observability.</li>
+          </ul>
+        </div>
+      </div>
+      <p style="margin:16px 0 0;font-size:13px;color:var(--muted);max-width:84ch">Of these, only <code>retries</code>, <code>timeoutMs</code>, and <code>continueOnFailure</code> govern <i>how</i> a job runs; <code>name</code>/<code>tags</code>/<code>input</code>/<code>metadata</code> are identity and data. <code>RunOptions</code> live on the module&rsquo;s <code>run</code> (ADR-025) rather than a <code>run()</code> call — the runtime applies them when it executes the declared set.</p>
+    </div>
+
+    <!-- 3. job fn -->
+    <div class="cmp-block">
+      <div class="cmp-title"><span class="num">03</span><h3>The job function</h3><span class="file">db-appointments/jobs/sendOfferSMS</span></div>
+      <p class="cmp-note">A job stops being a three-argument function reading a magic options bag. It receives one typed context: live dependencies from <code>ctx.input</code> and its identity from <code>ctx.job</code>. <b>Logging changes too:</b> today a job imports <code>getLogger()</code> at module scope and the <code>scoped-job</code> wrapper bolts correlation onto it; under EventKit the job logs through <code>ctx.log</code> — already scoped by the runtime with invocation / correlation / job ids and fanned out to whatever logging plugins are registered (Grafana, observability, the batch row). The job is plugin-agnostic — same <code>input</code> from any caller, same result.</p>
+      <div class="cmp">
+        <div class="pane was">
+          <div class="pane-head"><span class="tagdot"></span>Now<span class="sig">module-scope logger + scoped-job</span></div>
+<pre><span class="hl"><span class="k">const</span> { getLogger } = <span class="k">require</span>(<span class="s">'@hopdrive/sdk-server-logger'</span>);
+<span class="k">const</span> logger = getLogger();   <span class="c">// scoped-job wraps it for correlation</span></span>
+
+<span class="k">const</span> sendOfferSMS = <span class="k">async</span> (event, hasuraEvent, options) =&gt; {
+  <span class="hl"><span class="k">const</span> { sdk, appointment } = options;</span>
+  <span class="hl">logger.info(<span class="s">'Sending offer SMS'</span>, { appointmentId: appointment?.id });</span>
+  <span class="c">// …look up the driver, send the offer SMS…</span>
+};</pre>
+        </div>
+        <div class="pane becomes">
+          <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">ctx.log — pre-scoped, plugin-routed</span></div>
+<pre><span class="c">// no logger import, no wrapper — logging is on the context</span>
+<span class="k">export const</span> sendOfferSMS = <span class="k">async</span> (ctx) =&gt; {
+  <span class="hl"><span class="k">const</span> { input, log } = ctx;
+  <span class="k">const</span> { sdk, appointment } = input;</span>
+  <span class="hl">log.info(<span class="s">'Sending offer SMS'</span>, { appointmentId: appointment?.id });</span>
+  <span class="c">// …look up the driver, send the offer SMS…</span>
+};</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. durable consumer -->
+    <div class="cmp-block">
+      <div class="cmp-title"><span class="num">04</span><h3>A durable batch job</h3><span class="file">db-batchjobs / jobs/runApBatch</span></div>
+      <p class="cmp-note">The <code>batchJob()</code> wrapper disappears <i>and</i> the job stops being batch-aware <i>and</i> there is no flag. Durability is <b>emergent from registering the BatchJobs plugin</b> in this function — once registered, every job here is durable. The plugin injects the <code>batch_jobs</code> row&rsquo;s <code>input</code> as the job&rsquo;s baseline <code>ctx.input</code> (handler input merges on top), self-correlates the row, and drives the <code>processing → done / error / timeout</code> lifecycle. The handler keeps no batch boilerplate at all.</p>
+      <div class="cmp">
+        <div class="pane was">
+          <div class="pane-head"><span class="tagdot"></span>Now<span class="sig">batch-aware + wrapper</span></div>
+<pre><span class="k">const</span> { batchJob, log } = <span class="k">require</span>(<span class="s">'@hopdrive/batchjobs'</span>);
+<span class="k">const</span> sdk = <span class="k">require</span>(<span class="s">'@hopdrive/sdk'</span>);
+
+module.exports = {
+  <span class="hl">runApBatch: batchJob(<span class="k">async</span> (_e, hasuraEvent, options) =&gt; {
+    <span class="k">const</span> { batchJob } = options;     <span class="c">// ← job knows about the batch</span>
+    <span class="k">const</span> input = batchJob.input || {};</span>
+    log(<span class="s">`Processing AP batch #${batchJob.id}`</span>);
+    <span class="k">return await</span> processAccessorialPayables(input, sdk);
+  }),
+};</pre>
+        </div>
+        <div class="pane becomes">
+          <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">plugin registered → automatic</span></div>
+<pre><span class="k">import</span> sdk <span class="k">from</span> <span class="s">'@hopdrive/sdk'</span>;
+
+<span class="c">// a plain, batch-UNAWARE job — same as any other job</span>
+<span class="k">export const</span> runApBatch = <span class="k">async</span> (ctx) =&gt; {
+  <span class="hl"><span class="k">const</span> { input, log } = ctx;
+  <span class="k">const</span> { workUnit } = input;   <span class="c">// injected from the batch_jobs row by the plugin</span></span>
+  log.info(<span class="s">'Processing AP batch work unit'</span>);
+  <span class="k">return</span> processAccessorialPayables(workUnit, sdk);
+};
+
+<span class="c">// the module — no wrapper, no flag, no input mapping, no run() call</span>
+<span class="hl">export default defineEvent&lt;BatchJobRow&gt;({
+  name: <span class="s">'batch.ap.ready'</span>, detector,
+  jobs: [ job(runApBatch) ],   <span class="c">// the plugin injects the row's input</span>
+});</span></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. entrypoint -->
+    <div class="cmp-block">
+      <div class="cmp-title"><span class="num">05</span><h3>The dispatch entrypoint</h3><span class="file">functions/db-appointments</span></div>
+      <p class="cmp-note">Plugins were re-registered on a global singleton on <i>every</i> invocation (a warm-lambda leak). Now the kit is built <b>once</b> at module scope, register-style: <code>createEventKit(hasuraEvent)</code> takes the required source as its first arg, <code>kit.use(...)</code> per plugin reads like the old <code>pluginManager.register(...)</code>, and the <b><code>netlifyPlatform</code> platform adapter</b> (registered with <code>kit.use</code>) handles payload extraction, the time budget, and the response — so there&rsquo;s no hand-written <code>getRemainingTimeInMillis</code> line to get wrong. Every dependency is imported.</p>
+      <div class="cmp">
+        <div class="pane was">
+          <div class="pane-head"><span class="tagdot"></span>Now<span class="sig">per-invocation registration</span></div>
+<pre><span class="k">const</span> { listenTo, pluginManager, ObservabilityPlugin,
+        TrackingTokenExtractionPlugin } =
+  <span class="k">require</span>(<span class="s">'@hopdrive/hasura-event-detector'</span>);
+<span class="k">const</span> { GrafanaLoggerPlugin } = <span class="k">require</span>(<span class="s">'../~lib/grafanaLoggerPlugin'</span>);
+<span class="k">const</span> auth = <span class="k">require</span>(<span class="s">'../~lib/functionAuth'</span>);
+<span class="k">const</span> events = <span class="k">require</span>(<span class="s">'./events'</span>);
+
+<span class="k">const</span> handler = <span class="k">async</span> (event, context) =&gt; {
+  <span class="k">if</span> (event?.httpMethod !== <span class="s">'POST'</span>) <span class="k">return</span> { statusCode: 405 };
+  <span class="k">if</span> (!auth.hasValidPassphrase(event)) <span class="k">return</span> { statusCode: 401 };
+  <span class="k">const</span> { invocationId } = logger.getLabels();
+
+  <span class="hl">pluginManager.register(<span class="k">new</span> TrackingTokenExtractionPlugin({…}));
+  pluginManager.register(<span class="k">new</span> ObservabilityPlugin({…}));
+  pluginManager.register(<span class="k">new</span> GrafanaLoggerPlugin());</span>
+
+  <span class="k">await</span> listenTo(JSON.parse(event.body), {
+    invocationId, eventModules: toModules(events) });
+  <span class="k">return</span> { statusCode: 200, body: <span class="s">'{"success":true}'</span> };
+};</pre>
+        </div>
+        <div class="pane becomes">
+          <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">register-style, once</span></div>
+<pre><span class="k">import</span> { createEventKit } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
+<span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources/hasura'</span>;
+<span class="k">import</span> { netlifyPlatform } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/platforms/netlify'</span>;
+<span class="k">import</span> { observability } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/observability'</span>;
+<span class="k">import</span> { graphqlSink } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/observability/graphql-sink'</span>;
+<span class="k">import</span> { batchJobs } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/batchjobs'</span>;
+<span class="k">import</span> { graphqlBatchJobStore } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/batchjobs/graphql-store'</span>;
+<span class="k">import</span> { loopPrevention } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/loop-prevention'</span>;
+<span class="k">import</span> { grafanaLogger } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/transports/grafana'</span>;
+<span class="k">import</span> { getLogger } <span class="k">from</span> <span class="s">'@hopdrive/sdk-server-logger'</span>;   <span class="c">// app-side; injected into the bridge</span>
+<span class="k">import</span> auth <span class="k">from</span> <span class="s">'../~lib/functionAuth'</span>;
+<span class="k">import</span> cfg <span class="k">from</span> <span class="s">'../~lib/config.backend'</span>;
+<span class="k">import</span> events <span class="k">from</span> <span class="s">'./events'</span>;
+
+<span class="hl"><span class="c">// built ONCE per warm lambda — required source as a param, everything else via use()</span>
+<span class="k">const</span> kit = createEventKit(hasuraEvent);                  <span class="c">// required source — first positional arg</span>
+kit.use(netlifyPlatform);                                 <span class="c">// optional platform — registered like any plugin</span>
+<span class="c">// each I/O plugin takes an INJECTED transport — a sink / store / send seam. The plugin</span>
+<span class="c">// stays generic; the destination + secrets arrive as config, never from process.env.</span>
+kit.use(observability, { sink: graphqlSink({ endpoint: cfg.graphqlUrl, adminSecret: cfg.graphqlSecret }) });
+kit.use(batchJobs,     { store: graphqlBatchJobStore({ endpoint: cfg.graphqlUrl, adminSecret: cfg.graphqlSecret }), logFlush: { intervalMs: <span class="s">2000</span> } });
+kit.use(loopPrevention, { field: <span class="s">'updated_by'</span>, serviceId: <span class="s">'event-handlers'</span>, codec: { separator: <span class="s">'|'</span>, validateCorrelationId: <span class="k">true</span> } });
+kit.use(grafanaLogger,  { logger: getLogger() });   <span class="c">// mode 1 — the SDK owns Loki; eventkit just bridges</span>
+kit.registerEvents(events);</span>
+
+<span class="c">// kit.handler() owns the Netlify (event, context) signature, the time budget, and the</span>
+<span class="c">// response. The `before` hook runs pre-handle; returning a value short-circuits (auth /</span>
+<span class="c">// method) before any detection or observability work.</span>
+<span class="k">export const</span> handler = kit.handler({
+  <span class="hl">before: event =&gt; {
+    <span class="c">// platform-agnostic { status, body } — the adapter's formatRejection shapes it</span>
+    <span class="c">// ({ statusCode, body } on classic, a Web Response on v2).</span>
+    <span class="k">if</span> (event?.httpMethod !== <span class="s">'POST'</span>) <span class="k">return</span> { status: 405, body: <span class="s">'Method Not Allowed'</span> };
+    <span class="k">if</span> (!auth.hasValidPassphrase(event)) <span class="k">return</span> { status: 401, body: <span class="s">'Unauthorized!'</span> };
+  },</span>
+});</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ WEBHOOKS AS EVENTS ============ -->
+<section class="tint">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Source-agnostic, made concrete</p>
+      <h2>An inbound webhook is just another event</h2>
+      <p class="sec-sub">Vendor webhooks (Acertus, Stripe, Spark) are bespoke functions today — hand-rolled signature checks, ad-hoc try/catch, no correlation, no retry, no trace. Point a <code>webhook()</code> source adapter at the same endpoint and the request becomes an EventEnvelope: the module shape, the jobs, the observability, and the durability are <i>identical</i> to a database event. Only the detector context differs.</p>
+    </div>
+
+    <div class="cmp-block" style="margin-top:8px">
+      <div class="cmp-title"><span class="num">↪</span><h3>A vendor webhook event</h3><span class="file">acertus.order.created</span></div>
+      <p class="cmp-note">The business event keeps a business-semantic name — <code>acertus.order.created</code>, not an HTTP route. Detection becomes explicit and observable; the work decomposes into the same kind of jobs a DB event uses.</p>
+      <div class="cmp">
+        <div class="pane was">
+          <div class="pane-head"><span class="tagdot"></span>Now<span class="sig">bespoke function</span></div>
+<pre><span class="c">// functions/webhook-acertus — outside the framework</span>
+<span class="k">export const</span> handler = <span class="k">async</span> (event) =&gt; {
+  <span class="k">const</span> body = JSON.parse(event.body);
+  <span class="k">if</span> (!verifyAcertusSignature(event.headers, body))
+    <span class="k">return</span> { statusCode: 401 };
+  <span class="k">if</span> (body.type !== <span class="s">'order.created'</span>) <span class="k">return</span> { statusCode: 200 };
+
+  <span class="k">try</span> {
+    <span class="hl"><span class="k">await</span> createOrderFromVendor(body, sdk);   <span class="c">// no record</span>
+    <span class="k">await</span> publishEventLog(<span class="s">'acertus.order.created'</span>, body);</span>
+  } <span class="k">catch</span> (e) {
+    console.error(e);   <span class="c">// no correlation, no retry, no trace</span>
+    <span class="k">return</span> { statusCode: 500 };
+  }
+  <span class="k">return</span> { statusCode: 200 };
+};</pre>
+        </div>
+        <div class="pane becomes">
+          <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">webhook source adapter</span></div>
+<pre><span class="c">// events/acertus.order.created.ts</span>
+<span class="k">import</span> { defineEvent, job } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
+<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources/webhook'</span>;
+<span class="k">import</span> sdk <span class="k">from</span> <span class="s">'@hopdrive/sdk'</span>;
+<span class="k">import</span> { publishEventLog, createOrderFromVendor } <span class="k">from</span> <span class="s">'./jobs'</span>;
+<span class="k">import type</span> { AcertusOrder } <span class="k">from</span> <span class="s">'./types'</span>;
+
+<span class="hl"><span class="k">export const</span> detector = webhook.detector((ctx) =&gt; {
+  <span class="k">const</span> { signatureVerified, vendor, eventType } = ctx;
+  <span class="k">const</span> isAcertus    = vendor === <span class="s">'acertus'</span>;
+  <span class="k">const</span> orderCreated = eventType === <span class="s">'order.created'</span>;
+  <span class="k">return</span> signatureVerified &amp;&amp; isAcertus &amp;&amp; orderCreated;
+});</span>
+
+<span class="hl"><span class="k">export default</span> defineEvent<span class="k">&lt;AcertusOrder&gt;</span>({
+  name: <span class="s">'acertus.order.created'</span>, detector,
+  prepare: (ctx) =&gt; ({ order: ctx.body, sdk }),   <span class="c">// shared, merged into each job</span>
+  jobs: [
+    job(publishEventLog,       { metadata: { vendor: <span class="s">'acertus'</span> } }),
+    job(createOrderFromVendor, { retries: 3 }),
+  ],
+});</span></pre>
+        </div>
+      </div>
+      <p class="cmp-note" style="margin-top:14px">Signature verification moves into the adapter — it runs before <code>normalize()</code> and surfaces <code>ctx.signatureVerified</code>. The endpoint is the same register-style shape as a <code>db-*</code> function:</p>
+<pre style="border-radius:12px;border:1px solid var(--hair);max-width:720px"><span class="k">import</span> { createEventKit } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
+<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources/webhook'</span>;
+<span class="k">import</span> { observability } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/observability'</span>;
+<span class="k">import</span> { graphqlSink } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/observability/graphql-sink'</span>;
+<span class="k">import</span> { acertusSignature } <span class="k">from</span> <span class="s">'./security'</span>;
+<span class="k">import</span> events <span class="k">from</span> <span class="s">'./events'</span>;
+
+<span class="k">const</span> kit = createEventKit(<span class="hl">webhook, { verify: acertusSignature }</span>);   <span class="c">// source + its config</span>
+kit.use(observability, { sink: graphqlSink({ endpoint: cfg.graphqlUrl, adminSecret: cfg.graphqlSecret }) });
+kit.registerEvents(events);
+
+<span class="k">export const</span> handler = (req, ctx) =&gt;
+  kit.handle(req, { sourceFunction: <span class="s">'webhook-acertus'</span> })
+     .then(r =&gt; ({ statusCode: r.ok ? 200 : 502 }));</pre>
+      <div class="payoff">
+        <span class="pk">The payoff</span>
+        <div>Every vendor webhook now produces the same <b>Invocation → Event → Job</b> records, correlation IDs, buffered observability, retries, durable jobs, and Flow/Compare as a database event — for free, by adopting the adapter. The integration stops being a snowflake.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PLUGIN MODEL ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">The plugin model</p>
+      <h2>Infrastructure that the core knows nothing about</h2>
+      <p class="sec-sub">EventKit core normalizes, detects, and runs jobs. Everything else — observability, durability, loop prevention, logging, alerting — is a plugin. A plugin is an independent module that depends only on EventKit&rsquo;s public types, implements the lifecycle hooks it cares about, and is registered explicitly with <code>kit.use(...)</code>. The runtime with zero plugins still works.</p>
+    </div>
+
+    <div class="split2" style="margin-bottom:16px">
+      <div class="minicard">
+        <h3>Entirely independent from core</h3>
+        <ul>
+          <li>A plugin imports only <b>public types</b> from <code>@hopdrive/eventkit</code> — never internals (scheduler, dispatch, retry loop).</li>
+          <li>Core has <b>zero knowledge</b> of any specific plugin; it just calls hooks in registration order.</li>
+          <li>Plugins are <b>versioned and tested independently</b> — all five prebuilt ones ship in the eventkit repo (<code>/plugins/*</code>); a HopDrive or third-party package is only needed for an SDK-coupled extra.</li>
+          <li>They <b>self-correlate</b> from the IDs already on the context (invocation, envelope, job execution) and never require a job or handler to pass them an object — so <b>jobs stay plugin-agnostic</b>. A job runs identically whether or not a plugin is loaded.</li>
+        </ul>
+      </div>
+      <div class="minicard">
+        <h3>The whole API they consume</h3>
+        <ul>
+          <li>Declaration fields (not hooks): <code>name</code>, <code>provides?</code> / <code>requires?</code> — the singleton role a plugin fills / depends on (e.g. <code>requires: ['source:hasura']</code>), validated at <code>onInit</code>.</li>
+          <li>Notification hooks (<code>void</code>): <code>onInit</code>, <code>onInvocationStart/End</code>, <code>onJobStart/Progress/Checkpoint/Log/End</code>, <code>onError</code>, <code>onFlush</code>, <code>onShutdown</code>.</li>
+          <li>Transform &amp; capability hooks (return a value): <code>configureInvocation</code>, <code>augmentJobContext</code>, <code>normalize</code>, …</li>
+          <li>Typed contexts passed to each hook: <code>InvocationContext</code>, <code>JobContext</code>, <code>JobExecution</code>, <code>EventEnvelope</code>, <code>ErrorContext</code>.</li>
+          <li>Core utilities: <code>serializeError</code>, <code>serializeOutput</code>, <code>replaceCircularReferences</code>.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Composition model -->
+    <div style="margin-top:8px">
+      <h3 style="font-size:20px;letter-spacing:-.01em">How plugins compose — three hook shapes</h3>
+      <p style="color:var(--muted);max-width:84ch;margin:6px 0 16px">The rule that holds it together: <b>the built-in default for every step always runs — plugins layer around it, they never subclass or override it.</b> &ldquo;Default behavior plus a little extra&rdquo; is the common case, not replacement. A hook is exactly one of three shapes, and its <i>name</i> tells you which: <code>on…</code> returns nothing (observe); a <b>bare verb</b> returns a value (the runtime wants something back).</p>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:14px" class="budget-buckets">
+        <div class="minicard" style="border-top:3px solid var(--teal)">
+          <h3 style="font-size:15px">1 · Notification <span style="font:600 11px/1 var(--mono);color:var(--faint)">on… · void</span></h3>
+          <p style="margin:0;color:var(--muted);font-size:13.5px;line-height:1.5">Observe; can&rsquo;t change a value. <code>Start/End</code> for spans, <code>Before/After</code> to do a <i>little extra</i> around a built-in step. N plugins all fire.</p>
+        </div>
+        <div class="minicard" style="border-top:3px solid var(--brass)">
+          <h3 style="font-size:15px">2 · Delta transform <span style="font:600 11px/1 var(--mono);color:var(--faint)">verb · returns partial</span></h3>
+          <p style="margin:0;color:var(--muted);font-size:13.5px;line-height:1.5">Contribute to a value the runtime assembles — <code>configureInvocation</code>, <code>augmentEnvelope</code>, <code>augmentJobContext</code>. Default always contributes; you only add. &ldquo;Default + extra&rdquo; is the <i>only</i> mode.</p>
+        </div>
+        <div class="minicard" style="border-top:3px solid var(--rose)">
+          <h3 style="font-size:15px">3 · Singleton capability <span style="font:600 11px/1 var(--mono);color:var(--faint)">verb · one owner</span></h3>
+          <p style="margin:0;color:var(--muted);font-size:13.5px;line-height:1.5"><code>normalize</code>, <code>extractPayload</code>, … exactly one provider (<code>provides</code>). The only replaceable shape — and to reuse the default you get it <b>injected as <code>base</code></b> (DI), never <code>extends</code>/<code>super</code>.</p>
+        </div>
+      </div>
+      <div class="gain"><b>So a user almost never replaces anything:</b> for a little extra they reach for an <code>onAfter…</code> notification (no value change) or a delta transform (to influence the value), and the built-in keeps running underneath. Replacement-with-injected-default is the rare escape hatch for the one-owner capabilities.</div>
+    </div>
+
+    <div class="cmp-block" style="margin-top:0">
+      <div class="cmp-title"><span class="num">◆</span><h3>What a plugin looks like to implement</h3><span class="file">a 20-line alerting plugin</span></div>
+      <p class="cmp-note">A plugin is a factory returning the hooks it implements. This one forwards failures to Slack — obviously not core business, obviously independent. Note it imports <i>types only</i>, and its secret arrives as injected <code>config</code>, never from <code>process.env</code>.</p>
+      <div class="cmp" style="grid-template-columns:1fr">
+        <div class="pane becomes">
+          <div class="pane-head"><span class="tagdot"></span>plugins/slack-alerts.ts</div>
+<pre><span class="k">import type</span> { EventKitPlugin, ErrorContext } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
+
+<span class="c">// a plugin is just a factory returning the hooks it cares about</span>
+<span class="k">export function</span> slackAlerts(config: { webhookUrl: <span class="k">string</span> }): EventKitPlugin {
+  <span class="k">return</span> {
+    name: <span class="s">'slack-alerts'</span>,
+    <span class="c">// implement ONLY the hooks you need — the rest are skipped</span>
+    <span class="k">async</span> onError(ctx: ErrorContext) {
+      <span class="k">const</span> { phase, jobName, eventName, error, correlationId } = ctx;
+      <span class="k">await</span> fetch(<span class="hl">config.webhookUrl</span>, {
+        method: <span class="s">'POST'</span>,
+        body: JSON.stringify({
+          text: <span class="s">`🚨 ${phase} failed in ${jobName ?? eventName}`</span>
+              + <span class="s">`: ${error.message} (corr ${correlationId})`</span>,
+        }),
+      });
+    },
+  };
+}</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="cmp-block">
+      <div class="cmp-title"><span class="num">◆</span><h3>How they&rsquo;re loaded</h3><span class="file">explicit registration, once</span></div>
+      <p class="cmp-note">No auto-discovery (it&rsquo;s hostile to serverless bundlers). The kit is built once at module scope with its single source; plugins are added register-style with <code>kit.use(plugin, config?)</code> — you pass the plugin itself (not a call) plus optional config, and the kit instantiates it. One legible line each, reading like the old <code>pluginManager.register(...)</code>; the runtime calls each plugin&rsquo;s matching hooks at every lifecycle point.</p>
+      <div class="cmp" style="grid-template-columns:1fr">
+        <div class="pane becomes">
+          <div class="pane-head"><span class="tagdot"></span>functions/db-appointments</div>
+<pre><span class="k">const</span> kit = createEventKit(hasuraEvent);
+
+kit.use(netlifyPlatform);
+kit.use(observability, { sink: graphqlSink({ endpoint: cfg.graphqlUrl, adminSecret: cfg.graphqlSecret }) });   <span class="c">// ← injected transport (sink)</span>
+kit.use(batchJobs,     { store: graphqlBatchJobStore({ endpoint: cfg.graphqlUrl, adminSecret: cfg.graphqlSecret }) });
+kit.use(loopPrevention, { field: <span class="s">'updated_by'</span>, serviceId: <span class="s">'event-handlers'</span>, codec: { separator: <span class="s">'|'</span>, validateCorrelationId: <span class="k">true</span> } });
+<span class="hl">kit.use(slackAlerts, { send: postToSlack(cfg.slackWebhookUrl) });   <span class="c">// ← pass the plugin + an injected send seam; app holds the secret</span></span>
+
+kit.registerEvents(events);</pre>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:34px">
+      <h3 style="font-size:20px">Secrets &amp; environment dependencies</h3>
+      <p style="color:var(--muted);max-width:74ch;margin:6px 0 4px">The rule that keeps plugins portable and testable: <b>a plugin never reaches into <code>process.env</code> as its contract.</b> It declares its config shape — including secrets — and the <i>application</i> resolves and injects them. Secrets are framework-handled in one place, not scattered across plugin internals.</p>
+      <div class="secrets">
+        <div class="st"><div class="sb"><b>The app resolves secrets once, at module load.</b> <code>config.backend</code> reads <code>process.env</code> (Netlify env vars, or a secrets manager) a single time per cold start.</div></div>
+        <div class="st"><div class="sb"><b>Injected into plugin factories at <code>createEventKit()</code>.</b> Because the kit is module-scoped, secrets resolve once per cold start and are reused across warm invocations — no per-request env reads.</div></div>
+        <div class="st"><div class="sb"><b>Validated at init — fail fast.</b> <code>createEventKit()</code> validates required plugin config before the first invocation, so a missing <code>graphql.adminSecret</code> throws clearly at boot, not mid-event in production.</div></div>
+        <div class="st"><div class="sb"><b>Secrets live in plugin <i>config</i> only.</b> They never enter <code>ctx.input</code>, <code>metadata</code>, or <code>batch_jobs</code> — so they are never persisted, logged, or written to the observability tables. (This is exactly why the live/persisted channel split matters.)</div></div>
+        <div class="st"><div class="sb"><b>Per-request overrides &amp; rotation</b> flow through <code>configureInvocation</code> / <code>RequestContext.pluginConfig</code> when a value must change per call — still never read from the environment by the plugin itself.</div></div>
+      </div>
+    </div>
+
+    <div style="margin-top:38px">
+      <h3 style="font-size:22px;letter-spacing:-.01em">The prebuilt plugins</h3>
+      <p style="color:var(--muted);max-width:80ch;margin:6px 0 20px">Five plugins ship with the rewrite. Each card shows what it does, the core hooks &amp; API it leans on (tagged by composition shape above), and the behavior a developer gets for free by registering it. The <span style="color:var(--brass-2);font-weight:600">Was →</span> line records how each one changes from today&rsquo;s <code>hasura-event-detector</code>. Where each lives follows one rule (ADR-024): a plugin whose behavior is fully determined by injected <i>config</i> ships <b>built-in</b> inside <code>@hopdrive/eventkit</code> — so all five do, loop-prevention included (the <code>updated_by</code> field is <i>config</i>, not a hardcoded convention). A plugin leaves core only if it imports a HopDrive SDK, knows a domain table, or hardcodes a cross-service agreement; HopDrive&rsquo;s leftover layer is just config presets, not logic.</p>
+      <p style="color:var(--muted);max-width:80ch;margin:-8px 0 20px">This is what keeps the I/O plugins generic: each one owns its <i>logic</i> (observability owns the record hierarchy + buffering, batchJobs owns the durable lifecycle, the transports own log/error shaping) but takes its <i>destination</i> as an <b>injected seam</b> — a <code>sink</code> for observability, a <code>store</code> for batchJobs, an injected <code>logger</code> (or direct Loki) for grafana, a <code>send</code> for sentry. The plugin never knows whether it&rsquo;s talking to Hasura, an HTTP collector, the <code>sdk-server-logger</code> queue, or a test spy; the destination + its secrets arrive as config, and <b>no plugin imports a HopDrive SDK</b> — the app injects it (e.g. <code>getLogger()</code> into the grafana bridge). EventKit ships built-in seams (<code>graphqlSink</code>, <code>graphqlBatchJobStore</code>) so HopDrive wires them in one line, while staying trivially testable and swappable.</p>
+
+      <!-- Observability -->
+      <div class="pspec obs">
+        <div class="pspec-top"><span class="nm">observability()</span><span class="home">eventkit /plugins</span></div>
+        <div class="reg"><span class="k">kit</span>.use(observability, { sink: graphqlSink({ endpoint: cfg.graphqlUrl, adminSecret: cfg.graphqlSecret }) });</div>
+        <p class="pspec-lead">Records the <b>Invocation → Event → Job</b> hierarchy as runtime evidence — what came in, what was detected, what ran, how long it took, what failed — without changing any behavior. This is the data the Console and Compare Mode read.</p>
+        <p style="margin:-8px 0 16px;font-size:13.5px;color:var(--brass-2)"><b>Was →</b> the same notification hooks today; the changes: <code>flush</code>→<code>onFlush</code>, writes are buffered &amp; flushed once instead of a synchronous GraphQL write per job, and — the key one — <b>the transport is now an injected <code>sink</code></b>. The plugin builds an <code>ObservabilityBatch</code> and hands it off; GraphQL is no longer baked in, so the same plugin can write to Hasura, an HTTP collector, or a test spy.</p>
+        <div class="pspec-cols">
+          <div>
+            <h4>Expected behavior</h4>
+            <ul>
+              <li>Opens an <b>invocation record</b> on start; closes it with status + duration at end.</li>
+              <li>Writes an <b>event record</b> per detection (detector + handler timing) and a <b>job record</b> per job (status, duration, output summary, serialized error).</li>
+              <li><b>Buffers</b> all writes and flushes once at invocation end — no per-job GraphQL round-trip on the hot path.</li>
+              <li><b>Best-effort:</b> a sink failure is swallowed and never fails business execution — unless <code>strict</code> is set, when it rethrows via <code>onError</code>.</li>
+              <li><b>Injected transport:</b> the only required config is <code>sink(batch)</code>; everything observability-specific (buffering, the record hierarchy, flush-once) is the plugin&rsquo;s, the destination is yours.</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Core hooks &amp; API it uses</h4>
+            <div class="hooks">
+              <span class="hk">onInvocationStart/End</span><span class="hk">onEventDetectionEnd</span><span class="hk">onEventHandlerEnd</span><span class="hk">onJobStart/End</span><span class="hk">onJobLog</span><span class="hk">onError</span><span class="hk">onFlush</span>
+            </div>
+            <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Reads <code>InvocationContext</code>, <code>JobContext</code>, <code>JobExecution</code>; uses core <code>serializeError</code> / <code>serializeOutput</code>. Config: <code>{ sink, strict? }</code> — ships a built-in <code>graphqlSink({ endpoint, adminSecret })</code>; inject any <code>(batch) =&gt; void | Promise</code> to retarget.</p>
+            <div class="gain"><b>You get:</b> a queryable trace for every invocation — by correlation id, event, job, status, time — feeding the live Console, with zero lines in your jobs.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- BatchJobs -->
+      <div class="pspec">
+        <div class="pspec-top"><span class="nm">batchJobs()</span><span class="home">eventkit /plugins</span><span class="req">requires: Hasura source</span></div>
+        <div class="reg"><span class="k">kit</span>.use(batchJobs, { store: graphqlBatchJobStore({ endpoint: cfg.graphqlUrl, adminSecret: cfg.graphqlSecret }), logFlush: { intervalMs: <span class="s">2000</span> } });</div>
+        <p class="pspec-lead">Durability. <b>Registering it makes every job in the kit durable</b> — the old <code>batchJob(...)</code> wrapper, automatic. Registered only in the <code>db-batchjobs</code> function. It injects the row&rsquo;s work payload, persists the lifecycle, and schedules retries — the job never knows a batch exists.</p>
+        <p style="margin:-8px 0 16px;font-size:13.5px;color:var(--brass-2)"><b>Was →</b> a separate <code>batchJob()</code> <i>execution wrapper</i> that job code called. Now it&rsquo;s a plugin: <code>augmentJobContext</code> (Shape 2) injects the row&rsquo;s input + lifecycle notifications (Shape 1) persist state. No wrapper, no flag.</p>
+        <div class="pspec-cols">
+          <div>
+            <h4>Expected behavior</h4>
+            <ul>
+              <li><b>Injects</b> the triggering <code>batch_jobs</code> row&rsquo;s <code>input</code> as the job&rsquo;s baseline <code>ctx.input</code> (handler input merges on top).</li>
+              <li>Drives status: <code>processing</code> on start → <code>done</code> / <code>error</code> / <code>timeout</code>; persists output and serialized errors.</li>
+              <li><b>Schedules durable retries</b> (<code>delaying → ready</code>); core owns retry <i>meaning</i>, the plugin owns durable state.</li>
+              <li><b>Self-correlates</b> the row id from the envelope — no job or handler cooperation. Throws at init if the Hasura source is absent.</li>
+              <li>Flushes logs to <code>output</code> at job end (always) and <b>periodically if configured</b> — feeding the live React subscription view for ~15-min background jobs.</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Core hooks &amp; API it uses</h4>
+            <div class="hooks">
+              <span class="hk">augmentJobContext</span><span class="hk">onJobStart/End</span><span class="hk">onJobLog</span><span class="hk">onError</span><span class="hk">onFlush</span>
+            </div>
+            <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Declares <code>requires: ['source:hasura']</code> (a capability dependency, not a hook). Reads the <code>EventEnvelope</code> (the row), <code>JobContext</code>, <code>JobExecution</code>; uses <code>serializeError</code> / <code>replaceCircularReferences</code>. Config: <code>{ store, logFlush? }</code> — persistence is an injected <code>store.update(id, fields)</code> (ships a built-in <code>graphqlBatchJobStore</code>); store-write failures are best-effort, never fatal to the job.</p>
+            <div class="gain"><b>You get:</b> jobs that survive retries, crashes, and timeouts with full state in <code>batch_jobs</code>, watchable live in the React view — while your job code is just <code>async (ctx) =&gt; {…}</code> reading <code>ctx.input</code>.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TrackingToken -->
+      <div class="pspec guard">
+        <div class="pspec-top"><span class="nm">loopPrevention()</span><span class="home">eventkit /plugins</span><span class="req">config-driven</span></div>
+        <div class="reg"><span class="k">kit</span>.use(loopPrevention, { field: <span class="s">'updated_by'</span>, serviceId: <span class="s">'event-handlers'</span>, codec: { separator: <span class="s">'|'</span>, validateCorrelationId: <span class="k">true</span> } });</div>
+        <p class="pspec-lead">Loop prevention. Stops the system re-triggering on its <b>own</b> database writes — the defense against event storms. <b>Generic, not HopDrive-specific (ADR-024):</b> the field it reads (<code>updated_by</code>), the token separator, and the service id are all <i>config</i>, so it ships built-in and HopDrive just passes <code>field:'updated_by'</code>. The legacy codec it ports imports nothing HopDrive.</p>
+        <p style="margin:-8px 0 16px;font-size:13.5px;color:var(--brass-2)"><b>Was →</b> an app-side <code>onPreConfigure</code> hook that <i>mutated the payload by reference</i>. Now it&rsquo;s a built-in, config-driven plugin: <code>augmentEnvelope</code> writes the inbound token into <code>envelope.meta</code> (no mutation) and the outbound <code>ctx.trackingToken</code> is a core seam. <b>The payload mutation is gone</b> — the biggest correctness win of the model.</p>
+        <div class="pspec-cols">
+          <div>
+            <h4>Expected behavior</h4>
+            <ul>
+              <li><b>Inbound (the plugin&rsquo;s job):</b> reads the configured <code>field</code> (<code>updated_by</code>) into <code>envelope.meta.sourceTrackingToken</code>; detectors/handlers may read it to suppress self-triggered work.</li>
+              <li><b>Outbound is already in core:</b> the runtime exposes a deterministic <code>ctx.trackingToken</code> (<code>source.correlationId.jobId</code>) that jobs stamp into their writes — the plugin only adds the inbound read (and may override the token codec).</li>
+              <li>The next invocation recognizes that write as system-originated and can break the loop.</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Core hooks &amp; API it uses</h4>
+            <div class="hooks">
+              <span class="hk">augmentEnvelope</span><span class="hk">configureInvocation</span><span class="hk">augmentJobContext</span>
+            </div>
+            <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Reads the configured field, writes <code>envelope.meta.sourceTrackingToken</code> via <code>augmentEnvelope</code>; may override the codec via <code>augmentJobContext</code>. Config: <code>{ field, codec, serviceId }</code>. No secret.</p>
+            <div class="gain"><b>You get:</b> storm protection as infrastructure — no per-handler boilerplate, and the same correlation token threads cleanly into observability.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- GrafanaLogger -->
+      <div class="pspec log">
+        <div class="pspec-top"><span class="nm">grafanaLogger()</span><span class="home">eventkit /plugins</span></div>
+        <div class="reg"><span class="k">kit</span>.use(grafanaLogger, { logger: getLogger() });   <span class="c">// mode 1 — bridge to @hopdrive/sdk-server-logger</span></div>
+        <p class="pspec-lead">A log <b>bridge</b>, not a Loki client. It forwards framework <i>and</i> job logs to a sink so an incident traces end-to-end — but it does <b>not</b> own Grafana/Loki plumbing unless you ask it to. Two mutually-exclusive modes.</p>
+        <p style="margin:-8px 0 16px;font-size:13.5px;color:var(--brass-2)"><b>Was →</b> the legacy <code>grafanaLoggerPlugin</code> forwarded to <code>@hopdrive/sdk-server-logger</code>, and <code>scoped-job</code> bolted correlation onto each job. <b>Mode 1 keeps that exact path</b> — inject <code>getLogger()</code> and the SDK still owns the Loki endpoint, labels, auth, and queue flush — so existing dashboards are unchanged. What&rsquo;s new: correlation is read straight off the context (the <code>scoped-job</code> wrapper is retired) and <code>ctx.job.id</code> rides along for per-execution queryability.</p>
+        <div class="pspec-cols">
+          <div>
+            <h4>Two modes</h4>
+            <ul>
+              <li><b>Mode 1 — injected <code>logger</code> (HopDrive path):</b> pass <code>{ logger: getLogger() }</code>. Forwards <code>onLog</code>/<code>onJobLog</code>/<code>onError</code> straight to the SDK with structured metadata. <b>No Loki config here</b> — the SDK owns endpoint, payload shape, label trimming, auth, and flush. EventKit imports nothing HopDrive; the SDK is injected by the app.</li>
+              <li><b>Mode 2 — direct Loki (standalone):</b> pass <code>{ grafana: { endpoint, auth, labels } }</code> and the plugin builds its own Loki-backed sink and flushes at <code>onFlush</code>. For non-HopDrive deployers with no server-logger SDK.</li>
+              <li>Correlation/identity (<code>correlationId</code>, <code>jobExecutionId</code>, <code>trackingToken</code>) goes in the structured log <i>line</i>, never as a Loki stream label — high-cardinality labels would explode the index.</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Core hooks &amp; API it uses</h4>
+            <div class="hooks">
+              <span class="hk">onLog</span><span class="hk">onJobLog</span><span class="hk">onError</span><span class="hk">onFlush</span>
+            </div>
+            <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Reads <code>LogEntry</code>, <code>JobContext</code>. Config: <code>{ logger? | grafana?, source?, minLevel?, flush? }</code> — exactly one of <code>logger</code> (mode 1) or <code>grafana</code> (mode 2). In mode 1 flush is the consumer&rsquo;s job (e.g. <code>withLoggingInit</code>) unless a <code>flush</code> seam is injected. Never reads <code>process.env</code> in either mode.</p>
+            <div class="gain"><b>You get:</b> the same Grafana coverage as today with zero dashboard changes (mode 1), or a self-contained Loki logger for anyone outside HopDrive (mode 2) — from one generic plugin that&rsquo;s just a bridge.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sentry / alerting -->
+      <div class="pspec">
+        <div class="pspec-top"><span class="nm">sentry()</span><span style="font:600 13px/1 var(--mono);color:var(--faint)">/ slackAlerts()</span><span class="home">eventkit /plugins</span></div>
+        <div class="reg"><span class="k">kit</span>.use(sentry, { dsn: cfg.sentryDsn });   <span class="c">// ~20 lines — the clearest &ldquo;generic-by-config&rdquo; plugin</span></div>
+        <p class="pspec-lead">Error capture &amp; alerting. The smallest prebuilt plugin, and the clearest demonstration of generic-by-config: ~20 lines, a DSN in config, nothing HopDrive — so it ships built-in. A bespoke <code>slackAlerts()</code> you write yourself is the user-land sibling.</p>
+        <p style="margin:-8px 0 16px;font-size:13.5px;color:var(--brass-2)"><b>Was →</b> <code>onError(error, context, correlationId)</code> with positional args. Same shape, now one typed <code>ErrorContext</code> object.</p>
+        <div class="pspec-cols">
+          <div>
+            <h4>Expected behavior</h4>
+            <ul>
+              <li>On any framework or job error, captures to Sentry (or posts to Slack) with <b>phase</b>, the job/event name, <b>correlation id</b>, and the serialized error.</li>
+              <li>Fully opt-in and independent — adding or removing it changes nothing about jobs or core.</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Core hooks &amp; API it uses</h4>
+            <div class="hooks"><span class="hk">onError</span><span class="hk">onFlush</span></div>
+            <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Reads <code>ErrorContext</code> (<code>{ error, phase, invocationId, correlationId, eventName?, jobName? }</code>). Config: <code>{ dsn?, endpoint?, environment?, release?, send? }</code> — delivery is an injected <code>send</code> seam; the default posts the event JSON, but production injects a <code>send</code> that speaks the real Sentry ingest protocol (DSN→endpoint + auth). Secret: DSN, via config.</p>
+            <div class="gain"><b>You get:</b> every error routed to your incident tooling with full correlation context — no changes to a single job.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Platform adapters -->
+    <div style="margin-top:40px">
+      <h3 style="font-size:22px;letter-spacing:-.01em">Platform adapters</h3>
+      <p style="color:var(--muted);max-width:82ch;margin:6px 0 16px">A <b>platform adapter</b> maps a deployment runtime into the shape EventKit expects — payload extraction, the time budget, and the response. It&rsquo;s an optional capability-providing plugin, registered like any other via <code>kit.use(netlifyPlatform)</code> (only the <i>required</i> source is positional — <code>createEventKit(hasuraEvent)</code>; the optional platform is not). This is what keeps EventKit <i>runtime-independent</i> instead of Netlify-locked — and it removes the fragile hand-wired <code>getRemainingTimeInMillis</code> line from every function.</p>
+
+      <div class="cmp" style="grid-template-columns:1fr">
+        <div class="pane becomes">
+          <div class="pane-head"><span class="tagdot"></span>the contract — implement four methods for any runtime</div>
+<pre><span class="k">export interface</span> PlatformAdapter {
+  name: <span class="k">string</span>;
+  detect?(): <span class="k">boolean</span>;                    <span class="c">// matches the current runtime (env-based)</span>
+  extractPayload(...args): <span class="k">unknown</span>;      <span class="c">// event.body  /  await request.json()</span>
+  buildRequest(...args): RequestContext; <span class="c">// invocationId, correlation, sourceFunction, getRemainingTimeMs</span>
+  formatResponse(result): <span class="k">unknown</span>;       <span class="c">// → { statusCode, body }  or  a Web Response</span>
+}</pre>
+        </div>
+      </div>
+
+      <h4 style="font:700 11px/1 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--faint);margin:22px 0 12px">The time-budget question, generalized</h4>
+      <p style="color:var(--muted);max-width:82ch;margin:0 0 14px">Every runtime falls into one of three buckets — the adapter collapses all three into the single <code>RequestContext.getRemainingTimeMs</code>, so cancellation and flush-before-kill work identically everywhere:</p>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:24px" class="budget-buckets">
+        <div class="minicard" style="border-top:3px solid var(--teal)"><h3 style="font-size:15px">A · Native countdown</h3><p style="margin:0;color:var(--muted);font-size:13.5px;line-height:1.5">Lambda, Netlify classic. Forward <code>context.getRemainingTimeInMillis()</code>. Precise cancel + flush.</p></div>
+        <div class="minicard" style="border-top:3px solid var(--brass)"><h3 style="font-size:15px">B · Computed deadline</h3><p style="margin:0;color:var(--muted);font-size:13.5px;line-height:1.5">Vercel, GCP, Azure, Cloudflare, Netlify v2. Adapter computes <code>maxMs − elapsed</code> from a configured max.</p></div>
+        <div class="minicard" style="border-top:3px solid var(--now)"><h3 style="font-size:15px">C · No deadline</h3><p style="margin:0;color:var(--muted);font-size:13.5px;line-height:1.5">Long-running servers, local/test. Budget is unbounded; rely on per-job <code>timeoutMs</code> + graceful shutdown.</p></div>
+      </div>
+
+      <h4 style="font:700 11px/1 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--faint);margin:0 0 12px">Provided &amp; planned adapters</h4>
+      <p style="color:var(--muted);max-width:82ch;margin:0 0 12px">Netlify&rsquo;s function flavors differ in shape, so they get <b>separate adapters</b> rather than one fuzzy <code>netlifyPlatform()</code> — exactly the &ldquo;plan for the differences&rdquo; case.</p>
+      <div class="plugins-list">
+        <div class="prow">
+          <div class="pname">lambdaPlatform()</div>
+          <div class="pdesc">Raw AWS Lambda <code>(event, context)</code>. <b>Bucket A</b> via <code>context.getRemainingTimeInMillis()</code>. Returns <code>{ statusCode, body }</code>.</div>
+          <div class="home">eventkit /platforms</div>
+        </div>
+        <div class="prow">
+          <div class="pname">netlifyPlatform()</div>
+          <div class="pdesc">Netlify <b>classic</b> Functions <code>(event, context)</code>. Bucket A (Lambda-backed). Reads <code>event.httpMethod</code> / <code>event.body</code>; returns <code>{ statusCode, body }</code>. <span class="sec">db-* functions today</span></div>
+          <div class="home">eventkit /platforms</div>
+        </div>
+        <div class="prow">
+          <div class="pname">netlifyV2Platform() <span style="color:var(--brass-2)">— planned</span></div>
+          <div class="pdesc">Netlify <b>v2</b> <code>(Request, Context)</code>, Web standard. <b>Bucket B</b> (computed deadline) unless v2 exposes a countdown. Returns a <code>Response</code>. <span class="sec">reverse-integration repos</span></div>
+          <div class="home">eventkit /platforms</div>
+        </div>
+        <div class="prow">
+          <div class="pname">netlifyBackgroundPlatform() <span style="color:var(--brass-2)">— planned</span></div>
+          <div class="pdesc">Netlify <b>Background Functions</b>: ~15-minute budget, returns <code>202</code> immediately. Bucket A (long). Powers the live <code>batch_jobs</code> watch view. <span class="sec">db-batchjobs</span></div>
+          <div class="home">eventkit /platforms</div>
+        </div>
+        <div class="prow">
+          <div class="pname">vercelPlatform() · cloudflarePlatform() · nodePlatform()</div>
+          <div class="pdesc">Not provided — author them via the four-method contract above. Cloudflare/Deno are Web-API-only, so a portable adapter pairs with fetch-based plugin transports.</div>
+          <div class="home app">your code</div>
+        </div>
+      </div>
+      <div class="gain" style="margin-top:14px"><b>You get:</b> the same event modules and jobs run on any runtime by swapping one <code>kit.use(…Platform)</code> line. EventKit also <code>detect()</code>s the platform from env and warns once if a deadline-capable runtime is detected with no adapter registered — so a missing budget is visible, never silent.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ REVERSE INTEGRATIONS ============ -->
+<section class="tint">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Reverse integrations · the bigger lift</p>
+      <h2>Spark, Super&nbsp;Dispatch, Central&nbsp;Dispatch &amp; friends</h2>
+      <p class="sec-sub">The reverse-integration repos (<code>sparkserv-integration</code>, <code>super-dispatch-integration</code>, <code>central-dispatch-integration</code>, <code>carsarrive-integration</code>, <code>plateau-integration</code>) each grew a <b>hand-rolled copy of the event system</b>: &ldquo;event modules&rdquo; mapped 1:1 to the inbound webhook&rsquo;s <code>event</code> header. We got closer to this shape with each integration we built — EventKit lets every repo replace the copycat with the real thing. It&rsquo;s a more involved migration than the <code>db-*</code> repos, though, because there&rsquo;s no detector/handler split to start from.</p>
+    </div>
+
+    <div class="bidir">
+      <span class="dir"><b>Spark</b> <span class="ar">→</span> HopDrive <span style="color:var(--faint)">(inbound webhook)</span></span>
+      <span class="dir"><b>HopDrive</b> <span class="ar">→</span> Spark <span style="color:var(--faint)">(outbound, often DB-triggered)</span></span>
+    </div>
+
+    <!-- folder structure before/after -->
+    <div class="cmp-block" style="margin-top:6px">
+      <div class="cmp-title"><span class="num">📁</span><h3>The shape on disk</h3><span class="file">sparkserv-integration/functions</span></div>
+      <p class="cmp-note">The copycat already <i>looks</i> like EventKit — an <code>events/</code> folder, one module per inbound event. The difference is everything underneath: the modules are header-routed monolith functions, not detector+handler pairs, and there are no jobs, observability, or durability. The domain helpers (<code>payloadMapper</code>, <code>dealershipMapping</code>, <code>security</code>) carry over unchanged.</p>
+      <div class="cmp">
+        <div class="pane was">
+          <div class="pane-head"><span class="tagdot"></span>Now</div>
+<pre>functions/
+├─ v1-handleSparkWebhook.ts      <span class="c">← dispatcher: verify sig, read `event` header, route</span>
+└─ lib/spark/
+   ├─ events/
+   │  ├─ index.ts                <span class="c">← createEventHandlers(): { 'appointment.created': fn, … }</span>
+   │  ├─ <span class="hl">AppointmentCreated.ts</span>     <span class="c">← monolith handler → { success, httpStatus }</span>
+   │  ├─ AppointmentUpdated.ts
+   │  └─ AppointmentCanceled.ts
+   ├─ security.ts                <span class="c">← verifySignature()</span>
+   ├─ payloadMapper.ts           <span class="c">← domain mapping</span>
+   └─ dealershipMapping.ts       <span class="c">← resolveCustomerId</span></pre>
+        </div>
+        <div class="pane becomes">
+          <div class="pane-head"><span class="tagdot"></span>Becomes</div>
+<pre>functions/
+├─ v1-handleSparkWebhook.ts      <span class="c">← thin: createEventKit(webhook,{…}) + kit.use(…) + kit.handler()</span>
+└─ lib/spark/
+   ├─ events/
+   │  ├─ index.ts                <span class="c">← export *  → kit.registerEvents(events)</span>
+   │  ├─ <span class="hl">spark.appointment.created.ts</span>   <span class="c">← detector + declarative jobs</span>
+   │  ├─ spark.appointment.updated.ts
+   │  └─ spark.appointment.canceled.ts
+   ├─ jobs/
+   │  ├─ upsertAppointmentFromSpark.ts  <span class="c">← the create/upsert work, as a job</span>
+   │  └─ syncSchedulerConfig.ts
+   ├─ security.ts                <span class="c">← verifySignature() → webhook({ verify })</span>
+   ├─ payloadMapper.ts           <span class="c">← unchanged</span>
+   └─ dealershipMapping.ts       <span class="c">← unchanged</span></pre>
+        </div>
+      </div>
+
+      <p class="cmp-note" style="margin-top:16px">…and the inbound flow that structure produces:</p>
+      <div class="split2">
+        <div class="minicard" style="border-top:3px solid var(--now)">
+          <h3>Now · header-routed monolith</h3>
+          <ol style="margin:0;padding-left:20px;font-size:13.5px;line-height:1.55;color:var(--muted)">
+            <li>Spark POSTs the webhook to <code>v1-handleSparkWebhook</code> (a Netlify v2 function).</li>
+            <li>The dispatcher verifies the signature, reads the <code>event</code> HTTP header, JSON-parses the body.</li>
+            <li>It looks up <code>sparkEventHandlers[eventType]</code> — a hand-built map keyed by the header. <b>This map is the entire &ldquo;event system&rdquo;: routing is the only detection.</b></li>
+            <li><code>handleAppointmentCreated</code> does <i>everything</i>: validate → resolve dealership → sync config → dedup → map → <code>appointments.create</code> → return <code>{ success, httpStatus }</code>.</li>
+            <li>The dispatcher maps <code>httpStatus</code> → the Response Spark sees; Sentry is fired ad hoc (some in the handler, some in the dispatcher catch). No invocation/job records, no retries, no durability.</li>
+          </ol>
+        </div>
+        <div class="minicard" style="border-top:3px solid var(--brass)">
+          <h3>Becomes · detector → declarative jobs</h3>
+          <ol style="margin:0;padding-left:20px;font-size:13.5px;line-height:1.55;color:var(--muted)">
+            <li>Spark POSTs → <code>v1-handleSparkWebhook</code>; <code>kit.handler()</code> runs.</li>
+            <li>The <code>webhook</code> source adapter verifies the signature and normalizes the Request → <code>EventEnvelope</code> (<code>vendor:'spark'</code>, <code>eventType</code> from the header, body, <code>signatureVerified</code>).</li>
+            <li>Each module&rsquo;s <b>detector</b> runs; <code>spark.appointment.created</code> matches <code>vendor==='spark' &amp;&amp; eventType==='appointment.created'</code>. <b>Routing is now explicit, observable detection with a business event name.</b></li>
+            <li>Its module declares a static <b><code>jobs</code></b> set the runtime runs (<code>upsertAppointmentFromSpark</code>, <code>syncSchedulerConfig</code>) — the same <code>payloadMapper</code>/<code>dealershipMapping</code> helpers, now called from a job.</li>
+            <li>Each job is recorded (Invocation→Event→Job), retryable, durable-capable; errors route to the <code>sentry()</code> plugin. The <code>netlifyV2Platform</code> adapter maps the result → the HTTP Response, preserving Spark&rsquo;s status contract.</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
+    <div class="cmp-block" style="margin-top:34px">
+      <div class="cmp-title"><span class="num">↪</span><h3>The event module</h3><span class="file">spark/events/AppointmentCreated</span></div>
+      <p class="cmp-note">The <code>event</code> header is matched 1:1 against the handler-map, and <code>handleAppointmentCreated</code> inlines everything — validate, dealership resolution, dedup, the SDK create, the idempotent-duplicate special case, and the HTTP-status + Sentry handling. EventKit splits it into a <b>detector</b> (the routing, now explicit and observable) and a <b>declarative <code>jobs</code> set</b> the runtime runs (with shared setup in <code>prepare</code>); the domain helpers are unchanged, just called from a job.</p>
+      <div class="cmp">
+        <div class="pane was">
+          <div class="pane-head"><span class="tagdot"></span>Now<span class="sig">header-routed monolith</span></div>
+<pre><span class="c">// events/index.ts — the "event system": a header→handler map</span>
+<span class="hl"><span class="k">export const</span> createEventHandlers = (api) =&gt; ({
+  <span class="s">'appointment.created'</span>: (p) =&gt; handleAppointmentCreated(p, api),
+  <span class="s">'appointment.updated'</span>: (p) =&gt; handleAppointmentUpdated(p, api),
+  <span class="s">'appointment.canceled'</span>: (p) =&gt; handleAppointmentCanceled(p, api),
+});</span>
+
+<span class="c">// events/AppointmentCreated.ts — one big function</span>
+<span class="k">const</span> handleAppointmentCreated = <span class="k">async</span> (payload, _api) =&gt; {
+  <span class="k">if</span> (!payload.dealership?.id) <span class="k">return</span> { success: <span class="k">false</span>, httpStatus: 400 };
+  <span class="k">const</span> dealership = <span class="k">await</span> resolveCustomerId(payload.dealership.id);
+  <span class="k">if</span> (!dealership) <span class="k">return</span> { success: <span class="k">false</span>, httpStatus: 400 };
+  <span class="k">await</span> syncSchedulerConfig(dealership.customerId, payload);
+  <span class="hl"><span class="k">if</span> (<span class="k">await</span> appointments.getByExternalId({ source: <span class="s">'spark'</span>, externalId }))
+    <span class="k">return</span> { success: <span class="k">true</span>, httpStatus: 200 };   <span class="c">// idempotent dup</span></span>
+  <span class="k">await</span> appointments.create(mapSparkPayloadToCreateInput(payload, dealership));
+  <span class="k">return</span> { success: <span class="k">true</span>, httpStatus: 200 };
+};</pre>
+        </div>
+        <div class="pane becomes">
+          <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">detector + declarative jobs</span></div>
+<pre><span class="c">// events/spark.appointment.created.ts</span>
+<span class="k">import</span> { defineEvent, job } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
+<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources/webhook'</span>;
+<span class="k">import</span> { upsertAppointmentFromSpark, syncSchedulerConfig } <span class="k">from</span> <span class="s">'../jobs'</span>;
+<span class="k">import type</span> { SparkAppointment } <span class="k">from</span> <span class="s">'../types'</span>;
+
+<span class="hl"><span class="k">export const</span> detector = webhook.detector((ctx) =&gt; {
+  <span class="k">const</span> { signatureVerified, vendor, eventType } = ctx;
+  <span class="k">return</span> signatureVerified
+    &amp;&amp; vendor === <span class="s">'spark'</span>
+    &amp;&amp; eventType === <span class="s">'appointment.created'</span>;
+});</span>
+
+<span class="hl"><span class="k">export default</span> defineEvent<span class="k">&lt;SparkAppointment&gt;</span>({
+  name: <span class="s">'spark.appointment.created'</span>, detector,
+  prepare: (ctx) =&gt; ({ payload: ctx.body }),   <span class="c">// shared, merged into each job's input</span>
+  jobs: [
+    job(upsertAppointmentFromSpark, { metadata: { externalId: <span class="s">'$body.externalId'</span> } }),
+    job(syncSchedulerConfig),
+  ],
+});</span></pre>
+        </div>
+      </div>
+
+      <p class="cmp-note" style="margin-top:14px">The monolith&rsquo;s body becomes a plain job. The idempotent-duplicate and bad-payload cases — the part Spark&rsquo;s retry behavior depends on — are expressed as the job&rsquo;s return / a typed <code>ClientError</code>, which the <code>netlifyV2Platform</code> adapter maps to the right HTTP status (the one thing to shadow-test):</p>
+<pre style="border-radius:12px;border:1px solid var(--hair);max-width:760px"><span class="c">// jobs/upsertAppointmentFromSpark.ts — the create/upsert work, unchanged logic</span>
+<span class="k">export const</span> upsertAppointmentFromSpark = <span class="k">async</span> (ctx) =&gt; {
+  <span class="k">const</span> { input, log } = ctx;
+  <span class="k">const</span> { payload } = input;
+  <span class="k">const</span> dealership = <span class="k">await</span> resolveCustomerId(payload.dealership?.id);
+  <span class="hl"><span class="k">if</span> (!dealership) <span class="k">throw new</span> ClientError(<span class="s">400</span>, <span class="s">`Unknown Spark dealership`</span>);   <span class="c">// → 400, no retry</span></span>
+  <span class="k">if</span> (<span class="k">await</span> appointments.getByExternalId({ source: <span class="s">'spark'</span>, externalId }))
+    <span class="k">return</span> { outcome: <span class="s">'idempotent'</span> };                  <span class="c">// job ok → 200</span>
+  <span class="k">return</span> appointments.create(mapSparkPayloadToCreateInput(payload, dealership));
+};
+
+<span class="c">// v1-handleSparkWebhook.ts — the whole endpoint</span>
+<span class="k">const</span> kit = createEventKit(webhook, { vendor: <span class="s">'spark'</span>, verify: verifySignature, eventTypeHeader: <span class="s">'event'</span> });
+kit.use(netlifyV2Platform);
+kit.use(observability, { sink: graphqlSink({ endpoint: cfg.graphqlUrl, adminSecret: cfg.graphqlSecret }) });
+kit.use(sentry, { dsn: cfg.sentryDsn });   <span class="c">// onError — replaces per-handler captureWebhookFailure</span>
+kit.registerEvents(events);
+<span class="k">export default</span> kit.handler();           <span class="c">// Netlify v2 default export</span></pre>
+    </div>
+
+    <div class="callout" style="background:var(--surface);border:1px solid var(--hair);color:var(--ink);margin-top:22px">
+      <p class="eyebrow" style="color:var(--brass-2)">Why it&rsquo;s a bigger lift than db-*</p>
+      <div class="arc" style="margin-top:4px">
+        <div class="phase"><span class="pn">A</span><div class="pbody"><h4>There&rsquo;s no detector/handler split to port</h4><p>The <code>db-*</code> repos already separate detection from handling. Here, routing-by-header <i>is</i> the detection and the handler is a monolith. You must <b>introduce</b> a detection layer and <b>decompose</b> each handler into jobs — real refactoring, not a mechanical rename.</p><span class="risk rewrite">Refactor</span></div></div>
+        <div class="phase"><span class="pn">B</span><div class="pbody"><h4>The vendor HTTP-status contract is load-bearing</h4><p>Vendors retry based on the status you return — and conventions like &ldquo;200 on ImmutableFieldError (don&rsquo;t retry)&rdquo; or &ldquo;400 on validation&rdquo; are semantic. The entrypoint must map <code>InvocationResult</code> → the exact status the vendor expects. Get it wrong and you cause vendor retry storms or silently dropped events — the reverse-integration analog of the money-path risk.</p><span class="risk crit">Status mapping = shadow-test it</span></div></div>
+        <div class="phase"><span class="pn">C</span><div class="pbody"><h4>Web <code>Request</code>, not the classic lambda event</h4><p>These run on Deno/Netlify with the Web <code>Request</code>/<code>Response</code> API (and read a header for the event type). The <code>webhook()</code> adapter must normalize a <code>Request</code>, not <code>event.body</code> — a distinct entry shape from the <code>db-*</code> functions.</p><span class="risk rewrite">Adapter work</span></div></div>
+        <div class="phase"><span class="pn">D</span><div class="pbody"><h4>It&rsquo;s N repos, so fix the template once</h4><p>Spark, Super Dispatch, Central Dispatch, CarsArrive, Plateau all share the pattern — and there&rsquo;s an <code>external-integration-template</code>. Migrate the template to EventKit first; every new integration then gets observability, durability, and Flow/Compare by default, and existing repos follow the same recipe.</p><span class="risk low">Leverage</span></div></div>
+      </div>
+    </div>
+
+    <div class="payoff" style="margin-top:18px">
+      <span class="pk">The win</span>
+      <div>Once migrated, every integration — inbound and outbound — speaks the same event language and lands in the same observability and Compare tooling as the core platform. A Spark appointment sync and an <code>appointment.ready</code> database event become equally legible, traceable, and replayable. The integrations stop being a parallel universe.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ LONG-TERM PAYOFF ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head narrow">
+      <p class="eyebrow">What the records unlock</p>
+      <h2>Expected vs. actual, for the whole platform</h2>
+      <p class="sec-sub">Because every source — database, webhook, cron, reverse integration — now produces the same structured records, one piece of tooling can reason across all of them. This is the strategic endpoint, deliberately phased behind the runtime migration.</p>
+    </div>
+    <div class="feats">
+      <div class="feat phased">
+        <h3><span class="ic">◆</span> Flow Manifests <span style="color:var(--now);font:600 11px/1 var(--mono)">— phased</span></h3>
+        <p>Declare a business process — its expected events, jobs, and branches — as a source-controlled contract. The manifest owns <b>meaning</b>; generated metadata verifies <b>structure</b>. Validated in CI.</p>
+      </div>
+      <div class="feat phased">
+        <h3><span class="ic">◆</span> Compare Mode <span style="color:var(--now);font:600 11px/1 var(--mono)">— phased</span></h3>
+        <p>Overlay observed runtime onto the expected flow and classify the differences — missing steps, unexpected side effects, retries, timeouts. Proven on <b>one</b> high-value flow before generalizing; never a production gate.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ MIGRATION ARC ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head narrow">
+      <p class="eyebrow">Getting there</p>
+      <h2>An honest migration arc</h2>
+      <p class="sec-sub">The detector layer ports cheaply — it&rsquo;s already the house style. Everything downstream is a real rewrite, and the money paths get a safety net, not a leap.</p>
+    </div>
+    <div class="arc">
+      <div class="phase"><span class="pn">1</span><div class="pbody"><h4>Stand up <code>@hopdrive/eventkit</code> alongside</h4><p>Build the Hasura source adapters — <code>hasuraEvent</code> (DB triggers: typed detector + handler context, <code>manuallyInvoked()</code>, inbound provenance) and <code>hasuraCron</code> (Hasura scheduled triggers) — and the module-scoped entry point. Prove subpath bundling under Netlify in CI before committing to the package shape.</p><span class="risk low">Foundation</span></div></div>
+      <div class="phase"><span class="pn">2</span><div class="pbody"><h4>Port the shared primitives</h4><p><code>job()</code>/<code>run()</code> with the <code>input</code>/<code>metadata</code> split and pinned parallel defaults; tiered loggers; error/output serialization moved into core.</p><span class="risk low">Mechanical</span></div></div>
+      <div class="phase"><span class="pn">3</span><div class="pbody"><h4>Migrate event modules one at a time</h4><p>Detectors are a near-mechanical rewrite to named-boolean style. The handler becomes a declarative <code>jobs</code> array + <code>prepare</code> (no <code>run()</code> call); jobs move to <code>ctx</code> + <code>input</code>/<code>metadata</code>. Event names are preserved verbatim — renaming is a separate, deliberate change.</p><span class="risk rewrite">Rewrite, not port</span></div></div>
+      <div class="phase"><span class="pn">4</span><div class="pbody"><h4>Move durable consumers off the wrapper</h4><p>Register the BatchJobs plugin in <code>db-batchjobs</code>; delete the <code>batchJob(…)</code> wrapper, the flag, and the input mapping. The job reads <code>ctx.input</code> (injected from the row); the plugin self-correlates and persists. Refactor the ≈14 conditional-job handler sites into named events or input-driven jobs.</p><span class="risk rewrite">Rewrite, not port</span></div></div>
+      <div class="phase"><span class="pn">5</span><div class="pbody"><h4>Shadow-test the money &amp; loop paths</h4><p>Run EventKit beside the current runtime for AR, tracking-token, and billing flows; diff outputs before cutting over. These paths fail <i>silently</i> — a straight cutover isn&rsquo;t acceptable.</p><span class="risk crit">Shadow before cutover</span></div></div>
+      <div class="phase"><span class="pn">6</span><div class="pbody"><h4>Then the tooling</h4><p>Buffered observability for migrated events; one Flow Manifest on a high-value workflow; Compare Mode once that one flow is proven. Expand outward.</p><span class="risk low">Phased payoff</span></div></div>
+    </div>
+
+    <div class="callout">
+      <p class="eyebrow on-dark">The one-line summary</p>
+      <p><b>The detector layer is a port; the declarative <code>jobs</code> + <code>prepare</code> → job data contract is the migration.</b> Get the <code>input</code>/<code>metadata</code> split, the typed context, the per-invocation entry, and the loop-prevention contract right, and the other 240-odd modules follow the same mechanical pattern.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ API REFERENCE ============ -->
+<section class="tint" id="reference">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Reference</p>
+      <h2>API reference</h2>
+      <p class="sec-sub">The curated public surface — every export you import, with its signature and options. For the exhaustive, every-symbol reference (generated from source, so it can&rsquo;t drift), run <code>npm run docs</code> and open <code>docs/api/</code>. Imports are by subpath, so a function only bundles what it uses. <span class="refbadge shipped">shipped</span> is in the package today; <span class="refbadge planned">planned</span> is specified but not yet built.</p>
+    </div>
+
+    <div class="refgroup">
+      <h3>Import map</h3>
+      <p class="ghint">Every public symbol and the subpath it comes from.</p>
+<pre><span class="k">import</span> { createEventKit, defineEvent, job } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
+<span class="k">import</span> { hasuraEvent, hasuraCron } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources/hasura'</span>;
+<span class="k">import</span> { observability } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/observability'</span>;
+<span class="k">import</span> { graphqlSink } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/observability/graphql-sink'</span>;
+<span class="k">import</span> { batchJobs } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/batchjobs'</span>;
+<span class="k">import</span> { loopPrevention } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/loop-prevention'</span>;
+<span class="k">import</span> { grafanaLogger } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/transports/grafana'</span>;
+<span class="k">import</span> { sentry } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/transports/sentry'</span>;
+<span class="k">import</span> { netlifyPlatform, netlifyV2Platform, netlifyBackgroundPlatform, lambdaPlatform }
+  <span class="k">from</span> <span class="s">'@hopdrive/eventkit/platforms'</span>;
+<span class="k">import</span> { fakeSource, defineFakeEvent, buildDetectorContextFor, buildHandlerContextFor }
+  <span class="k">from</span> <span class="s">'@hopdrive/eventkit/testing'</span>;</pre>
+    </div>
+
+    <div class="refgroup">
+      <h3>Entry point</h3>
+      <p class="ghint">Build one kit per warm lambda at module scope; everything else hangs off it.</p>
+      <div class="refentry">
+        <div class="rsig">createEventKit(source, config?): EventKit</div>
+        <p>Construct a kit with its one required <b>source</b> (the first positional arg — ADR-019). <code>config</code> is the source&rsquo;s own config (e.g. <code>createEventKit(webhook, { verify })</code>).</p>
+      </div>
+      <div class="refentry">
+        <div class="rsig">kit.use(plugin, config?): EventKit</div>
+        <p>Register a plugin/factory (the value itself, not a call) plus optional config; the kit instantiates it lazily. Chainable. The platform adapter registers here too.</p>
+      </div>
+      <div class="refentry">
+        <div class="rsig">kit.registerEvent(module): EventKit
+kit.registerEvents(modules[] | record): EventKit</div>
+        <p>Register one or many <code>defineEvent</code> modules. Explicit only — no filesystem auto-discovery. Throws on a duplicate event name or a non-job entry in any module&rsquo;s <code>jobs</code>.</p>
+      </div>
+      <div class="refentry">
+        <div class="rsig">kit.handler(opts?: { before? }): (...args) =&gt; response</div>
+        <p>Zero-boilerplate entry: the registered platform adapter owns the runtime signature and the response shape. <code>before(...args)</code> runs pre-dispatch; returning a value short-circuits (auth / method) and the adapter&rsquo;s <code>formatRejection</code> shapes it (<code>{ status, body }</code> → platform-native).</p>
+      </div>
+      <div class="refentry">
+        <div class="rsig">kit.handle(rawPayloadOrArgs, request?): Promise&lt;InvocationResult&gt;</div>
+        <p>Manual entry — forward raw platform args; the adapter extracts payload + time budget. Use when you need to wrap dispatch yourself.</p>
+      </div>
+      <div class="refentry">
+        <div class="rsig">kit.validate(): void          kit.shutdown(): Promise&lt;void&gt;</div>
+        <p><code>validate()</code> runs plugin/capability resolution + module checks (also run on first <code>handle</code>). <code>shutdown()</code> flushes and tears down plugins.</p>
+      </div>
+    </div>
+
+    <div class="refgroup">
+      <h3>Event module — <code>defineEvent</code></h3>
+      <p class="ghint">A declarative record (ADR-025): the runtime runs the declared jobs. There is no handler function.</p>
+      <div class="refentry">
+        <div class="rsig">defineEvent&lt;TPayload&gt;({ name, detector, prepare?, jobs?, resolve?, run?, metadata? }): EventModule</div>
+        <ul class="rfields">
+          <li><b><code>name</code></b> — the business event name (the module&rsquo;s identity; preserved verbatim across migration).</li>
+          <li><b><code>detector</code></b> — <code>(ctx) =&gt; boolean | Promise&lt;boolean&gt;</code>. The predicate; house style is <code>switch (ctx.operation)</code> with named booleans.</li>
+          <li><b><code>prepare?</code></b> — <code>(ctx) =&gt; shared</code>. Runs once before the jobs; its result merges into every job&rsquo;s <code>ctx.input</code> (shared <code>sdk</code>, fetched rows, closures).</li>
+          <li><b><code>jobs?</code></b> — <code>JobDefinition[]</code>, a <i>static array literal</i> of <code>job(fn, opts?)</code>. The runtime runs them; no conditional inclusion, no fan-out, no inter-job deps. Optional only when <code>resolve</code> is present — a module must declare <code>jobs</code> and/or <code>resolve</code>.</li>
+          <li><b><code>resolve?</code></b> <span class="refbadge shipped">shipped</span> — <code>(ctx) =&gt; output</code>, the <b>request/response seam</b> (ADR-026): computes the invocation&rsquo;s response value for a request/response source (<code>hasuraAction</code>, a status-contract <code>webhook</code>). Source-agnostic; the source&rsquo;s platform adapter maps the return → the wire. It MUST NOT read job results — jobs run alongside as sibling-ignorant side effects.</li>
+          <li><b><code>run?</code></b> — <code>RunOptions</code> for the batch (mode / continueOnFailure / timeoutMs).</li>
+          <li><b><code>metadata?</code></b> — registration-time hints for tooling (description, tags, owner, flowHints); nothing depends on it at runtime.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="refgroup">
+      <h3>Jobs — <code>job()</code>, <code>JobOptions</code>, <code>RunOptions</code></h3>
+      <p class="ghint">A job is <code>(ctx) =&gt; result</code>. Authored via <code>job(fn, opts?)</code>; see &ldquo;Controlling how the jobs run&rdquo; above for the option semantics.</p>
+      <div class="refentry">
+        <div class="rsig">job&lt;TInput, TResult&gt;(fn, options?): JobDefinition</div>
+        <p>Wrap a job function into a branded definition. Options:</p>
+        <ul class="rfields">
+          <li><b><code>retries?</code></b> number · <b><code>timeoutMs?</code></b> number · <b><code>continueOnFailure?</code></b> boolean — execution control (per-job override of the module default).</li>
+          <li><b><code>name?</code></b> string — stable identity for observability/flow (else <code>fn.name</code>; set explicitly to survive minification).</li>
+          <li><b><code>tags?</code></b> string[] · <b><code>metadata?</code></b> Record — labels &amp; serializable annotations (persisted + traced).</li>
+          <li><b><code>input?</code></b> <code>TInput | (ctx: JobInputContext) =&gt; TInput</code> — live request-scoped data (object or pure mapper); never persisted; merges highest over <code>prepare</code> + plugin baselines.</li>
+        </ul>
+      </div>
+      <div class="refentry">
+        <div class="rsig">RunOptions = { mode?: 'parallel'|'series', continueOnFailure?, timeoutMs?, metadata? }</div>
+        <p>Pinned defaults (ADR-014): <code>mode:'parallel'</code>, <code>continueOnFailure:true</code>. Supplied on the module&rsquo;s <code>run</code>, not a call.</p>
+      </div>
+    </div>
+
+    <div class="refgroup">
+      <h3>Sources</h3>
+      <p class="ghint">A source normalizes an inbound signal into an <code>EventEnvelope</code> and supplies the typed detector/job context. Exactly one per kit. Two classes (ADR-026): <b>fire-and-forget event</b> sources (detect → jobs; response is an ack) and <b>request/response</b> sources (detect → <code>resolve</code> a payload + optional side-effect jobs).</p>
+      <div class="refentry">
+        <div class="rsig">hasuraEvent <span class="refbadge shipped">shipped</span></div>
+        <p>Hasura DB event triggers (<code>sourceType:'database'</code>). Authoring helpers <code>hasuraEvent.detector&lt;Row&gt;(fn)</code> / <code>hasuraEvent.prepare&lt;Row&gt;(fn)</code> carry types. Detector context: <code>operation</code>, <code>oldRow</code>/<code>newRow</code>/<code>row</code>, <code>inserted()/updated()/deleted()/manuallyInvoked()</code>, <code>columnChanged()/columnAdded()/columnRemoved()</code>, <code>previousValue()/currentValue()</code>.</p>
+      </div>
+      <div class="refentry">
+        <div class="rsig">hasuraCron <span class="refbadge shipped">shipped</span></div>
+        <p>Hasura scheduled (cron) triggers (<code>sourceType:'cron'</code>). Context: <code>scheduleName</code>, <code>scheduledAt</code>, <code>payload</code>.</p>
+      </div>
+      <div class="refentry">
+        <div class="rsig">webhook(config) <span class="refbadge planned">planned</span></div>
+        <p>Vendor webhooks (<code>{ vendor, verify, eventTypeHeader }</code>); context exposes <code>signatureVerified</code>, <code>vendor</code>, <code>eventType</code>, <code>body</code>. Covers <code>event-handlers</code>&rsquo; <code>webhook-*</code> (Stripe, Twilio, Dealerware) and the reverse-integration repos. Mostly fire-and-forget; a status-contract vendor (Stripe) uses <code>resolve</code> + a thrown <code>ClientError(status,…)</code> that the platform maps to the HTTP status.</p>
+      </div>
+      <div class="refentry">
+        <div class="rsig">hasuraAction <span class="refbadge planned">planned</span></div>
+        <p>A <b>request/response</b> source (<code>sourceType:'action'</code>) for Hasura Actions — custom GraphQL business logic gated by Hasura&rsquo;s permission model. Hasura POSTs <code>{ action:{name}, input, session_variables, request_query }</code>; the module&rsquo;s <code>resolve</code> returns the output type. Context: <code>actionName</code>, <code>input</code>, <code>sessionVariables</code> (<code>role</code>/<code>userId</code>/<code>email</code>), <code>requestQuery?</code>. Paired with <code>hasuraActionPlatform</code> (below), which maps <code>resolve</code>&rsquo;s return → <b>2xx</b> + the output JSON and a thrown <code>ActionError(message, code?)</code> → <b>4xx</b> + <code>{ message, extensions:{ code? } }</code>. Bespoke <code>app-*</code> endpoints are replaced by actions over time (security via RBAC; downstream effects traced by correlation id) — not migrated.</p>
+      </div>
+    </div>
+
+    <div class="refgroup">
+      <h3>Plugins</h3>
+      <p class="ghint">Generic, config-driven, registered via <code>kit.use</code>. I/O plugins take an injected transport seam (<code>sink</code>/<code>store</code>/<code>logger</code>/<code>send</code>) so they never read <code>process.env</code>.</p>
+      <div class="refcols">
+        <div class="refentry">
+          <div class="rsig">observability({ sink, strict? }) <span class="refbadge shipped">shipped</span></div>
+          <p>Buffers the Invocation→Event→Job record hierarchy; flushes once per invocation through <code>sink(batch)</code>. Best-effort unless <code>strict</code>.</p>
+        </div>
+        <div class="refentry">
+          <div class="rsig">graphqlSink({ endpoint, headers? | adminSecret? }) <span class="refbadge shipped">shipped</span></div>
+          <p>Built-in observability <code>sink</code> that bulk-upserts to the canonical observability tables over Hasura GraphQL.</p>
+        </div>
+        <div class="refentry">
+          <div class="rsig">batchJobs({ store, logFlush? }) <span class="refbadge shipped">shipped</span></div>
+          <p>Registration-emergent durability; <code>requires:['source:hasura']</code>. Injects the <code>batch_jobs</code> row&rsquo;s input, persists lifecycle via the injected <code>store.update(id, fields)</code>. A built-in <code>graphqlBatchJobStore</code> is <span class="refbadge planned">planned</span> — provide your own <code>store</code> meanwhile.</p>
+        </div>
+        <div class="refentry">
+          <div class="rsig">loopPrevention({ field?, serviceId?, codec?, read? }) <span class="refbadge shipped">shipped</span></div>
+          <p>Reads the inbound provenance field (HopDrive: <code>updated_by</code>) into <code>envelope.meta</code>; outbound <code>ctx.trackingToken</code> is a core seam. Also exports <code>createTokenCodec</code>.</p>
+        </div>
+        <div class="refentry">
+          <div class="rsig">grafanaLogger({ logger | grafana, source?, minLevel?, flush? }) <span class="refbadge shipped">shipped</span></div>
+          <p>Log bridge. Mode 1: inject a <code>logger</code> (<code>getLogger()</code> from sdk-server-logger). Mode 2: <code>grafana:{ endpoint, auth, labels }</code> for direct Loki.</p>
+        </div>
+        <div class="refentry">
+          <div class="rsig">sentry({ dsn?, endpoint?, environment?, release?, send? }) <span class="refbadge shipped">shipped</span></div>
+          <p>Forwards <code>onError</code> to Sentry. Inject <code>send</code> to delegate to the official SDK (the default sender is a placeholder).</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="refgroup">
+      <h3>Platform adapters</h3>
+      <p class="ghint">Map a deployment runtime&rsquo;s invocation signature, time budget, and response shape. Register via <code>kit.use(...)</code>; the source stays the positional arg.</p>
+      <ul class="rfields" style="max-width:84ch">
+        <li><b><code>netlifyPlatform()</code></b> <span class="refbadge shipped">shipped</span> — Netlify classic (<code>event</code>/<code>context</code> → <code>{ statusCode, body }</code>; native time budget).</li>
+        <li><b><code>netlifyV2Platform({ maxExecutionMs? })</code></b> <span class="refbadge shipped">shipped</span> — Netlify v2 / Web <code>Request</code>→<code>Response</code> (the reverse-integration repos).</li>
+        <li><b><code>netlifyBackgroundPlatform({ maxExecutionMs? })</code></b> <span class="refbadge shipped">shipped</span> — 15-min background / 202 (the live batch-jobs watch view).</li>
+        <li><b><code>lambdaPlatform()</code></b> <span class="refbadge shipped">shipped</span> — AWS Lambda (<code>getRemainingTimeInMillis</code> budget).</li>
+        <li><b><code>hasuraActionPlatform()</code></b> <span class="refbadge planned">planned</span> — Hasura Actions: maps a module&rsquo;s <code>resolve</code> output → <b>2xx</b> + the output JSON, and a thrown <code>ActionError(message, code?)</code> → <b>4xx</b> + <code>{ message, extensions:{ code? } }</code> (Hasura&rsquo;s contract).</li>
+      </ul>
+    </div>
+
+    <div class="refgroup">
+      <h3>Core types</h3>
+      <p class="ghint">The runtime vocabulary. All exported from the root / <code>@hopdrive/eventkit/core</code>.</p>
+      <div class="refcols">
+        <div class="refentry"><div class="rsig">EventEnvelope</div><p>Normalized inbound signal: <code>id</code>, <code>source</code>, <code>sourceType</code>, <code>receivedAt</code>, <code>correlationId</code>, <code>payload</code>, <code>meta</code>, <code>raw?</code>.</p></div>
+        <div class="refentry"><div class="rsig">DetectedEvent</div><p>A fired business event: <code>name</code>, ids, <code>detectedAt</code>, <code>detectorDurationMs</code>, <code>envelope</code>.</p></div>
+        <div class="refentry"><div class="rsig">DetectorContext / HandlerContext / JobInputContext</div><p>Detection-only / post-detection / the context a per-job <code>input</code> mapper sees (handler ctx + <code>prepared</code>).</p></div>
+        <div class="refentry"><div class="rsig">JobContext</div><p>What a job receives: <code>input</code>, <code>event</code>, <code>envelope</code>, <code>job</code> (id/name/attempt/metadata), <code>trackingToken</code>, <code>log</code>, <code>progress()</code>, <code>checkpoint()</code>, <code>signal?</code>.</p></div>
+        <div class="refentry"><div class="rsig">JobExecution / JobExecutionStatus</div><p>One job attempt&rsquo;s result. Status: <code>queued|running|completed|failed|skipped|timed_out|cancelled</code>.</p></div>
+        <div class="refentry"><div class="rsig">InvocationResult / EventOutcome</div><p>The aggregate of one invocation: <code>ok</code>, <code>events[]</code> (each with <code>error?</code>), <code>durationMs</code>, <code>timedOut?</code>.</p></div>
+        <div class="refentry"><div class="rsig">RequestContext / InvocationContext / KitContext</div><p>Per-request input / per-invocation context threaded to plugins / kit-level context injected at <code>onInit</code>.</p></div>
+        <div class="refentry"><div class="rsig">LogEntry / LogLevel + tiered loggers</div><p><code>DetectorLogger</code> / <code>HandlerLogger</code> / <code>JobLogger</code>; entries carry correlation ids + scope.</p></div>
+        <div class="refentry"><div class="rsig">SerializedError / ErrorContext / Capability</div><p>Safe error shape; the <code>onError</code> payload; the <code>provides</code>/<code>requires</code> token (<code>'source:hasura'</code>).</p></div>
+        <div class="refentry"><div class="rsig">EventKitPlugin / SourceAdapter / PlatformAdapter</div><p>The unifying plugin contract and the two capability-provider shapes.</p></div>
+      </div>
+    </div>
+
+    <div class="refgroup">
+      <h3>Testing &amp; utilities</h3>
+      <p class="ghint">From <code>@hopdrive/eventkit/testing</code> and the root.</p>
+      <ul class="rfields" style="max-width:84ch">
+        <li><b><code>fakeSource(opts?)</code></b> — minimal in-memory source; exposes the raw <code>payload</code> on both contexts.</li>
+        <li><b><code>defineFakeEvent(name, detector, jobs, opts?)</code></b> — assemble a module for tests without a real source.</li>
+        <li><b><code>buildDetectorContextFor(...)</code> / <code>buildHandlerContextFor(...)</code></b> — exercise a detector/job against any source&rsquo;s context.</li>
+        <li><b><code>serializeError</code> / <code>serializeOutput</code> / <code>replaceCircularReferences</code></b> — the safe-serialization utilities the runtime uses.</li>
+        <li><b><code>asEventName</code> / <code>asJobName</code> / <code>asCorrelationId</code> …</b> — branded-id constructors.</li>
+      </ul>
+    </div>
+
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span class="status"><span style="width:8px;height:8px;border-radius:50%;background:var(--brass-line);display:inline-block;"></span> Proposed — v0.2 canonical draft, not yet shipped</span>
+    <p style="max-width:62ch;margin:0 0 18px;color:#BFD2CF;">EventKit is a forcing-function rewrite: the immediate goal is replacing <code>hasura-event-detector</code>, but the strategic goal is a stable event language HopDrive builds on for the next decade.</p>
+    <div class="files">
+      <b>Source documents</b><br>
+      EventKit Architecture RFC v0.2 (canonical-draft).md<br>
+      EventKit-design-evaluation-202606281700.md<br>
+      EventKit-open-decisions-202606281830.md<br>
+      EventKit-RFC-amendment-A-B-C · D-E
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -22,6 +22,11 @@
       "import": "./dist/esm/sources/hasura/index.js",
       "require": "./dist/cjs/sources/hasura/index.js"
     },
+    "./sources/webhook": {
+      "types": "./dist/types/sources/webhook/index.d.ts",
+      "import": "./dist/esm/sources/webhook/index.js",
+      "require": "./dist/cjs/sources/webhook/index.js"
+    },
     "./plugins/batchjobs": {
       "types": "./dist/types/plugins/batchjobs/index.d.ts",
       "import": "./dist/esm/plugins/batchjobs/index.js",
@@ -65,6 +70,7 @@
   },
   "files": [
     "dist",
+    "docs/guide.html",
     "README.md",
     "LICENSE"
   ],
@@ -80,6 +86,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:contracts": "tsc -p tsconfig.typetest.json",
     "smoke:bundle": "node scripts/bundle-smoke.cjs",
+    "docs": "typedoc",
     "lint": "eslint src --ext .ts",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -106,6 +113,7 @@
     "@types/uuid": "^10.0.0",
     "esbuild": "^0.21.0",
     "rimraf": "^5.0.5",
+    "typedoc": "^0.26.0",
     "typescript": "^5.4.0",
     "vitest": "^2.1.9"
   }

@@ -9,3 +9,4 @@ coverage/
 .netlify/
 /tmp/
 scripts/.smoke-tmp/
+docs/api/

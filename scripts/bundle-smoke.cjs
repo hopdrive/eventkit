@@ -20,6 +20,7 @@ const SUBPATHS = [
   '@hopdrive/eventkit',
   '@hopdrive/eventkit/core',
   '@hopdrive/eventkit/sources/hasura',
+  '@hopdrive/eventkit/sources/webhook',
   '@hopdrive/eventkit/plugins/batchjobs',
   '@hopdrive/eventkit/plugins/observability',
   '@hopdrive/eventkit/plugins/observability/graphql-sink',

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": [
+    "src/index.ts",
+    "src/sources/hasura/index.ts",
+    "src/plugins/observability/index.ts",
+    "src/plugins/observability/graphql-sink.ts",
+    "src/plugins/batchjobs/index.ts",
+    "src/plugins/loop-prevention/index.ts",
+    "src/plugins/transports/grafana/index.ts",
+    "src/plugins/transports/sentry/index.ts",
+    "src/platforms/index.ts",
+    "src/testing/index.ts"
+  ],
+  "out": "docs/api",
+  "readme": "none",
+  "name": "@hopdrive/eventkit",
+  "excludeInternal": true,
+  "excludePrivate": true,
+  "includeVersion": true,
+  "navigationLinks": {
+    "Guide": "../guide.html"
+  }
+}

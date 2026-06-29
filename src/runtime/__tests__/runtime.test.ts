@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { createEventKit, job, type EventKitPlugin, type JobContext } from '../../index.js';
+import { createEventKit, defineEvent, job, ActionError, ClientError, type EventKitPlugin, type JobContext } from '../../index.js';
 import { fakeSource, defineFakeEvent } from '../../testing/index.js';
 
 // A detector that always fires. Modules are declarative (ADR-025): a static `jobs`
 // array + optional `prepare`/`run`, never a handler that calls run().
 const always = () => true;
+const asName = (n: string) => n as unknown as ReturnType<typeof defineEvent>['name'];
 
 describe('no-plugin kit: detect + run the declared jobs in-memory', () => {
   it('detects a registered event and runs its jobs end to end', async () => {
@@ -267,5 +268,64 @@ describe('plugin lifecycle + capability validation', () => {
     const dupeSource: EventKitPlugin = { name: 'dupe', provides: ['source'] };
     const kit = createEventKit(fakeA).use(dupeSource);
     expect(() => kit.validate()).toThrow(/claim the 'source' capability/);
+  });
+});
+
+describe('ADR-026: resolve (request/response) is source-agnostic; jobs run alongside', () => {
+  it("surfaces resolve's return on result.resolved while a fire-and-forget job runs too", async () => {
+    let jobRan = false;
+    const mod = defineEvent({
+      name: 'rpc.compute',
+      detector: always,
+      prepare: () => ({ base: 10 }),
+      resolve: ctx => ({ total: (ctx.prepared as { base: number }).base + 5 }),
+      jobs: [job(() => void (jobRan = true), { name: 'sideEffect' })],
+    });
+    const result = await createEventKit(fakeSource()).registerEvents([mod]).handle('go');
+
+    expect(result.resolved?.hasResolved).toBe(true);
+    expect(result.resolved?.output).toEqual({ total: 15 }); // resolve saw prepare output
+    expect(jobRan).toBe(true);
+    expect(result.events[0]!.jobs[0]!.status).toBe('completed');
+    expect(result.ok).toBe(true);
+  });
+
+  it('a fire-and-forget module (no resolve) leaves result.resolved undefined', async () => {
+    const mod = defineEvent({ name: 'plain', detector: always, jobs: [job(() => 'ok')] });
+    const result = await createEventKit(fakeSource()).registerEvents([mod]).handle('go');
+    expect(result.resolved).toBeUndefined();
+  });
+
+  it('a resolve throw → result.resolved.error; jobs still ran; ok stays job-status-only', async () => {
+    let jobRan = false;
+    const mod = defineEvent({
+      name: 'rpc.fails',
+      detector: always,
+      resolve: () => { throw new Error('compute failed'); },
+      jobs: [job(() => void (jobRan = true))],
+    });
+    const result = await createEventKit(fakeSource()).registerEvents([mod]).handle('go');
+
+    expect(result.resolved?.error?.message).toBe('compute failed');
+    expect(result.resolved?.output).toBeUndefined();
+    expect(jobRan).toBe(true);
+    expect(result.ok).toBe(true); // resolve error maps to the wire, not to a job-failure retry
+  });
+
+  it('carries ClientError.status and ActionError.code onto resolved.error (duck-typed)', async () => {
+    const ce = await createEventKit(fakeSource())
+      .registerEvents([defineEvent({ name: 'pay', detector: always, resolve: () => { throw new ClientError(402, 'payment required'); } })])
+      .handle('go');
+    expect(ce.resolved?.error).toMatchObject({ message: 'payment required', status: 402 });
+
+    const ae = await createEventKit(fakeSource())
+      .registerEvents([defineEvent({ name: 'act', detector: always, resolve: () => { throw new ActionError('nope', 'BAD_INPUT', { field: 'email' }); } })])
+      .handle('go');
+    expect(ae.resolved?.error).toMatchObject({ message: 'nope', code: 'BAD_INPUT', extensions: { field: 'email' } });
+  });
+
+  it('register-time: a module with neither jobs nor resolve throws', () => {
+    const bad = { name: asName('does.nothing'), detector: always } as unknown as ReturnType<typeof defineEvent>;
+    expect(() => createEventKit(fakeSource()).registerEvents([bad])).toThrow(/must declare 'jobs' and\/or 'resolve'/);
   });
 });
