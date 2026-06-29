@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createEventKit, run, job, asEventName, type EventModule } from '../../index.js';
+import { createEventKit, job, asEventName, type EventModule } from '../../index.js';
 import { hasuraEvent } from '../../sources/hasura/index.js';
 import { lambdaPlatform, netlifyPlatform, netlifyBackgroundPlatform, netlifyV2Platform } from '../index.js';
 
@@ -18,8 +18,7 @@ const hasuraHttpEvent = (newRow: Record<string, unknown>) => ({
 
 const apptReady = (): EventModule => {
   const detector = hasuraEvent.detector(ctx => ctx.operation === 'INSERT' && ctx.newRow?.status === 'ready');
-  const handler = hasuraEvent.handler((event, _ctx) => run(event, [job(() => ({ sent: true }), { name: 'notify' })]));
-  return { name: asEventName('appointment.ready'), detector, handler } as EventModule;
+  return { name: asEventName('appointment.ready'), detector, jobs: [job(() => ({ sent: true }), { name: 'notify' })] } as EventModule;
 };
 
 describe('netlifyPlatform (classic) via kit.handler()', () => {
@@ -39,9 +38,7 @@ describe('netlifyPlatform (classic) via kit.handler()', () => {
     const slow = (): EventModule => ({
       name: asEventName('e'),
       detector: hasuraEvent.detector(() => true),
-      handler: hasuraEvent.handler((event, _ctx) =>
-        run(event, [job(() => new Promise(r => setTimeout(r, 1000)), { name: 'longrunner' })]),
-      ),
+      jobs: [job(() => new Promise(r => setTimeout(r, 1000)), { name: 'longrunner' })],
     }) as EventModule;
     const kit = createEventKit(hasuraEvent).use(netlifyPlatform).registerEvents([slow()]);
     const handler = kit.handler();

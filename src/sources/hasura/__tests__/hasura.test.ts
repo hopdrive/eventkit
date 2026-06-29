@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createEventKit, run, job, asEventName, type EventModule, type JobContext } from '../../../index.js';
+import { createEventKit, job, asEventName, type EventModule, type JobContext } from '../../../index.js';
 import { hasuraEvent, hasuraCron } from '../index.js';
 import type {
   HasuraCronContext,
@@ -11,7 +11,7 @@ import type {
   HasuraOperation,
 } from '../types.js';
 import { buildDetectorContextFor, buildHandlerContextFor } from '../../../testing/index.js';
-import { detector, handler, type AppointmentRow } from '../../../__examples__/appointment.ready.js';
+import { detector, appointmentReady, type AppointmentRow } from '../../../__examples__/appointment.ready.js';
 
 type Row = Record<string, unknown>;
 
@@ -147,8 +147,7 @@ describe('appointment.ready detector (insert/update/delete/manual/malformed)', (
 
 describe('appointment.ready end to end through a Hasura kit', () => {
   it('detects an UPDATE→ready and runs both jobs with row data', async () => {
-    const mod: EventModule = { name: asEventName('appointment.ready'), detector, handler };
-    const kit = createEventKit(hasuraEvent).registerEvents([mod]);
+    const kit = createEventKit(hasuraEvent).registerEvents([appointmentReady]);
     const appt: AppointmentRow = { id: 42, status: 'ready', customer_id: 9 };
     const result = await kit.handle(payload('UPDATE', { id: 42, status: 'pending' }, appt));
 
@@ -162,8 +161,7 @@ describe('appointment.ready end to end through a Hasura kit', () => {
   });
 
   it('does not fire on an UPDATE that does not reach ready', async () => {
-    const mod: EventModule = { name: asEventName('appointment.ready'), detector, handler };
-    const kit = createEventKit(hasuraEvent).registerEvents([mod]);
+    const kit = createEventKit(hasuraEvent).registerEvents([appointmentReady]);
     const result = await kit.handle(payload('UPDATE', { id: 1, status: 'pending' }, { id: 1, status: 'scheduled' }));
     expect(result.events).toHaveLength(0);
   });
@@ -223,16 +221,15 @@ describe('hasuraCron end to end', () => {
   it('matches a schedule by name and runs its jobs with the configured payload', async () => {
     let processedMonth = '';
     const detector = hasuraCron.detector(ctx => ctx.scheduleName === 'monthly-invoices');
-    const handler = hasuraCron.handler((event, ctx) =>
-      run(event, [
-        job((c: JobContext) => void (processedMonth = (c.input as { month: string }).month), {
-          name: 'processMonthly',
-          input: { month: (ctx.payload as { month: string }).month },
-        }),
-      ]),
-    );
+    // prepare extracts the configured month once and shares it into the job's input.
+    const prepare = hasuraCron.prepare(ctx => ({ month: (ctx.payload as { month: string }).month }));
     const kit = createEventKit(hasuraCron).registerEvents([
-      { name: asEventName('invoices.monthly'), detector, handler } as EventModule,
+      {
+        name: asEventName('invoices.monthly'),
+        detector,
+        prepare,
+        jobs: [job((c: JobContext) => void (processedMonth = (c.input as { month: string }).month), { name: 'processMonthly' })],
+      } as EventModule,
     ]);
 
     const result = await kit.handle(cronPayload('monthly-invoices', { month: '2026-06' }));
@@ -243,9 +240,8 @@ describe('hasuraCron end to end', () => {
 
   it('does not fire for a different schedule name', async () => {
     const detector = hasuraCron.detector(ctx => ctx.scheduleName === 'monthly-invoices');
-    const handler = hasuraCron.handler((event, _ctx) => run(event, []));
     const kit = createEventKit(hasuraCron).registerEvents([
-      { name: asEventName('invoices.monthly'), detector, handler } as EventModule,
+      { name: asEventName('invoices.monthly'), detector, jobs: [] } as EventModule,
     ]);
     const result = await kit.handle(cronPayload('hourly-cleanup'));
     expect(result.events).toHaveLength(0);

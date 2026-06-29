@@ -1,38 +1,51 @@
 // =============================================================================
 // Negative-type contract fixtures (compile-only; never executed)
 // =============================================================================
-// Compiled by `tsconfig.typetest.json` (run in CI). Each `@ts-expect-error`
-// asserts that a specific misuse FAILS to type-check. If a guard regresses — e.g.
-// the JobDefinition brand stops rejecting `cond && job(...)` — the expected error
-// disappears, the directive becomes "unused", and tsc fails the build. This is
-// the type-level half of ADR-018 (declarative handlers / no conditional jobs) and
-// ADR-020 (typed job-context contribution).
+// Compiled by `tsconfig.typetest.json` (run in CI). Each `@ts-expect-error` asserts
+// that a specific misuse FAILS to type-check. If a guard regresses, the expected
+// error disappears, the directive becomes "unused", and tsc fails the build.
+//
+// ADR-025: a module declares a STATIC `jobs` array; there is no handler body, so
+// imperative conditional inclusion (`if (x) jobs.push(...)`) is structurally
+// IMPOSSIBLE — there is nowhere to write it. The branded `JobDefinition` remains a
+// backstop against the one expressible form, `cond && job(...)` inside the array
+// literal (type `false | JobDefinition`), and against non-job entries. ADR-020
+// covers the typed job-context contribution.
 
-import { job, run } from '../index.js';
-import type { DetectedEvent, JobContext, EventKitPlugin } from '../core/index.js';
+import { job, defineEvent } from '../index.js';
+import type { JobContext, EventKitPlugin } from '../core/index.js';
 
-declare const event: DetectedEvent;
 const work = (_ctx: JobContext): void => {};
+declare const detector: () => boolean;
 
-// ── ADR-018: a strict JobDefinition[] is accepted ──────────────────────────
-void run(event, [job(work), job(work, { timeoutMs: 100 })]);
+// ── ADR-025: a static array of branded jobs is accepted ─────────────────────
+void defineEvent({ name: 'ok.event', detector, jobs: [job(work), job(work, { timeoutMs: 100 })] });
 
-// ── ADR-018 guard: `cond && job(...)` is `false | JobDefinition`, NOT a job ──
+// ── ADR-025/018 guard: `cond && job(...)` is `false | JobDefinition`, NOT a job ──
 declare const cond: boolean;
-// @ts-expect-error conditional entry (false | JobDefinition) is not assignable to JobDefinition[]
-void run(event, [cond && job(work)]);
+// @ts-expect-error a conditional entry (false | JobDefinition) is not assignable to JobDefinition[]
+void defineEvent({ name: 'bad.cond', detector, jobs: [cond && job(work)] });
 
-// ── ADR-018 guard: a bare function is not a JobDefinition (must wrap in job()) ──
+// ── ADR-025/018 guard: a bare function is not a JobDefinition (must wrap in job()) ──
 // @ts-expect-error a job function is not a JobDefinition
-void run(event, [work]);
+void defineEvent({ name: 'bad.bare', detector, jobs: [work] });
 
-// ── ADR-018 guard: a look-alike object without the brand is rejected ────────
+// ── ADR-025/018 guard: a look-alike object without the brand is rejected ────
 // @ts-expect-error missing the `__eventkitJob` brand
-void run(event, [{ fn: work, name: 'x', options: {} }]);
+void defineEvent({ name: 'bad.lookalike', detector, jobs: [{ fn: work, name: 'x', options: {} }] });
 
-// ── ADR-018 guard: a falsy/empty entry is rejected ──────────────────────────
+// ── ADR-025/018 guard: a falsy/empty entry is rejected ──────────────────────
 // @ts-expect-error null is not a JobDefinition
-void run(event, [null]);
+void defineEvent({ name: 'bad.null', detector, jobs: [null] });
+
+// ── ADR-025 guard: `jobs` is required — a module is not a handler ───────────
+// @ts-expect-error missing the required `jobs` array
+void defineEvent({ name: 'bad.nojobs', detector });
+
+// Note: there is no `handler` field to put an `if`/ternary/`.push` in — conditional
+// job inclusion is impossible by construction, not merely caught by the brand above.
+// A condition lives in the `detector` (a distinct business event) or inside a job
+// body (input-driven, runs every time and may no-op). See ADR-025 §19.1.
 
 // ── ADR-020: a valid job-context contribution type-checks ───────────────────
 const validPlugin: EventKitPlugin = {

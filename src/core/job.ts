@@ -4,9 +4,24 @@
 
 import type { EventName, JobName, InvocationId, CorrelationId } from './brands.js';
 import type { EventEnvelope, DetectedEvent } from './envelope.js';
+import type { HandlerContext } from './context.js';
 import type { JobLogger } from './logger.js';
 import type { SerializedError } from './errors.js';
 import { asJobName } from './brands.js';
+
+/**
+ * The context a per-job `input` MAPPER receives (ADR-025). It is the detected
+ * event's handler context (event, envelope, source-enriched fields) plus the
+ * `prepared` object returned by the module's `prepare`. It deliberately does NOT
+ * include the job's own resolved `input` — a mapper derives input from the event
+ * and shared prepared data, never from itself (no self-reference). The runtime
+ * resolves a mapper once, at job-build time, before the job runs.
+ */
+export type JobInputContext<
+  TPayload = unknown,
+  TMeta extends Record<string, unknown> = Record<string, unknown>,
+  TPrepared = Record<string, unknown>,
+> = HandlerContext<TPayload, TMeta> & { prepared: TPrepared };
 
 /**
  * The two-channel job options bag (ADR-011). The single most important contract
@@ -28,9 +43,13 @@ export interface JobOptions<TInput = undefined> {
   continueOnFailure?: boolean;
   /**
    * Request-scoped data handed to the job. NEVER persisted, logged, or serialized.
-   * Live clients (`sdk`), closures, and source rows belong here.
+   * Live clients (`sdk`), closures, and source rows belong here. Either a static
+   * object, or a pure mapper `(ctx: JobInputContext) => TInput` the runtime resolves
+   * once before the job runs — derive input from the event/prepared, not from
+   * siblings (ADR-025: jobs are mutually ignorant). The resolved value merges
+   * HIGHEST over plugin baselines and `prepare` output.
    */
-  input?: TInput;
+  input?: TInput | ((ctx: JobInputContext) => TInput);
   /**
    * Serializable annotations. Persisted by BatchJobs, recorded by Observability.
    * MUST be JSON-serializable.
@@ -156,8 +175,8 @@ export interface RunOptions {
 }
 
 /**
- * Build a job definition. Pure constructor (no runtime execution), so it is
- * implemented in Phase 0; `run()` (the executor) is stubbed until Phase 1.
+ * Build a job definition. Pure constructor (no runtime execution) — the branded
+ * `__eventkitJob` is what makes `jobs` a statically-knowable set (ADR-025).
  */
 export function job<TInput = undefined, TResult = unknown>(
   fn: JobFunction<TInput, TResult>,
@@ -168,10 +187,10 @@ export function job<TInput = undefined, TResult = unknown>(
   return { __eventkitJob: true, fn, name, options: resolved };
 }
 
-// `run()` (the executor) lives in `../runtime/run.ts` — it needs invocation-scoped
-// state (plugins, signal, loggers) and so cannot be a pure-core leaf. Its type
-// signature is `(event: DetectedEvent, jobs: JobDefinition[], options?: RunOptions)
-// => Promise<JobExecution[]>`; the root package re-exports the real one.
+// The job EXECUTOR is runtime-internal (`../runtime/run.ts`) — it needs
+// invocation-scoped state (plugins, signal, loggers). Per ADR-025 it is no longer a
+// consumer-facing `run()`: the runtime runs a module's declared `jobs` directly
+// during dispatch. `RunOptions` move onto the module as `run: {…}`.
 
 /** Marker for not-yet-implemented stubs whose runtime behavior is deferred to a later phase. */
 export class NotImplementedError extends Error {

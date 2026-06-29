@@ -1,10 +1,10 @@
 // =============================================================================
 // @hopdrive/eventkit/testing
 // =============================================================================
-// Test helpers for exercising detectors, handlers, jobs, and plugins without a
-// real source/platform (§20). `fakeSource` is a minimal in-memory SourceAdapter:
-// it wraps any payload in an EventEnvelope and exposes it as `ctx.payload` on both
-// the detector and handler contexts.
+// Test helpers for exercising detectors, jobs, prepare, and plugins without a real
+// source/platform (§20). `fakeSource` is a minimal in-memory SourceAdapter: it wraps
+// any payload in an EventEnvelope and exposes it as `ctx.payload` on both the
+// detector and handler contexts.
 
 import {
   asCorrelationId,
@@ -19,9 +19,11 @@ import {
   type EventKitPlugin,
   type EventModule,
   type HandlerContext,
-  type HandlerFunction,
   type HandlerLogger,
+  type JobDefinition,
+  type PrepareFunction,
   type RequestContext,
+  type RunOptions,
 } from '../core/index.js';
 
 const randomId = (): string =>
@@ -44,9 +46,9 @@ export interface FakeSource extends EventKitPlugin {
   detector<TPayload = unknown>(
     fn: (ctx: FakeDetectorContext<TPayload>) => boolean | Promise<boolean>,
   ): DetectorFunction<TPayload>;
-  handler<TPayload = unknown>(
-    fn: (event: DetectedEvent<TPayload>, ctx: FakeHandlerContext<TPayload>) => ReturnType<HandlerFunction>,
-  ): HandlerFunction<TPayload>;
+  prepare<TPayload = unknown, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
+    fn: (ctx: FakeHandlerContext<TPayload>) => TPrepared | Promise<TPrepared>,
+  ): PrepareFunction<TPayload>;
 }
 
 /**
@@ -80,8 +82,8 @@ export function fakeSource(opts?: { correlationId?: string }): FakeSource {
     detector(fn) {
       return fn as unknown as DetectorFunction;
     },
-    handler(fn) {
-      return fn as unknown as HandlerFunction;
+    prepare(fn) {
+      return fn as unknown as PrepareFunction;
     },
   };
 }
@@ -123,9 +125,9 @@ export function buildDetectorContextFor<TCtx = DetectorContext>(
 }
 
 /**
- * Build the handler context a source would produce for `raw`, so a handler can be
- * unit-tested in isolation. (Calling `run()` inside still requires a live
- * invocation — for full handler runs use a kit + `handle()`.)
+ * Build the handler context a source would produce for `raw`, so a `prepare` (or a
+ * per-job `input` mapper) can be unit-tested in isolation. For a full job run use a
+ * kit + `handle()`.
  */
 export function buildHandlerContextFor<TCtx = HandlerContext>(
   source: EventKitPlugin,
@@ -162,15 +164,26 @@ export function buildHandlerContextFor<TCtx = HandlerContext>(
   return (ext ? { ...base, ...(ext as Record<string, unknown>) } : base) as TCtx;
 }
 
-/** Convenience: assemble an EventModule from a name + detector + handler. */
+/**
+ * Convenience: assemble a declarative EventModule (ADR-025) from a name + detector +
+ * a static `jobs` array, with optional `prepare`/`run`. Mirrors `defineEvent` but
+ * types the detector/prepare against the fake source's contexts.
+ */
 export function defineFakeEvent<TPayload = unknown>(
   name: string,
   detector: (ctx: FakeDetectorContext<TPayload>) => boolean | Promise<boolean>,
-  handler: (event: DetectedEvent<TPayload>, ctx: FakeHandlerContext<TPayload>) => ReturnType<HandlerFunction>,
+  jobs: JobDefinition<any>[],
+  opts?: {
+    prepare?: (ctx: FakeHandlerContext<TPayload>) => Record<string, unknown> | Promise<Record<string, unknown>>;
+    run?: RunOptions;
+  },
 ): EventModule<TPayload> {
-  return {
+  const module: EventModule<TPayload> = {
     name: asEventName(name),
     detector: detector as unknown as EventModule<TPayload>['detector'],
-    handler: handler as unknown as EventModule<TPayload>['handler'],
+    jobs,
   };
+  if (opts?.prepare) module.prepare = opts.prepare as unknown as PrepareFunction<TPayload>;
+  if (opts?.run) module.run = opts.run;
+  return module;
 }

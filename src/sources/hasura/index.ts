@@ -5,17 +5,17 @@
 //   hasuraEvent — DB event triggers
 //   hasuraCron  — Hasura scheduled triggers
 //
-// Phase 0 freezes the authoring surface and the types. The `.detector`/`.handler`
-// authoring helpers are real (identity wrappers that carry types); the Shape-3
-// capability methods (normalize/buildDetectorContext/buildHandlerContext) are
-// stubbed until Phase 2.
+// Authoring helpers (ADR-025): `.detector` carries the source's enriched detector
+// context, and `.prepare` carries the source's handler context for a module's
+// once-before-jobs data prep. There is no `.handler` — a module declares a static
+// `jobs` array (see `defineEvent`) the runtime executes. The Shape-3 capability
+// methods (normalize/buildDetectorContext/buildHandlerContext) do the real work.
 
 import type {
   DetectorContext,
   DetectorFunction,
   HandlerContext,
-  HandlerFunction,
-  DetectedEvent,
+  PrepareFunction,
   EventKitPlugin,
   EventEnvelope,
   EventSourceType,
@@ -55,12 +55,9 @@ export interface HasuraEventSource extends EventKitPlugin {
   detector<TNewRow = Record<string, unknown>, TOldRow = TNewRow>(
     fn: (ctx: HasuraDetectorContext<TNewRow, TOldRow>) => boolean | Promise<boolean>,
   ): DetectorFunction<HasuraEventPayload<TNewRow, TOldRow>>;
-  handler<TNewRow = Record<string, unknown>, TOldRow = TNewRow>(
-    fn: (
-      event: DetectedEvent<HasuraEventPayload<TNewRow, TOldRow>>,
-      ctx: HasuraHandlerContext<TNewRow, TOldRow>,
-    ) => ReturnType<HandlerFunction>,
-  ): HandlerFunction<HasuraEventPayload<TNewRow, TOldRow>>;
+  prepare<TNewRow = Record<string, unknown>, TOldRow = TNewRow, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
+    fn: (ctx: HasuraHandlerContext<TNewRow, TOldRow>) => TPrepared | Promise<TPrepared>,
+  ): PrepareFunction<HasuraEventPayload<TNewRow, TOldRow>>;
 }
 
 /** The `hasuraCron` source adapter plus its authoring helpers. */
@@ -69,12 +66,9 @@ export interface HasuraCronSource extends EventKitPlugin {
   detector<TPayload = Record<string, unknown>>(
     fn: (ctx: HasuraCronContext<TPayload>) => boolean | Promise<boolean>,
   ): DetectorFunction<HasuraCronPayload<TPayload>>;
-  handler<TPayload = Record<string, unknown>>(
-    fn: (
-      event: DetectedEvent<HasuraCronPayload<TPayload>>,
-      ctx: HasuraCronHandlerContext<TPayload>,
-    ) => ReturnType<HandlerFunction>,
-  ): HandlerFunction<HasuraCronPayload<TPayload>>;
+  prepare<TPayload = Record<string, unknown>, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
+    fn: (ctx: HasuraCronHandlerContext<TPayload>) => TPrepared | Promise<TPrepared>,
+  ): PrepareFunction<HasuraCronPayload<TPayload>>;
 }
 
 export const hasuraEvent: HasuraEventSource = {
@@ -85,8 +79,8 @@ export const hasuraEvent: HasuraEventSource = {
   detector(fn) {
     return fn as unknown as DetectorFunction;
   },
-  handler(fn) {
-    return fn as unknown as HandlerFunction;
+  prepare(fn) {
+    return fn as unknown as PrepareFunction;
   },
   // Shape-3 capabilities.
   normalize(raw: unknown, request: RequestContext): EventEnvelope {
@@ -107,8 +101,8 @@ export const hasuraCron: HasuraCronSource = {
   detector(fn) {
     return fn as unknown as DetectorFunction;
   },
-  handler(fn) {
-    return fn as unknown as HandlerFunction;
+  prepare(fn) {
+    return fn as unknown as PrepareFunction;
   },
   normalize(raw: unknown, request: RequestContext): EventEnvelope {
     return normalizeHasuraCron(raw, request) as EventEnvelope;

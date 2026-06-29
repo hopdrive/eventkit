@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createEventKit, run, job, asEventName, type EventModule, type JobContext } from '../../index.js';
+import { createEventKit, job, asEventName, type EventModule, type JobContext } from '../../index.js';
 import { fakeSource, defineFakeEvent } from '../../testing/index.js';
 import { hasuraEvent } from '../../sources/hasura/index.js';
 import { loopPrevention, createTokenCodec } from '../loop-prevention/index.js';
@@ -31,18 +31,16 @@ describe('loopPrevention', () => {
     let metaToken: unknown;
     let outToken = '';
     let jobId = '';
-    const mod = defineFakeEvent('e', () => true, (event, _ctx) =>
-      run(event, [
-        job((c: JobContext) => {
-          metaToken = c.envelope.meta['sourceTrackingToken'];
-          outToken = c.trackingToken;
-          jobId = c.job.id;
-        }),
-      ]),
-    );
+    const mod = defineFakeEvent('e', () => true, [
+      job((c: JobContext) => {
+        metaToken = c.envelope.meta['sourceTrackingToken'];
+        outToken = c.trackingToken;
+        jobId = c.job.id;
+      }),
+    ]);
     // Use the Hasura source so the default reader finds new.updated_by.
     const kit = createEventKit(hasuraEvent).use(loopPrevention, cfg).registerEvents([
-      { name: asEventName('e'), detector: mod.detector, handler: mod.handler } as EventModule,
+      { name: asEventName('e'), detector: mod.detector, jobs: mod.jobs } as EventModule,
     ]);
     await kit.handle(hasuraInsert({ id: 1, updated_by: inbound }));
 
@@ -57,16 +55,14 @@ describe('loopPrevention', () => {
   it('mints a fresh token from serviceId when there is no inbound token', async () => {
     let outToken = '';
     let correlationId = '';
-    const mod = defineFakeEvent('e', () => true, (event, _ctx) =>
-      run(event, [
-        job((c: JobContext) => {
-          outToken = c.trackingToken;
-          correlationId = c.correlationId;
-        }),
-      ]),
-    );
+    const mod = defineFakeEvent('e', () => true, [
+      job((c: JobContext) => {
+        outToken = c.trackingToken;
+        correlationId = c.correlationId;
+      }),
+    ]);
     const kit = createEventKit(hasuraEvent).use(loopPrevention, cfg).registerEvents([
-      { name: asEventName('e'), detector: mod.detector, handler: mod.handler } as EventModule,
+      { name: asEventName('e'), detector: mod.detector, jobs: mod.jobs } as EventModule,
     ]);
     await kit.handle(hasuraInsert({ id: 1 })); // no updated_by
 
@@ -79,13 +75,15 @@ describe('loopPrevention', () => {
     const selfToken = `svc-a|${UUID}|prev-job`;
     let suppressed = false;
     const codec = createTokenCodec({ separator: '|', validateCorrelationId: true });
-    const mod = defineFakeEvent('e', () => true, (event, ctx) => {
-      const inbound = ctx.envelope.meta['sourceTrackingToken'];
-      suppressed = typeof inbound === 'string' && codec.getSource(inbound) === 'svc-a';
-      return run(event, []);
-    });
+    // The inbound token is on the envelope; a job reads it to decide suppression.
+    const mod = defineFakeEvent('e', () => true, [
+      job((c: JobContext) => {
+        const inbound = c.envelope.meta['sourceTrackingToken'];
+        suppressed = typeof inbound === 'string' && codec.getSource(inbound) === 'svc-a';
+      }),
+    ]);
     const kit = createEventKit(hasuraEvent).use(loopPrevention, cfg).registerEvents([
-      { name: asEventName('e'), detector: mod.detector, handler: mod.handler } as EventModule,
+      { name: asEventName('e'), detector: mod.detector, jobs: mod.jobs } as EventModule,
     ]);
     await kit.handle(hasuraInsert({ id: 1, updated_by: selfToken }));
     expect(suppressed).toBe(true);
@@ -95,12 +93,10 @@ describe('loopPrevention', () => {
 describe('observability', () => {
   it('flushes one batch per invocation with the canonical record field set', async () => {
     const batches: ObservabilityBatch[] = [];
-    const mod = defineFakeEvent('thing.happened', () => true, (event, _ctx) =>
-      run(event, [
-        job(() => 'ok', { name: 'good', metadata: { tier: 1 } }),
-        job(() => { throw new Error('x'); }, { name: 'bad' }),
-      ]),
-    );
+    const mod = defineFakeEvent('thing.happened', () => true, [
+      job(() => 'ok', { name: 'good', metadata: { tier: 1 } }),
+      job(() => { throw new Error('x'); }, { name: 'bad' }),
+    ]);
     const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b) }).registerEvents([mod]);
 
     await kit.handle('go');
@@ -133,11 +129,10 @@ describe('observability', () => {
   it('captures source attributes from envelope.meta (Hasura) and the prior-job link', async () => {
     const batches: ObservabilityBatch[] = [];
     const detector = hasuraEvent.detector(ctx => ctx.operation === 'INSERT');
-    const handler = hasuraEvent.handler((event, _ctx) => run(event, []));
     const kit = createEventKit(hasuraEvent)
       .use(loopPrevention, { field: 'updated_by', codec: { separator: '|', validateCorrelationId: true } })
       .use(observability, { sink: (bb: ObservabilityBatch) => void batches.push(bb) })
-      .registerEvents([{ name: asEventName('batch.created'), detector, handler } as EventModule]);
+      .registerEvents([{ name: asEventName('batch.created'), detector, jobs: [] } as EventModule]);
     await kit.handle(hasuraInsert({ id: 1, updated_by: `prior-svc|${UUID}|prior-job-9` }));
 
     const inv = batches[0]!.invocation;
@@ -147,9 +142,9 @@ describe('observability', () => {
     expect(inv.source_job_id).toBe('prior-job-9'); // loop-prevention surfaced the prior job link
   });
 
-  it('records a handler crash on the invocation (onError) without failing execution', async () => {
+  it('records a prepare crash on the invocation (onError) without failing execution', async () => {
     const batches: ObservabilityBatch[] = [];
-    const mod = defineFakeEvent('e', () => true, () => { throw new Error('handler boom'); });
+    const mod = defineFakeEvent('e', () => true, [], { prepare: () => { throw new Error('handler boom'); } });
     const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b) }).registerEvents([mod]);
     const result = await kit.handle('x');
     expect(result.ok).toBe(true); // no-retry contract
@@ -160,11 +155,9 @@ describe('observability', () => {
   it('clears a prior attempt error when a retried job finally succeeds', async () => {
     const batches: ObservabilityBatch[] = [];
     let attempts = 0;
-    const mod = defineFakeEvent('e', () => true, (event, _ctx) =>
-      run(event, [
-        job(() => { attempts += 1; if (attempts < 3) throw new Error(`fail #${attempts}`); return 'ok'; }, { name: 'flaky', retries: 2 }),
-      ]),
-    );
+    const mod = defineFakeEvent('e', () => true, [
+      job(() => { attempts += 1; if (attempts < 3) throw new Error(`fail #${attempts}`); return 'ok'; }, { name: 'flaky', retries: 2 }),
+    ]);
     const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b) }).registerEvents([mod]);
     await kit.handle('x');
     const jobRec = batches[0]!.jobs[0]!;
@@ -174,7 +167,7 @@ describe('observability', () => {
   });
 
   it('records undetected events by default (Console parity) and can be turned off', async () => {
-    const mod = defineFakeEvent('never', () => false, (event, _ctx) => run(event, []));
+    const mod = defineFakeEvent('never', () => false, []);
 
     // default: undetected events ARE recorded (detected:false, not_detected)
     const onBatches: ObservabilityBatch[] = [];
@@ -198,10 +191,9 @@ describe('observability', () => {
   it('source_function prefers the source identity (Hasura trigger name) over the platform function name', async () => {
     const batches: ObservabilityBatch[] = [];
     const detector = hasuraEvent.detector(() => false);
-    const handler = hasuraEvent.handler((event, _ctx) => run(event, []));
     const kit = createEventKit(hasuraEvent)
       .use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b) })
-      .registerEvents([{ name: asEventName('e'), detector, handler } as EventModule]);
+      .registerEvents([{ name: asEventName('e'), detector, jobs: [] } as EventModule]);
     // hasuraInsert sets trigger.name = 'db-appointments-test'
     await kit.handle({ id: 'e', created_at: '2026-06-28T12:00:00Z', table: { schema: 'public', name: 't' }, trigger: { name: 'db-appointments-test' }, event: { op: 'INSERT', data: { old: null, new: { id: 1 } }, session_variables: {} } });
     expect(batches[0]!.invocation.source_function).toBe('db-appointments-test');
@@ -217,13 +209,12 @@ describe('observability: parent-child linkage (the capability behind the dropped
     const aBatches: ObservabilityBatch[] = [];
     let outboundToken = '';
     const detA = hasuraEvent.detector(c => c.operation === 'INSERT');
-    const handA = hasuraEvent.handler((event, _ctx) =>
-      run(event, [job((c: JobContext) => void (outboundToken = c.trackingToken), { name: 'writer' })]),
-    );
     const kitA = createEventKit(hasuraEvent)
       .use(loopPrevention, lpCfg)
       .use(observability, { sink: (b: ObservabilityBatch) => void aBatches.push(b) })
-      .registerEvents([{ name: asEventName('e'), detector: detA, handler: handA } as EventModule]);
+      .registerEvents([
+        { name: asEventName('e'), detector: detA, jobs: [job((c: JobContext) => void (outboundToken = c.trackingToken), { name: 'writer' })] } as EventModule,
+      ]);
     await kitA.handle(hasuraInsert({ id: 'parent-row' })); // no inbound token → mints fresh
 
     const jobRowId = aBatches[0]!.jobs[0]!.id;
@@ -233,11 +224,10 @@ describe('observability: parent-child linkage (the capability behind the dropped
     // ── Invocation B: a write stamped with A's outbound token triggers us ──
     const bBatches: ObservabilityBatch[] = [];
     const detB = hasuraEvent.detector(c => c.operation === 'INSERT');
-    const handB = hasuraEvent.handler((event, _ctx) => run(event, []));
     const kitB = createEventKit(hasuraEvent)
       .use(loopPrevention, lpCfg)
       .use(observability, { sink: (b: ObservabilityBatch) => void bBatches.push(b) })
-      .registerEvents([{ name: asEventName('e'), detector: detB, handler: handB } as EventModule]);
+      .registerEvents([{ name: asEventName('e'), detector: detB, jobs: [] } as EventModule]);
     await kitB.handle(hasuraInsert({ id: 'child-row', updated_by: outboundToken }));
 
     // (c) the child invocation's source_job_id links back to A's job row id
@@ -251,10 +241,10 @@ describe('loop-prevention: multi-strategy extraction (chains via metadata/sessio
   const cfg = { codec: { separator: '|', validateCorrelationId: true } };
   const captureCorrelation = (raw: unknown) => {
     let cid = '';
-    const mod = defineFakeEvent('e', () => true, (event, ctx) => { cid = ctx.correlationId; return run(event, []); });
-    // detector reads correlation off the envelope; we read it via the handler ctx.
+    // a job reads the resolved correlationId off its context (set by loop-prevention)
+    const mod = defineFakeEvent('e', () => true, [job((c: JobContext) => { cid = c.correlationId; })]);
     const kit = createEventKit(hasuraEvent).use(loopPrevention, cfg).registerEvents([
-      { name: asEventName('e'), detector: mod.detector, handler: mod.handler } as EventModule,
+      { name: asEventName('e'), detector: mod.detector, jobs: mod.jobs } as EventModule,
     ]);
     return kit.handle(raw).then(() => cid);
   };
@@ -290,9 +280,7 @@ describe('observability: safeSerialize strips non-serializable clients (sanitize
 describe('observability: periodic mid-invocation flush feeds the live view', () => {
   it('upserts in-progress (running) snapshots before the terminal flush', async () => {
     const batches: ObservabilityBatch[] = [];
-    const mod = defineFakeEvent('e', () => true, (event, _ctx) =>
-      run(event, [job(() => new Promise(resolve => setTimeout(resolve, 60)), { name: 'slow' })]),
-    );
+    const mod = defineFakeEvent('e', () => true, [job(() => new Promise(resolve => setTimeout(resolve, 60)), { name: 'slow' })]);
     const kit = createEventKit(fakeSource())
       .use(observability, { sink: (b: ObservabilityBatch) => void batches.push(structuredClone(b)), flushIntervalMs: 10 })
       .registerEvents([mod]);
@@ -317,7 +305,7 @@ describe('observability/graphql-sink', () => {
       },
     });
     const batches: ObservabilityBatch[] = [];
-    const mod = defineFakeEvent('thing.happened', () => true, (event, _ctx) => run(event, [job(() => 'ok', { name: 'good' })]));
+    const mod = defineFakeEvent('thing.happened', () => true, [job(() => 'ok', { name: 'good' })]);
     const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => { batches.push(b); return sink(b); } }).registerEvents([mod]);
     await kit.handle('go');
 
@@ -437,10 +425,9 @@ describe('observability/graphql-sink', () => {
 describe('batchJobs', () => {
   const buildKit = (store: { update: (id: string | number, f: BatchJobUpdate) => void }) => {
     const detector = hasuraEvent.detector(ctx => ctx.operation === 'INSERT');
-    const handler = hasuraEvent.handler((event, _ctx) => run(event, [job(capture, { name: 'proc' })]));
     return createEventKit(hasuraEvent)
       .use(batchJobs, { store })
-      .registerEvents([{ name: asEventName('batch.created'), detector, handler } as EventModule]);
+      .registerEvents([{ name: asEventName('batch.created'), detector, jobs: [job(capture, { name: 'proc' })] } as EventModule]);
   };
   let captured: Record<string, unknown> | undefined;
   const capture = (ctx: JobContext) => {
@@ -470,9 +457,6 @@ describe('batchJobs', () => {
     const updates: Array<{ id: string | number; fields: BatchJobUpdate }> = [];
     const delayed: DelayedBatchJobSpec[] = [];
     const detector = hasuraEvent.detector(ctx => ctx.operation === 'INSERT');
-    const handler = hasuraEvent.handler((event, _ctx) =>
-      run(event, [job(() => { throw new Error('transient'); }, { name: 'proc' })]),
-    );
     const kit = createEventKit(hasuraEvent)
       .use(batchJobs, {
         store: {
@@ -481,7 +465,9 @@ describe('batchJobs', () => {
         },
         durableRetry: { delayMs: 5000, maxAttempts: 3 },
       })
-      .registerEvents([{ name: asEventName('batch.created'), detector, handler } as EventModule]);
+      .registerEvents([
+        { name: asEventName('batch.created'), detector, jobs: [job(() => { throw new Error('transient'); }, { name: 'proc' })] } as EventModule,
+      ]);
     await kit.handle(hasuraInsert({ id: 'row-7', input: { workUnit: 'W' }, trigger_type: 'ap', delay_key: 'ap-7' }));
 
     expect(delayed).toHaveLength(1); // a crash-surviving retry row was scheduled
@@ -495,22 +481,20 @@ describe('batchJobs', () => {
   it('handler input overrides the row baseline (handler keys win)', async () => {
     captured = undefined;
     const detector = hasuraEvent.detector(ctx => ctx.operation === 'INSERT');
-    const handler = hasuraEvent.handler((event, _ctx) =>
-      run(event, [job(capture, { name: 'proc', input: { workUnit: 'override' } })]),
-    );
     const kit = createEventKit(hasuraEvent)
       .use(batchJobs, { store: { update: () => {} } })
-      .registerEvents([{ name: asEventName('batch.created'), detector, handler } as EventModule]);
+      .registerEvents([
+        { name: asEventName('batch.created'), detector, jobs: [job(capture, { name: 'proc', input: { workUnit: 'override' } })] } as EventModule,
+      ]);
     await kit.handle(hasuraInsert({ id: 'row-2', input: { workUnit: 'W' } }));
     expect(captured).toEqual({ workUnit: 'override' });
   });
 
   it('throws at validate() when the Hasura source is absent (requires: source:hasura)', () => {
     const detector = fakeSource().detector(() => true);
-    const handler = fakeSource().handler((event, _ctx) => run(event, []));
     const kit = createEventKit(fakeSource())
       .use(batchJobs, { store: { update: () => {} } })
-      .registerEvents([{ name: asEventName('e'), detector, handler } as unknown as EventModule]);
+      .registerEvents([{ name: asEventName('e'), detector, jobs: [] } as unknown as EventModule]);
     expect(() => kit.validate()).toThrow(/source:hasura/);
   });
 });
@@ -519,9 +503,9 @@ describe('transports/grafana (direct Loki mode)', () => {
   it('buffers job logs (with jobExecutionId) and flushes a Loki payload; correlation fields stay out of stream labels', async () => {
     const payloads: LokiPayload[] = [];
     let jobId = '';
-    const mod = defineFakeEvent('e', () => true, (event, _ctx) =>
-      run(event, [job((c: JobContext) => { jobId = c.job.id; c.log.info('hello from job', { n: 1 }); }, { name: 'j' })]),
-    );
+    const mod = defineFakeEvent('e', () => true, [
+      job((c: JobContext) => { jobId = c.job.id; c.log.info('hello from job', { n: 1 }); }, { name: 'j' }),
+    ]);
     const kit = createEventKit(fakeSource())
       .use(grafanaLogger, { grafana: { endpoint: 'http://loki', labels: { app: 'test' }, send: (p: LokiPayload) => void payloads.push(p) } })
       .registerEvents([mod]);
@@ -549,9 +533,9 @@ describe('transports/grafana (injected-logger bridge mode)', () => {
       error: (message, error, metadata) => void calls.push({ level: 'error', message, error, metadata }),
     };
     let jobId = '';
-    const mod = defineFakeEvent('e', () => true, (event, _ctx) =>
-      run(event, [job((c: JobContext) => { jobId = c.job.id; c.log.info('hello from job', { n: 1 }); }, { name: 'j' })]),
-    );
+    const mod = defineFakeEvent('e', () => true, [
+      job((c: JobContext) => { jobId = c.job.id; c.log.info('hello from job', { n: 1 }); }, { name: 'j' }),
+    ]);
     const kit = createEventKit(fakeSource())
       .use(grafanaLogger, { logger, source: 'eventkit' })
       .registerEvents([mod]);
@@ -579,7 +563,7 @@ describe('transports/grafana (injected-logger bridge mode)', () => {
       warn: () => {},
       error: (message, error, metadata) => void errors.push({ message, error, metadata }),
     };
-    const mod = defineFakeEvent('e', () => true, () => { throw new Error('kaboom'); });
+    const mod = defineFakeEvent('e', () => true, [], { prepare: () => { throw new Error('kaboom'); } });
     const kit = createEventKit(fakeSource())
       .use(grafanaLogger, { logger })
       .registerEvents([mod]);
@@ -595,7 +579,7 @@ describe('transports/grafana (injected-logger bridge mode)', () => {
   it('invokes the injected flush seam at end of invocation (mode 1 does not own flush by default)', async () => {
     let flushed = 0;
     const logger: LoggerLike = { info: () => {}, warn: () => {}, error: () => {} };
-    const mod = defineFakeEvent('e', () => true, (event) => run(event, []));
+    const mod = defineFakeEvent('e', () => true, []);
     const kit = createEventKit(fakeSource())
       .use(grafanaLogger, { logger, flush: () => { flushed += 1; } })
       .registerEvents([mod]);
@@ -614,12 +598,10 @@ describe('transports/grafana (injected-logger bridge mode)', () => {
       warn: () => {},
       error: () => {},
     };
-    const mod = defineFakeEvent('e', () => true, (event, _ctx) =>
-      run(event, [
-        job(() => 'ok', { name: 'good' }),
-        job(() => { throw new Error('nope'); }, { name: 'bad' }),
-      ]),
-    );
+    const mod = defineFakeEvent('e', () => true, [
+      job(() => 'ok', { name: 'good' }),
+      job(() => { throw new Error('nope'); }, { name: 'bad' }),
+    ]);
     const kit = createEventKit(fakeSource())
       .use(grafanaLogger, { logger })
       .registerEvents([mod]);
@@ -645,10 +627,9 @@ describe('transports/grafana (injected-logger bridge mode)', () => {
     };
     let jobId = '';
     let invId = '';
-    const mod = defineFakeEvent('e', () => true, (event, ctx) => {
-      invId = ctx.invocationId;
-      return run(event, [job((c: JobContext) => { jobId = c.job.id; c.log.info('inside'); }, { name: 'j' })]);
-    });
+    const mod = defineFakeEvent('e', () => true, [
+      job((c: JobContext) => { jobId = c.job.id; invId = c.invocationId; c.log.info('inside'); }, { name: 'j' }),
+    ]);
     await createEventKit(fakeSource()).use(grafanaLogger, { logger }).registerEvents([mod]).handle('go');
 
     expect(lines.find(l => l.msg === 'e ⭐ detected')?.logType).toBe('detector');
@@ -663,9 +644,7 @@ describe('transports/grafana (injected-logger bridge mode)', () => {
 describe('transports/sentry', () => {
   it('forwards a handler crash as a Sentry event with tags intact', async () => {
     const events: SentryEvent[] = [];
-    const mod = defineFakeEvent('e', () => true, () => {
-      throw new Error('kaboom');
-    });
+    const mod = defineFakeEvent('e', () => true, [], { prepare: () => { throw new Error('kaboom'); } });
     const kit = createEventKit(fakeSource())
       .use(sentry, { dsn: 'https://pub@o1.ingest.sentry.io/42', send: (e: SentryEvent) => void events.push(e) })
       .registerEvents([mod]);
@@ -686,7 +665,7 @@ describe('transports/sentry', () => {
       return { ok: true, status: 200, json: async () => ({}) } as Response;
     }) as typeof fetch;
     try {
-      const mod = defineFakeEvent('e', () => true, () => { throw new Error('boom'); });
+      const mod = defineFakeEvent('e', () => true, [], { prepare: () => { throw new Error('boom'); } });
       const kit = createEventKit(fakeSource())
         .use(sentry, { dsn: 'https://pub@o1.ingest.sentry.io/42', environment: 'test' })
         .registerEvents([mod]);

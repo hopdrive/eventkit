@@ -1,18 +1,26 @@
 // =============================================================================
 // Example event module — `appointment.ready` (ported from the legacy db-appointments
-// module, authored 2022-12-30). Demonstrates the Phase 2 Hasura authoring surface:
-// the typed `switch (ctx.operation)` detector house style and a declarative handler.
+// module, authored 2022-12-30). Demonstrates the ADR-025 DECLARATIVE shape:
+//   - the typed `switch (ctx.operation)` detector house style (unchanged),
+//   - `prepare(ctx)` for the near-universal legacy pattern of initializing the SDK
+//     once and sharing it (plus fetched rows) into every job's input,
+//   - a STATIC `jobs` array the runtime runs — no handler body, no `run()` call.
 //
-// This is an EXAMPLE/fixture — it is type-checked (tsconfig.typetest.json) and
-// exercised by the Hasura adapter tests, but excluded from the published build.
+// This is an EXAMPLE/fixture — type-checked (tsconfig.typetest.json) and exercised
+// by the Hasura adapter tests, but excluded from the published build.
 // =============================================================================
-import { run, job, type JobContext } from '../index.js';
+import { job, defineEvent, type JobContext } from '../index.js';
 import { hasuraEvent } from '../sources/hasura/index.js';
 
 export interface AppointmentRow {
   id: number;
   status: string;
   customer_id?: number | null;
+}
+
+/** A live client — in a real consumer this is the initialized `@hopdrive/sdk`. */
+interface ExampleSdk {
+  notify(channel: 'sms' | 'email', id: number | null): void;
 }
 
 export const detector = hasuraEvent.detector<AppointmentRow>(ctx => {
@@ -37,33 +45,43 @@ export const detector = hasuraEvent.detector<AppointmentRow>(ctx => {
   }
 });
 
-// In a real consumer these live in a jobs/ folder and read live deps (sdk) from
-// merged-in input; inlined here so the example is self-contained. The typed
-// `JobContext<TInput>` is how a job declares the input shape it reads.
+// `prepare` runs ONCE before the jobs. It initializes the shared SDK and fetches the
+// row, returning them as a shared object the runtime merges into EVERY job's input.
+// This is the migration vehicle for the legacy `sdk.apollo.initialize(...)` + thread
+// `sdk` into each job pattern. Data preparation only — it never selects jobs.
+export const prepare = hasuraEvent.prepare<AppointmentRow>(ctx => {
+  const sdk: ExampleSdk = { notify: () => {} };
+  return { sdk, appointment: ctx.newRow ?? null };
+});
+
+// Jobs read the shared `sdk` + `appointment` from `ctx.input` (merged from `prepare`)
+// and stay plugin-agnostic. The typed `JobContext<TInput>` declares the input shape.
 interface OfferInput {
+  sdk: ExampleSdk;
   appointment: AppointmentRow | null;
 }
 
 const sendOfferSMS = (ctx: JobContext<OfferInput>) => {
   const { input, log } = ctx;
-  const { appointment } = input;
+  const { sdk, appointment } = input;
   log.info('Sending offer SMS', { appointmentId: appointment?.id });
+  sdk.notify('sms', appointment?.id ?? null);
   return { sent: 'sms', appointmentId: appointment?.id ?? null };
 };
 
 const sendAppointmentOfferedEmailToOrg = (ctx: JobContext<OfferInput>) => {
   const { input, log } = ctx;
-  const { appointment } = input;
+  const { sdk, appointment } = input;
   log.info('Sending offered email to org', { appointmentId: appointment?.id });
+  sdk.notify('email', appointment?.id ?? null);
   return { sent: 'email', appointmentId: appointment?.id ?? null };
 };
 
-export const handler = hasuraEvent.handler<AppointmentRow>(async (event, ctx) => {
-  const { newRow } = ctx;
-  return run(event, [
-    job(sendOfferSMS, { input: { appointment: newRow } }),
-    job(sendAppointmentOfferedEmailToOrg, { input: { appointment: newRow } }),
-  ]);
+// The module is a declarative record: detector + prepare + a STATIC jobs array.
+// No conditional inclusion is possible — there is no handler body to branch in.
+export const appointmentReady = defineEvent({
+  name: 'appointment.ready',
+  detector,
+  prepare,
+  jobs: [job(sendOfferSMS, { name: 'sendOfferSMS' }), job(sendAppointmentOfferedEmailToOrg, { name: 'sendAppointmentOfferedEmailToOrg' })],
 });
-
-export const appointmentReady = { name: 'appointment.ready', detector, handler };

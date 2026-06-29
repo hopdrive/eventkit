@@ -1,28 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { createEventKit, run, job, type EventKitPlugin, type JobContext } from '../../index.js';
+import { createEventKit, job, type EventKitPlugin, type JobContext } from '../../index.js';
 import { fakeSource, defineFakeEvent } from '../../testing/index.js';
 
-// A detector that always fires, and a handler that runs the given jobs.
+// A detector that always fires. Modules are declarative (ADR-025): a static `jobs`
+// array + optional `prepare`/`run`, never a handler that calls run().
 const always = () => true;
 
-describe('no-plugin kit: detect + run jobs in-memory', () => {
+describe('no-plugin kit: detect + run the declared jobs in-memory', () => {
   it('detects a registered event and runs its jobs end to end', async () => {
     const ran: string[] = [];
-    const mod = defineFakeEvent(
-      'thing.happened',
-      ctx => ctx.payload === 'go',
-      (event, _ctx) =>
-        run(event, [
-          job(() => {
-            ran.push('a');
-            return { ok: true };
-          }, { name: 'jobA' }),
-          job(() => {
-            ran.push('b');
-            return 42;
-          }, { name: 'jobB' }),
-        ]),
-    );
+    const mod = defineFakeEvent('thing.happened', ctx => ctx.payload === 'go', [
+      job(() => { ran.push('a'); return { ok: true }; }, { name: 'jobA' }),
+      job(() => { ran.push('b'); return 42; }, { name: 'jobB' }),
+    ]);
 
     const kit = createEventKit(fakeSource()).registerEvents([mod]);
     const result = await kit.handle('go');
@@ -38,69 +28,106 @@ describe('no-plugin kit: detect + run jobs in-memory', () => {
   });
 
   it('does not fire when the detector returns false', async () => {
-    const mod = defineFakeEvent('thing.happened', () => false, (event, _ctx) => run(event, []));
+    const mod = defineFakeEvent('thing.happened', () => false, []);
     const kit = createEventKit(fakeSource()).registerEvents([mod]);
     const result = await kit.handle('nope');
     expect(result.events).toHaveLength(0);
   });
 });
 
-describe('ADR-018: run() rejects non-job entries', () => {
-  const makeKit = (jobs: unknown[]) => {
-    const mod = defineFakeEvent('e', always, (event, _ctx) => run(event, jobs as never));
-    return createEventKit(fakeSource()).registerEvents([mod]);
-  };
-
-  it('throws on a falsy entry (cond && job())', async () => {
-    // The handler's run() throw surfaces as the handler's error; the invocation
-    // still completes, but the event records zero jobs and an error was reported.
-    const errors: string[] = [];
-    const capture: EventKitPlugin = { name: 'capture', onError: ctx => void errors.push(ctx.error.message) };
-    const mod = defineFakeEvent('e', always, (event, _ctx) => run(event, [false as never]));
-    const kit = createEventKit(fakeSource()).use(capture).registerEvents([mod]);
-    await kit.handle('x');
-    expect(errors.some(m => /non-job entry/.test(m))).toBe(true);
+describe('ADR-025: jobs is a static array — non-job entries throw at REGISTER time', () => {
+  // Conditional inclusion is impossible by construction (no handler body); the brand
+  // + a register-time check are the backstop, surfaced BEFORE any invocation runs.
+  it('throws on a falsy entry (the old `cond && job()`)', () => {
+    const mod = defineFakeEvent('e', always, [false as never]);
+    expect(() => createEventKit(fakeSource()).registerEvents([mod])).toThrow(/jobs\[0\] is not a job/);
   });
 
-  it('throws synchronously when run() is awaited directly with a bad list', async () => {
-    const errors: string[] = [];
-    const capture: EventKitPlugin = { name: 'capture', onError: ctx => void errors.push(ctx.error.message) };
-    const mod = defineFakeEvent('e', always, (event, _ctx) => run(event, [null as never, undefined as never]));
-    const kit = createEventKit(fakeSource()).use(capture).registerEvents([mod]);
+  it('throws on null/undefined entries', () => {
+    const mod = defineFakeEvent('e', always, [null as never, undefined as never]);
+    expect(() => createEventKit(fakeSource()).registerEvents([mod])).toThrow(/is not a job/);
+  });
+
+  it('throws on a bare function (must wrap in job())', () => {
+    const mod = defineFakeEvent('e', always, [(() => {}) as never]);
+    expect(() => createEventKit(fakeSource()).registerEvents([mod])).toThrow(/is not a job/);
+  });
+
+  it('throws when jobs is not an array', () => {
+    const mod = { name: 'e', detector: always, jobs: 'nope' } as never;
+    expect(() => createEventKit(fakeSource()).registerEvents([mod])).toThrow(/jobs must be a static array/);
+  });
+});
+
+describe('ADR-025 prepare: runs once before the jobs; output merges into every job input', () => {
+  it('calls prepare exactly once for the whole event, regardless of job count', async () => {
+    let prepareCalls = 0;
+    const mod = defineFakeEvent(
+      'e',
+      always,
+      [job(() => {}, { name: 'a' }), job(() => {}, { name: 'b' }), job(() => {}, { name: 'c' })],
+      { prepare: () => { prepareCalls += 1; return { shared: true }; } },
+    );
+    const kit = createEventKit(fakeSource()).registerEvents([mod]);
     await kit.handle('x');
-    expect(errors.some(m => /non-job entry at index 0/.test(m))).toBe(true);
-    void makeKit;
+    expect(prepareCalls).toBe(1);
+  });
+
+  it('merge precedence is plugin baselines → prepare → per-job input (highest wins)', async () => {
+    const baseliner: EventKitPlugin = {
+      name: 'baseliner',
+      augmentJobContext: () => ({ input: { a: 'baseline', b: 'baseline', c: 'baseline' } }),
+    };
+    let seen: Record<string, unknown> | undefined;
+    const mod = defineFakeEvent(
+      'e',
+      always,
+      [job((ctx: JobContext) => { seen = ctx.input as Record<string, unknown>; }, { input: { c: 'job' } })],
+      { prepare: () => ({ b: 'prepare', c: 'prepare' }) },
+    );
+    const kit = createEventKit(fakeSource()).use(baseliner).registerEvents([mod]);
+    await kit.handle('x');
+    expect(seen).toEqual({ a: 'baseline', b: 'prepare', c: 'job' });
+  });
+
+  it('resolves a per-job input MAPPER against the event/prepared at job-build time', async () => {
+    let seen: Record<string, unknown> | undefined;
+    const mod = defineFakeEvent(
+      'e',
+      always,
+      [
+        job((ctx: JobContext) => { seen = ctx.input as Record<string, unknown>; }, {
+          // mapper sees the (fake) handler context + prepared; never its own input
+          input: (ctx: { payload?: unknown; prepared: { tenant?: string } }) => ({ from: ctx.payload, tenant: ctx.prepared.tenant }),
+        }),
+      ],
+      { prepare: () => ({ tenant: 'acme' }) },
+    );
+    const kit = createEventKit(fakeSource()).registerEvents([mod]);
+    await kit.handle('payload-value');
+    expect(seen).toEqual({ tenant: 'acme', from: 'payload-value' });
   });
 });
 
 describe('ADR-020: augmentJobContext merge order + ambient trackingToken', () => {
-  it('merges plugin input baselines UNDER handler input (handler keys win)', async () => {
+  it('merges plugin input baselines UNDER per-job input (job keys win)', async () => {
     const baseliner: EventKitPlugin = {
       name: 'baseliner',
       augmentJobContext: () => ({ input: { a: 'plugin', b: 'plugin' } }),
     };
     let seen: Record<string, unknown> | undefined;
-    const mod = defineFakeEvent('e', always, (event, _ctx) =>
-      run(event, [
-        job(
-          (ctx: JobContext) => {
-            seen = ctx.input as Record<string, unknown>;
-          },
-          { input: { b: 'handler', c: 'handler' } },
-        ),
-      ]),
-    );
+    const mod = defineFakeEvent('e', always, [
+      job((ctx: JobContext) => { seen = ctx.input as Record<string, unknown>; }, { input: { b: 'job', c: 'job' } }),
+    ]);
 
     const kit = createEventKit(fakeSource()).use(baseliner).registerEvents([mod]);
     await kit.handle('x');
-    expect(seen).toEqual({ a: 'plugin', b: 'handler', c: 'handler' });
+    expect(seen).toEqual({ a: 'plugin', b: 'job', c: 'job' });
   });
 
   it('exposes a deterministic default trackingToken, overridable by a plugin', async () => {
     let token = '';
-    const mod = defineFakeEvent('e', always, (event, _ctx) =>
-      run(event, [job((ctx: JobContext) => void (token = ctx.trackingToken))]),
-    );
+    const mod = defineFakeEvent('e', always, [job((ctx: JobContext) => void (token = ctx.trackingToken))]);
     const kit = createEventKit(fakeSource({ correlationId: 'corr-1' })).registerEvents([mod]);
     await kit.handle('x');
     expect(token).toBe('fake.corr-1.' + token.split('.')[2]);
@@ -111,25 +138,19 @@ describe('ADR-020: augmentJobContext merge order + ambient trackingToken', () =>
       augmentJobContext: () => ({ ambient: { trackingToken: 'custom-token' } }),
     };
     let token2 = '';
-    const mod2 = defineFakeEvent('e', always, (event, _ctx) =>
-      run(event, [job((ctx: JobContext) => void (token2 = ctx.trackingToken))]),
-    );
+    const mod2 = defineFakeEvent('e', always, [job((ctx: JobContext) => void (token2 = ctx.trackingToken))]);
     const kit2 = createEventKit(fakeSource()).use(overrider).registerEvents([mod2]);
     await kit2.handle('x');
     expect(token2).toBe('custom-token');
   });
 });
 
-describe('ADR-014: run() defaults parallel + continueOnFailure', () => {
+describe('ADR-014: run defaults parallel + continueOnFailure', () => {
   it('a failing job does not block the others (parallel default)', async () => {
-    const mod = defineFakeEvent('e', always, (event, _ctx) =>
-      run(event, [
-        job(() => {
-          throw new Error('boom');
-        }, { name: 'bad' }),
-        job(() => 'ok', { name: 'good' }),
-      ]),
-    );
+    const mod = defineFakeEvent('e', always, [
+      job(() => { throw new Error('boom'); }, { name: 'bad' }),
+      job(() => 'ok', { name: 'good' }),
+    ]);
     const kit = createEventKit(fakeSource()).registerEvents([mod]);
     const result = await kit.handle('x');
     const jobs = result.events[0]!.jobs;
@@ -139,21 +160,17 @@ describe('ADR-014: run() defaults parallel + continueOnFailure', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('series + continueOnFailure:false stops and marks the rest skipped', async () => {
+  it('series + continueOnFailure:false stops and marks the rest skipped (run options on the module)', async () => {
     const ran: string[] = [];
-    const mod = defineFakeEvent('e', always, (event, _ctx) =>
-      run(
-        event,
-        [
-          job(() => void ran.push('1'), { name: 'one' }),
-          job(() => {
-            ran.push('2');
-            throw new Error('stop here');
-          }, { name: 'two' }),
-          job(() => void ran.push('3'), { name: 'three' }),
-        ],
-        { mode: 'series', continueOnFailure: false },
-      ),
+    const mod = defineFakeEvent(
+      'e',
+      always,
+      [
+        job(() => void ran.push('1'), { name: 'one' }),
+        job(() => { ran.push('2'); throw new Error('stop here'); }, { name: 'two' }),
+        job(() => void ran.push('3'), { name: 'three' }),
+      ],
+      { run: { mode: 'series', continueOnFailure: false } },
     );
     const kit = createEventKit(fakeSource()).registerEvents([mod]);
     const result = await kit.handle('x');
@@ -165,18 +182,14 @@ describe('ADR-014: run() defaults parallel + continueOnFailure', () => {
 
 describe('timeouts and cancellation', () => {
   it('marks a job that exceeds its timeoutMs as timed_out', async () => {
-    const mod = defineFakeEvent('e', always, (event, _ctx) =>
-      run(event, [job(() => new Promise(() => {}), { name: 'slow', timeoutMs: 25 })]),
-    );
+    const mod = defineFakeEvent('e', always, [job(() => new Promise(() => {}), { name: 'slow', timeoutMs: 25 })]);
     const kit = createEventKit(fakeSource()).registerEvents([mod]);
     const result = await kit.handle('x');
     expect(result.events[0]!.jobs[0]!.status).toBe('timed_out');
   });
 
   it('cancels in-flight jobs when the serverless budget expires', async () => {
-    const mod = defineFakeEvent('e', always, (event, _ctx) =>
-      run(event, [job(() => new Promise(resolve => setTimeout(resolve, 1000)), { name: 'longrunner' })]),
-    );
+    const mod = defineFakeEvent('e', always, [job(() => new Promise(resolve => setTimeout(resolve, 1000)), { name: 'longrunner' })]);
     const kit = createEventKit(fakeSource()).registerEvents([mod]);
     // budget = 250 - 200 (flush margin) = 50ms before abort fires
     const result = await kit.handle('x', { getRemainingTimeMs: () => 250 });
@@ -186,18 +199,9 @@ describe('timeouts and cancellation', () => {
 
   it('retries a failing job up to retries+1 attempts', async () => {
     let attempts = 0;
-    const mod = defineFakeEvent('e', always, (event, _ctx) =>
-      run(event, [
-        job(
-          () => {
-            attempts += 1;
-            if (attempts < 3) throw new Error('flaky');
-            return 'finally';
-          },
-          { name: 'flaky', retries: 2 },
-        ),
-      ]),
-    );
+    const mod = defineFakeEvent('e', always, [
+      job(() => { attempts += 1; if (attempts < 3) throw new Error('flaky'); return 'finally'; }, { name: 'flaky', retries: 2 }),
+    ]);
     const kit = createEventKit(fakeSource()).registerEvents([mod]);
     const result = await kit.handle('x');
     expect(attempts).toBe(3);
@@ -207,36 +211,21 @@ describe('timeouts and cancellation', () => {
 });
 
 describe('observability parity: crashes surface in events[] without flipping ok (no-retry contract)', () => {
-  it('a handler crash → detected:true, no jobs, error set, ok stays true', async () => {
-    const mod = defineFakeEvent('e', always, () => {
-      throw new Error('handler boom');
+  it('a prepare crash → detected:true, no jobs, error set, ok stays true', async () => {
+    const mod = defineFakeEvent('e', always, [job(() => 'ok', { name: 'j' })], {
+      prepare: () => { throw new Error('prepare boom'); },
     });
     const kit = createEventKit(fakeSource()).registerEvents([mod]);
     const result = await kit.handle('x');
     expect(result.events).toHaveLength(1);
-    expect(result.events[0]!.detected).toBe(true); // event WAS detected; handler failed
+    expect(result.events[0]!.detected).toBe(true); // event WAS detected; prepare failed
     expect(result.events[0]!.jobs).toEqual([]);
-    expect(result.events[0]!.error?.message).toBe('handler boom');
+    expect(result.events[0]!.error?.message).toBe('prepare boom');
     expect(result.ok).toBe(true); // no failed jobs → not flipped → no 5xx → no Hasura retry
   });
 
-  it('a run() non-job entry crashes the handler and is surfaced as an event error', async () => {
-    const mod = defineFakeEvent('e', always, (event, _ctx) => run(event, [false as never]));
-    const kit = createEventKit(fakeSource()).registerEvents([mod]);
-    const result = await kit.handle('x');
-    expect(result.events[0]!.detected).toBe(true);
-    expect(result.events[0]!.error?.message).toMatch(/non-job entry/);
-    expect(result.ok).toBe(true);
-  });
-
   it('a detector crash → detected:false, no jobs, error set, ok stays true', async () => {
-    const mod = defineFakeEvent(
-      'e',
-      () => {
-        throw new Error('detector boom');
-      },
-      (event, _ctx) => run(event, []),
-    );
+    const mod = defineFakeEvent('e', () => { throw new Error('detector boom'); }, []);
     const kit = createEventKit(fakeSource()).registerEvents([mod]);
     const result = await kit.handle('x');
     expect(result.events).toHaveLength(1);
@@ -247,7 +236,7 @@ describe('observability parity: crashes surface in events[] without flipping ok 
   });
 
   it('a cleanly-false detector produces no event entry', async () => {
-    const mod = defineFakeEvent('e', () => false, (event, _ctx) => run(event, []));
+    const mod = defineFakeEvent('e', () => false, []);
     const kit = createEventKit(fakeSource()).registerEvents([mod]);
     const result = await kit.handle('x');
     expect(result.events).toHaveLength(0);
@@ -259,7 +248,7 @@ describe('plugin lifecycle + capability validation', () => {
     const calls: string[] = [];
     const p1: EventKitPlugin = { name: 'p1', onInvocationStart: () => void calls.push('p1') };
     const p2: EventKitPlugin = { name: 'p2', onInvocationStart: () => void calls.push('p2') };
-    const mod = defineFakeEvent('e', always, (event, _ctx) => run(event, []));
+    const mod = defineFakeEvent('e', always, []);
     const kit = createEventKit(fakeSource()).use(p1).use(p2).registerEvents([mod]);
     await kit.handle('x');
     // source is registration[0]; the two plugins fire in order after it
@@ -268,7 +257,7 @@ describe('plugin lifecycle + capability validation', () => {
 
   it('throws when a plugin requires an unsatisfied capability', async () => {
     const needsHasura: EventKitPlugin = { name: 'needs-hasura', requires: ['source:hasura'] };
-    const mod = defineFakeEvent('e', always, (event, _ctx) => run(event, []));
+    const mod = defineFakeEvent('e', always, []);
     const kit = createEventKit(fakeSource()).use(needsHasura).registerEvents([mod]);
     await expect(kit.handle('x')).rejects.toThrow(/requires capability 'source:hasura'/);
   });

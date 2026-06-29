@@ -56,6 +56,7 @@ export type {
   JobFunction,
   JobDefinition,
   JobContext,
+  JobInputContext,
   JobContextContribution,
   JobProgress,
   JobCheckpoint,
@@ -65,13 +66,14 @@ export type {
 } from './job.js';
 export { job, NotImplementedError } from './job.js';
 
-// ── Event modules ───────────────────────────────────────────────────────────
+// ── Event modules (ADR-025: declarative; no handler) ─────────────────────────
 export type {
   EventModule,
   EventModuleMetadata,
   DetectorFunction,
-  HandlerFunction,
+  PrepareFunction,
 } from './event-module.js';
+export { defineEvent } from './event-module.js';
 
 // ── Plugin contracts ─────────────────────────────────────────────────────────
 export type {

@@ -1,8 +1,9 @@
 // createEventKit() + the EventKit implementation. Built once at module scope and
 // reused across warm invocations; per-request data flows through handle()
-// (ADR-013). The lifecycle (§6): normalize → augment → detect → handle → finalize,
-// all run inside the AsyncLocalStorage invocation store so the free run() reaches
-// invocation-scoped state.
+// (ADR-013). The lifecycle (§6): normalize → augment → detect → dispatch → finalize.
+// Modules are declarative (ADR-025): dispatch runs each detected event's `prepare`
+// once, then hands its static `jobs` array to the runtime executor directly — no
+// AsyncLocalStorage reach-around (the executor receives the invocation runtime).
 import {
   asEventName,
   asInvocationId,
@@ -23,14 +24,18 @@ import {
   type InvocationContext,
   type InvocationResult,
   type JobExecution,
+  type JobInputContext,
   type PluginFactory,
   type RequestContext,
   type SerializedError,
 } from '../core/index.js';
 import { PluginManager } from './plugin-manager.js';
-import { invocationStore, type InvocationRuntime } from './invocation-store.js';
+import { runJobs, type InvocationRuntime } from './run.js';
 import { createHandlerLogger, createDetectorLogger } from './loggers.js';
 import { newInvocationId, newCorrelationId, newUuid } from './ids.js';
+
+const isJobDefinition = (x: unknown): boolean =>
+  !!x && typeof x === 'object' && (x as { __eventkitJob?: unknown }).__eventkitJob === true;
 
 /** Milliseconds reserved before the serverless budget expires, for best-effort flush. */
 const FLUSH_SAFETY_MARGIN_MS = 200;
@@ -54,7 +59,24 @@ class Kit implements EventKit {
   registerEvent(module: EventModule): EventKit {
     if (!module || typeof module.name !== 'string') throw new Error('registerEvent: module must have a string name.');
     if (typeof module.detector !== 'function') throw new Error(`Event '${module.name}' is missing a detector.`);
-    if (typeof module.handler !== 'function') throw new Error(`Event '${module.name}' is missing a handler.`);
+    if (module.prepare !== undefined && typeof module.prepare !== 'function') {
+      throw new Error(`Event '${module.name}': prepare must be a function if provided.`);
+    }
+    // ADR-025: `jobs` is a static array of branded job(...) entries. Validate at
+    // REGISTER time (earlier than the old run-time check) — a non-job entry (a bare
+    // function, a look-alike object, a `false` from `cond && job()`) is a config
+    // error in the module declaration, surfaced before any invocation runs.
+    if (!Array.isArray(module.jobs)) {
+      throw new Error(`Event '${module.name}': jobs must be a static array of job(...) entries (ADR-025).`);
+    }
+    module.jobs.forEach((entry, i) => {
+      if (!isJobDefinition(entry)) {
+        throw new Error(
+          `Event '${module.name}': jobs[${i}] is not a job(...) (ADR-025). Every entry must be a job(fn, {…}); ` +
+            `put conditions in the detector (a named event) or inside a job, never at the array level.`,
+        );
+      }
+    });
     if (this.moduleNames.has(module.name)) throw new Error(`Duplicate event name registered: '${module.name}'.`);
     this.moduleNames.add(module.name);
     this.modules.push(module);
@@ -206,24 +228,21 @@ class Kit implements EventKit {
 
     const runtime: InvocationRuntime = { pluginManager: this.pm, invocation, signal: controller.signal };
 
-    const result = await invocationStore.run(runtime, async () => {
-      await this.pm.onInvocationStart(invocation);
+    await this.pm.onInvocationStart(invocation);
 
-      const detected = await this.detect(envelope, invocation);
-      const events = await this.dispatch(detected, envelope, invocation);
+    const detected = await this.detect(envelope, invocation);
+    const events = await this.dispatch(detected, envelope, invocation, runtime);
 
-      const res: InvocationResult = {
-        ok: events.every(e => e.jobs.every(j => j.status === 'completed' || j.status === 'skipped')),
-        invocationId,
-        events,
-        durationMs: Date.now() - start,
-      };
-      if (timedOut) res.timedOut = true;
+    const result: InvocationResult = {
+      ok: events.every(e => e.jobs.every(j => j.status === 'completed' || j.status === 'skipped')),
+      invocationId,
+      events,
+      durationMs: Date.now() - start,
+    };
+    if (timedOut) result.timedOut = true;
 
-      await this.pm.onInvocationEnd(invocation, res);
-      await this.pm.onFlush();
-      return res;
-    });
+    await this.pm.onInvocationEnd(invocation, result);
+    await this.pm.onFlush();
 
     return result;
     } catch (err) {
@@ -310,17 +329,25 @@ class Kit implements EventKit {
     return out;
   }
 
-  /** Invoke each detected event's handler; collect job executions and surface crashes. */
+  /**
+   * For each detected event: build its handler context, run `prepare` once (if any),
+   * then hand the module's STATIC `jobs` array to the runtime executor (ADR-025 —
+   * there is no handler body). `prepare`'s output is merged into every job's input.
+   * A crash in `prepare` is reported and surfaced (detected:true, no jobs, `error`),
+   * mirroring the legacy handler-crash semantics; `ok` stays job-status-only so a
+   * prepare crash with no jobs does not flip it (no-retry contract).
+   */
   private async dispatch(
     detected: Array<{ module: EventModule; event: DetectedEvent | null; error?: SerializedError }>,
     envelope: EventEnvelope,
     invocation: InvocationContext,
+    runtime: InvocationRuntime,
   ): Promise<EventOutcome[]> {
     const events: EventOutcome[] = [];
     for (const entry of detected) {
       const { module, event } = entry;
 
-      // Detector crash: report it (detected:false, no jobs); no handler runs.
+      // Detector crash: report it (detected:false, no jobs); no jobs run.
       if (!event) {
         const crashed: EventOutcome = { name: module.name, detected: false, jobs: [] };
         if (entry.error !== undefined) crashed.error = entry.error;
@@ -349,9 +376,13 @@ class Kit implements EventKit {
       let jobs: JobExecution[] = [];
       let error: ReturnType<typeof serializeError> | undefined;
       try {
-        const res = await module.handler(event, ctx);
-        if (Array.isArray(res)) jobs = res;
+        // prepare() runs ONCE before the jobs; its result is shared into every job's
+        // input (data only — never job selection). Then run the static job set.
+        const prepared = module.prepare ? ((await module.prepare(ctx)) as Record<string, unknown>) : {};
+        const jobInputCtx: JobInputContext = { ...(ctx as HandlerContext), prepared };
+        jobs = await runJobs(runtime, event, module.jobs, module.run, jobInputCtx);
       } catch (err) {
+        // A prepare() crash (the jobs themselves never reject — runJobs isolates them).
         error = serializeError(err);
         await this.pm.reportError(err, 'handle', {
           invocationId: invocation.invocationId,
@@ -365,9 +396,8 @@ class Kit implements EventKit {
       if (error !== undefined) handlerResult.error = error;
       await this.pm.onEventHandlerEnd(ctx, handlerResult);
 
-      // detected stays true even on a handler crash (the event WAS detected); the
-      // error is surfaced separately. `ok` is computed from job status only, so a
-      // handler crash with no jobs does not flip it — preserving the no-retry contract.
+      // detected stays true even on a prepare crash (the event WAS detected); the
+      // error is surfaced separately. `ok` is computed from job status only.
       const outcome: EventOutcome = { name: event.name, detected: true, jobs };
       if (error !== undefined) outcome.error = error;
       events.push(outcome);
