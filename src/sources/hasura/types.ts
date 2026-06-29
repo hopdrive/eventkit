@@ -88,11 +88,21 @@ export interface HasuraHandlerContext<
   receivedAt: Date;
 }
 
-/** What a `hasuraCron.detector`/`.handler` receives — schedule + payload, no rows. */
+/** What a `hasuraCron.detector` receives — schedule + payload, no rows. */
 export interface HasuraCronContext<
   TPayload = Record<string, unknown>,
   TMeta extends Record<string, unknown> = Record<string, unknown>,
 > extends DetectorContext<HasuraCronPayload<TPayload>, TMeta> {
+  scheduleName: string;
+  scheduledAt: Date;
+  payload: TPayload;
+}
+
+/** What a `hasuraCron.handler` receives — schedule + payload data, no rows. */
+export interface HasuraCronHandlerContext<
+  TPayload = Record<string, unknown>,
+  TMeta extends Record<string, unknown> = Record<string, unknown>,
+> extends HandlerContext<HasuraCronPayload<TPayload>, TMeta> {
   scheduleName: string;
   scheduledAt: Date;
   payload: TPayload;

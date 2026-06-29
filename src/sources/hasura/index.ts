@@ -21,15 +21,22 @@ import type {
   EventSourceType,
   RequestContext,
 } from '../../core/index.js';
-import { NotImplementedError } from '../../core/index.js';
 import type {
   HasuraEventPayload,
   HasuraCronPayload,
   HasuraDetectorContext,
   HasuraHandlerContext,
   HasuraCronContext,
+  HasuraCronHandlerContext,
 } from './types.js';
-import { normalizeHasuraEvent, buildHasuraDetectorContext, buildHasuraHandlerContext } from './adapter.js';
+import {
+  normalizeHasuraEvent,
+  buildHasuraDetectorContext,
+  buildHasuraHandlerContext,
+  normalizeHasuraCron,
+  buildHasuraCronDetectorContext,
+  buildHasuraCronHandlerContext,
+} from './adapter.js';
 
 export type * from './types.js';
 export {
@@ -41,10 +48,6 @@ export {
   getNewRow,
   getSession,
 } from './payload.js';
-
-const notImpl = (what: string): never => {
-  throw new NotImplementedError(`${what} — hasuraCron source runtime lands in Phase 5.`);
-};
 
 /** The `hasuraEvent` source adapter plus its authoring helpers. */
 export interface HasuraEventSource extends EventKitPlugin {
@@ -69,7 +72,7 @@ export interface HasuraCronSource extends EventKitPlugin {
   handler<TPayload = Record<string, unknown>>(
     fn: (
       event: DetectedEvent<HasuraCronPayload<TPayload>>,
-      ctx: HasuraCronContext<TPayload>,
+      ctx: HasuraCronHandlerContext<TPayload>,
     ) => ReturnType<HandlerFunction>,
   ): HandlerFunction<HasuraCronPayload<TPayload>>;
 }
@@ -107,7 +110,13 @@ export const hasuraCron: HasuraCronSource = {
   handler(fn) {
     return fn as unknown as HandlerFunction;
   },
-  normalize(_raw: unknown, _request: RequestContext): EventEnvelope {
-    return notImpl('hasuraCron.normalize');
+  normalize(raw: unknown, request: RequestContext): EventEnvelope {
+    return normalizeHasuraCron(raw, request) as EventEnvelope;
+  },
+  buildDetectorContext(envelope: EventEnvelope, base: DetectorContext): HasuraCronContext {
+    return buildHasuraCronDetectorContext(envelope as EventEnvelope<HasuraCronPayload>, base as DetectorContext<HasuraCronPayload>);
+  },
+  buildHandlerContext(envelope: EventEnvelope, base: HandlerContext) {
+    return buildHasuraCronHandlerContext(envelope as EventEnvelope<HasuraCronPayload>, base as HandlerContext<HasuraCronPayload>);
   },
 };

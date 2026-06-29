@@ -1,7 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { createEventKit, asEventName, type EventModule } from '../../../index.js';
-import { hasuraEvent } from '../index.js';
-import type { HasuraDetectorContext, HasuraEventPayload, HasuraHandlerContext, HasuraOperation } from '../types.js';
+import { createEventKit, run, job, asEventName, type EventModule, type JobContext } from '../../../index.js';
+import { hasuraEvent, hasuraCron } from '../index.js';
+import type {
+  HasuraCronContext,
+  HasuraCronHandlerContext,
+  HasuraCronPayload,
+  HasuraDetectorContext,
+  HasuraEventPayload,
+  HasuraHandlerContext,
+  HasuraOperation,
+} from '../types.js';
 import { buildDetectorContextFor, buildHandlerContextFor } from '../../../testing/index.js';
 import { detector, handler, type AppointmentRow } from '../../../__examples__/appointment.ready.js';
 
@@ -157,6 +165,89 @@ describe('appointment.ready end to end through a Hasura kit', () => {
     const mod: EventModule = { name: asEventName('appointment.ready'), detector, handler };
     const kit = createEventKit(hasuraEvent).registerEvents([mod]);
     const result = await kit.handle(payload('UPDATE', { id: 1, status: 'pending' }, { id: 1, status: 'scheduled' }));
+    expect(result.events).toHaveLength(0);
+  });
+});
+
+// =============================================================================
+// hasuraCron (scheduled triggers, ADR-023)
+// =============================================================================
+
+function cronPayload(
+  name: string,
+  cfgPayload: Record<string, unknown> = {},
+  scheduledTime = '2026-06-28T00:00:00.000Z',
+  id = 'cron-1',
+): HasuraCronPayload {
+  return { name, scheduled_time: scheduledTime, payload: cfgPayload, id };
+}
+
+describe('hasuraCron.normalize', () => {
+  it('normalizes a scheduled-trigger payload to a cron envelope', () => {
+    const env = hasuraCron.normalize!(cronPayload('monthly-invoices', { month: '2026-06' }), {});
+    expect(env.source).toBe('hasura-cron');
+    expect(env.sourceType).toBe('cron');
+    expect(env.receivedAt.toISOString()).toBe('2026-06-28T00:00:00.000Z');
+    expect((env.meta as { sourceEventId?: string }).sourceEventId).toBe('cron-1');
+    expect((env.payload as HasuraCronPayload).name).toBe('monthly-invoices');
+  });
+
+  it('prefers an explicit request.correlationId and tolerates a malformed payload', () => {
+    expect(hasuraCron.normalize!(cronPayload('x'), { correlationId: 'explicit' }).correlationId).toBe('explicit');
+    expect(() => hasuraCron.normalize!({}, {})).not.toThrow();
+    expect(() => hasuraCron.normalize!(null, {})).not.toThrow();
+  });
+});
+
+describe('hasuraCron detector context', () => {
+  it('exposes scheduleName, scheduledAt, and the configured payload', () => {
+    const ctx = buildDetectorContextFor<HasuraCronContext>(hasuraCron, cronPayload('nightly', { tier: 'b2b' }));
+    expect(ctx.scheduleName).toBe('nightly');
+    expect(ctx.scheduledAt.toISOString()).toBe('2026-06-28T00:00:00.000Z');
+    expect(ctx.payload).toEqual({ tier: 'b2b' });
+    // no DB-event helpers leak onto a cron context
+    expect((ctx as unknown as { operation?: unknown }).operation).toBeUndefined();
+  });
+});
+
+describe('hasuraCron handler context', () => {
+  it('exposes scheduleName/scheduledAt/payload as data', () => {
+    const ctx = buildHandlerContextFor<HasuraCronHandlerContext>(hasuraCron, cronPayload('weekly', { region: 'se' }));
+    expect(ctx.scheduleName).toBe('weekly');
+    expect(ctx.payload).toEqual({ region: 'se' });
+    expect(ctx.scheduledAt.toISOString()).toBe('2026-06-28T00:00:00.000Z');
+  });
+});
+
+describe('hasuraCron end to end', () => {
+  it('matches a schedule by name and runs its jobs with the configured payload', async () => {
+    let processedMonth = '';
+    const detector = hasuraCron.detector(ctx => ctx.scheduleName === 'monthly-invoices');
+    const handler = hasuraCron.handler((event, ctx) =>
+      run(event, [
+        job((c: JobContext) => void (processedMonth = (c.input as { month: string }).month), {
+          name: 'processMonthly',
+          input: { month: (ctx.payload as { month: string }).month },
+        }),
+      ]),
+    );
+    const kit = createEventKit(hasuraCron).registerEvents([
+      { name: asEventName('invoices.monthly'), detector, handler } as EventModule,
+    ]);
+
+    const result = await kit.handle(cronPayload('monthly-invoices', { month: '2026-06' }));
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]!.jobs[0]!.status).toBe('completed');
+    expect(processedMonth).toBe('2026-06');
+  });
+
+  it('does not fire for a different schedule name', async () => {
+    const detector = hasuraCron.detector(ctx => ctx.scheduleName === 'monthly-invoices');
+    const handler = hasuraCron.handler((event, _ctx) => run(event, []));
+    const kit = createEventKit(hasuraCron).registerEvents([
+      { name: asEventName('invoices.monthly'), detector, handler } as EventModule,
+    ]);
+    const result = await kit.handle(cronPayload('hourly-cleanup'));
     expect(result.events).toHaveLength(0);
   });
 });

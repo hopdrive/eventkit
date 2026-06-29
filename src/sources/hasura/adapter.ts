@@ -10,7 +10,15 @@ import {
   type RequestContext,
 } from '../../core/index.js';
 import type { SourceMeta } from '../../core/index.js';
-import type { HasuraDetectorContext, HasuraEventPayload, HasuraHandlerContext, HasuraOperation } from './types.js';
+import type {
+  HasuraCronContext,
+  HasuraCronHandlerContext,
+  HasuraCronPayload,
+  HasuraDetectorContext,
+  HasuraEventPayload,
+  HasuraHandlerContext,
+  HasuraOperation,
+} from './types.js';
 import { columnAdded, columnChanged, columnRemoved, getNewRow, getOldRow, getOperation, getSession } from './payload.js';
 
 const randomId = (): string =>
@@ -101,5 +109,58 @@ export function buildHasuraHandlerContext(
     userId: session['x-hasura-user-id'] ?? null,
     userEmail: session['x-hasura-user-email'] ?? null,
     receivedAt: envelope.receivedAt,
+  };
+}
+
+// ── hasuraCron (Hasura scheduled triggers, ADR-023) ──────────────────────────
+
+/**
+ * Hasura scheduled-trigger payload `{ name, scheduled_time, payload, id }` →
+ * EventEnvelope. `sourceType: 'cron'`. No `trace_context`, so correlation comes
+ * from the request or is generated. Tolerant of malformed input.
+ */
+export function normalizeHasuraCron(raw: unknown, request: RequestContext): EventEnvelope<HasuraCronPayload> {
+  const payload = (raw ?? {}) as HasuraCronPayload;
+  const correlationId = asCorrelationId(request.correlationId ?? randomId());
+  const receivedAt = payload?.scheduled_time ? new Date(payload.scheduled_time) : new Date();
+  const meta: SourceMeta = {};
+  if (payload?.id) meta.sourceEventId = payload.id;
+
+  return {
+    id: payload?.id ?? randomId(),
+    source: asEventSourceName('hasura-cron'),
+    sourceType: 'cron',
+    receivedAt,
+    correlationId,
+    payload,
+    meta: meta as Record<string, unknown>,
+    raw,
+  };
+}
+
+/** Build the cron detector context (full ctx — schedule name + time + payload). */
+export function buildHasuraCronDetectorContext(
+  envelope: EventEnvelope<HasuraCronPayload>,
+  base: DetectorContext<HasuraCronPayload>,
+): HasuraCronContext {
+  const payload = envelope.payload;
+  return {
+    ...base,
+    scheduleName: payload?.name ?? '',
+    scheduledAt: payload?.scheduled_time ? new Date(payload.scheduled_time) : envelope.receivedAt,
+    payload: payload?.payload ?? {},
+  } as HasuraCronContext;
+}
+
+/** Build the cron handler-context EXTENSION (schedule data only; runtime merges onto base). */
+export function buildHasuraCronHandlerContext(
+  envelope: EventEnvelope<HasuraCronPayload>,
+  _base: HandlerContext<HasuraCronPayload>,
+): Omit<HasuraCronHandlerContext, keyof HandlerContext<HasuraCronPayload>> {
+  const payload = envelope.payload;
+  return {
+    scheduleName: payload?.name ?? '',
+    scheduledAt: payload?.scheduled_time ? new Date(payload.scheduled_time) : envelope.receivedAt,
+    payload: payload?.payload ?? {},
   };
 }

@@ -4,13 +4,13 @@ Source-agnostic business-event execution framework. The successor to
 `@hopdrive/hasura-event-detector` — Hasura becomes one *source adapter* rather than
 the center of the architecture.
 
-> **Status: Phase 4 (platform adapters).** The kit detects + runs jobs end to end with
-> the real `hasuraEvent` source, the built-in plugins, and platform adapters — a `db-*`
-> function runs via `kit.handler()` with no hand-written `getRemainingTimeInMillis`.
-> Design source of truth: `hasura-event-detector/docs/eventkit-rewrite/` (RFC v0.3.8 +
-> kickoff).
+> **Status: Phase 5 (hasuraCron source).** The kit detects + runs jobs end to end for
+> both Hasura DB triggers (`hasuraEvent`) and scheduled triggers (`hasuraCron`), with
+> the built-in plugins and platform adapters — a `db-*` or cron function runs via
+> `kit.handler()` with no hand-written `getRemainingTimeInMillis`. Design source of
+> truth: `hasura-event-detector/docs/eventkit-rewrite/` (RFC v0.3.8 + kickoff).
 
-## What works now (Phases 0–4)
+## What works now (Phases 0–5)
 
 - **Package skeleton** — dual ESM/CJS build, subpath `exports` map, three-tsconfig
   setup, marker `package.json` files, Changesets, and a CI **Netlify-bundle smoke
@@ -24,10 +24,10 @@ the center of the architecture.
   `JobDefinition[]`, `augmentJobContext` merge + ambient tracking token, per-job
   timeout, AbortSignal cancellation, retries). Plugin manager with lazy instantiation,
   registration-order notifications, delta transforms, and capability validation.
-- **`hasuraEvent` source** (`@hopdrive/eventkit/sources/hasura`) — `normalize` +
-  `buildDetectorContext` (operation/rows/`columnChanged()`/`manuallyInvoked()`/…) +
-  `buildHandlerContext` (`HasuraHandlerContext`). The `switch (ctx.operation)` detector
-  house style; `appointment.ready` example + tests.
+- **Hasura sources** (`@hopdrive/eventkit/sources/hasura`) — `hasuraEvent` (DB
+  triggers: operation/rows/`columnChanged()`/`manuallyInvoked()`, the
+  `switch (ctx.operation)` house style, `appointment.ready` example) and `hasuraCron`
+  (scheduled triggers: `scheduleName`/`scheduledAt`/`payload`).
 - **Built-in plugins** (config-driven, subpath exports — ADR-024):
   `./plugins/loop-prevention` (`loopPrevention` + a generic tracking-token codec),
   `./plugins/observability` (buffered, sink-based, full canonical record set) +
@@ -43,7 +43,6 @@ the center of the architecture.
   detect-and-warn.
 - **Pure utilities**: `serializeError`, `serializeOutput`, `replaceCircularReferences`,
   `job()`, branded-id helpers.
-- **Stubbed until later phases** (throw `NotImplementedError`): `hasuraCron` (Phase 5).
 
 ## Public surface
 
