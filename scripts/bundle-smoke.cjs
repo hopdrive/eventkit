@@ -22,6 +22,9 @@ const SUBPATHS = [
   '@hopdrive/eventkit/sources/hasura',
   '@hopdrive/eventkit/plugins/batchjobs',
   '@hopdrive/eventkit/plugins/observability',
+  '@hopdrive/eventkit/plugins/loop-prevention',
+  '@hopdrive/eventkit/plugins/transports/grafana',
+  '@hopdrive/eventkit/plugins/transports/sentry',
   '@hopdrive/eventkit/platforms',
   '@hopdrive/eventkit/testing',
 ];

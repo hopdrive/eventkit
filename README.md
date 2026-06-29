@@ -4,12 +4,12 @@ Source-agnostic business-event execution framework. The successor to
 `@hopdrive/hasura-event-detector` — Hasura becomes one *source adapter* rather than
 the center of the architecture.
 
-> **Status: Phase 2 (Hasura source adapter).** The kit detects + runs jobs end to end
-> with the real `hasuraEvent` source. Plugin/platform runtimes are still stubbed.
-> Design source of truth: `hasura-event-detector/docs/eventkit-rewrite/` (RFC v0.3.7 +
-> kickoff).
+> **Status: Phase 3 (plugins).** The kit detects + runs jobs end to end with the real
+> `hasuraEvent` source plus the built-in plugins (loop-prevention, observability,
+> batchjobs, grafana/sentry transports). Platform adapters are still stubbed. Design
+> source of truth: `hasura-event-detector/docs/eventkit-rewrite/` (RFC v0.3.8 + kickoff).
 
-## What works now (Phases 0–2)
+## What works now (Phases 0–3)
 
 - **Package skeleton** — dual ESM/CJS build, subpath `exports` map, three-tsconfig
   setup, marker `package.json` files, Changesets, and a CI **Netlify-bundle smoke
@@ -27,12 +27,17 @@ the center of the architecture.
   `buildDetectorContext` (operation/rows/`columnChanged()`/`manuallyInvoked()`/…) +
   `buildHandlerContext` (`HasuraHandlerContext`). The `switch (ctx.operation)` detector
   house style; `appointment.ready` example + tests.
+- **Built-in plugins** (config-driven, subpath exports — ADR-024):
+  `./plugins/loop-prevention` (`loopPrevention` + a generic tracking-token codec),
+  `./plugins/observability` (buffered, sink-based), `./plugins/batchjobs`
+  (registration-emergent durability, `requires: ['source:hasura']`),
+  `./plugins/transports/grafana` and `./plugins/transports/sentry`.
 - **Testing** (`@hopdrive/eventkit/testing`) — `fakeSource`, `defineFakeEvent`,
-  `buildDetectorContextFor`, `buildHandlerContextFor`; 32 unit tests.
+  `buildDetectorContextFor`, `buildHandlerContextFor`; 42 unit tests.
 - **Pure utilities**: `serializeError`, `serializeOutput`, `replaceCircularReferences`,
   `job()`, branded-id helpers.
 - **Stubbed until later phases** (throw `NotImplementedError`): `hasuraCron` (Phase 5),
-  `batchJobs`/`observability` (Phase 3), platform adapters (Phase 4).
+  platform adapters (Phase 4).
 
 ## Public surface
 
@@ -41,13 +46,17 @@ import { createEventKit, job, run } from '@hopdrive/eventkit';
 import { hasuraEvent } from '@hopdrive/eventkit/sources/hasura';
 import { batchJobs } from '@hopdrive/eventkit/plugins/batchjobs';
 import { observability } from '@hopdrive/eventkit/plugins/observability';
+import { loopPrevention } from '@hopdrive/eventkit/plugins/loop-prevention';
+import { grafanaTransport } from '@hopdrive/eventkit/plugins/transports/grafana';
 import { netlifyPlatform } from '@hopdrive/eventkit/platforms';
 ```
 
-HopDrive-specific plugins (`trackingToken`, `grafanaLogger`, `sentry`) deliberately do
-**not** live here — they belong in a separate `@hopdrive/app-eventkit` package so core
-stays domain-agnostic (§3.3). Core only exposes the seams they hang on
-(`ctx.trackingToken`, `envelope.meta.sourceTrackingToken`, `augmentJobContext`).
+Loop-prevention (tracking token), grafana, and sentry are **generic mechanisms
+parameterized by injected config**, so they ship built-in (ADR-024) — there is no
+separate `@hopdrive/app-eventkit` package. The HopDrive layer is just config presets
+(the `updated_by` field, token format `{ separator: '|' }`, service id), any future
+SDK-coupled enrichment plugin, and the event modules (which live in the consumer
+repos). Whether those presets warrant a package is deferred (D23 — likely not).
 
 ## Open decisions — proceeding on recommended defaults
 

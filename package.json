@@ -32,6 +32,21 @@
       "import": "./dist/esm/plugins/observability/index.js",
       "require": "./dist/cjs/plugins/observability/index.js"
     },
+    "./plugins/loop-prevention": {
+      "types": "./dist/types/plugins/loop-prevention/index.d.ts",
+      "import": "./dist/esm/plugins/loop-prevention/index.js",
+      "require": "./dist/cjs/plugins/loop-prevention/index.js"
+    },
+    "./plugins/transports/grafana": {
+      "types": "./dist/types/plugins/transports/grafana/index.d.ts",
+      "import": "./dist/esm/plugins/transports/grafana/index.js",
+      "require": "./dist/cjs/plugins/transports/grafana/index.js"
+    },
+    "./plugins/transports/sentry": {
+      "types": "./dist/types/plugins/transports/sentry/index.d.ts",
+      "import": "./dist/esm/plugins/transports/sentry/index.js",
+      "require": "./dist/cjs/plugins/transports/sentry/index.js"
+    },
     "./platforms": {
       "types": "./dist/types/platforms/index.d.ts",
       "import": "./dist/esm/platforms/index.js",
