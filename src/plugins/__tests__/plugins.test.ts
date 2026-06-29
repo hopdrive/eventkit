@@ -560,7 +560,16 @@ describe('transports/grafana (injected-logger bridge mode)', () => {
     const jobLine = calls.find(c => c.message === 'hello from job');
     expect(jobLine).toBeTruthy();
     expect(jobLine!.level).toBe('info');
-    expect(jobLine!.metadata).toMatchObject({ source: 'eventkit', jobName: 'j', jobExecutionId: jobId, data: { n: 1 } });
+    // like-for-like field schema: logType + scopeId (= jobExecutionId) so the legacy
+    // console `| json | scopeId=…` / `logType=…` queries match unchanged.
+    expect(jobLine!.metadata).toMatchObject({
+      source: 'eventkit',
+      logType: 'job',
+      jobName: 'j',
+      jobExecutionId: jobId,
+      scopeId: jobId,
+      data: { n: 1 },
+    });
   });
 
   it('routes errors through logger.error(message, error, metadata) with the SerializedError', async () => {
@@ -625,6 +634,29 @@ describe('transports/grafana (injected-logger bridge mode)', () => {
     // scopes are structured fields, not baked into the message
     expect(lines.find(l => l.msg === 'e ⭐ detected')?.scope).toBe('detection');
     expect(lines.find(l => l.msg.startsWith('✓ good'))?.scope).toBe('job');
+  });
+
+  it('maps scope → logType (detector/handler/job) for the legacy console contract', async () => {
+    const lines: Array<{ msg: string; logType?: string; scopeId?: string }> = [];
+    const logger: LoggerLike = {
+      info: (message, m) => void lines.push({ msg: message, logType: m?.logType as string, scopeId: m?.scopeId as string }),
+      warn: () => {},
+      error: () => {},
+    };
+    let jobId = '';
+    let invId = '';
+    const mod = defineFakeEvent('e', () => true, (event, ctx) => {
+      invId = ctx.invocationId;
+      return run(event, [job((c: JobContext) => { jobId = c.job.id; c.log.info('inside'); }, { name: 'j' })]);
+    });
+    await createEventKit(fakeSource()).use(grafanaLogger, { logger }).registerEvents([mod]).handle('go');
+
+    expect(lines.find(l => l.msg === 'e ⭐ detected')?.logType).toBe('detector');
+    expect(lines.find(l => l.msg === 'e running 1 job')?.logType).toBe('handler');
+    expect(lines.find(l => l.msg === 'inside')?.logType).toBe('job');
+    // scopeId: jobExecutionId for job logs, invocationId for framework lines
+    expect(lines.find(l => l.msg === 'inside')?.scopeId).toBe(jobId);
+    expect(lines.find(l => l.msg === 'e ⭐ detected')?.scopeId).toBe(invId);
   });
 });
 

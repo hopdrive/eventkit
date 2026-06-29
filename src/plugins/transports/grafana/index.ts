@@ -144,38 +144,77 @@ export function grafanaLogger(config: GrafanaLoggerConfig): EventKitPlugin {
     );
   }
 
-  const metadataFor = (entry: LogEntry, extra?: { jobExecutionId?: string; trackingToken?: string }): Record<string, unknown> => ({
+  // Field schema matches what the legacy GrafanaLoggerPlugin + scoped-job wrote, so the
+  // existing console `| json | <field>=…` queries work unchanged:
+  //   - `logType` categorizes the line by phase (detector/handler/job). Legacy never set
+  //     a fixed value; this defines it so the console can filter by phase.
+  //   - `scopeId` mirrors legacy's withLogScope scopeId: the jobExecutionId for job logs,
+  //     the invocationId otherwise (the SDK's default scopeId). Written in the body — the
+  //     console's body-filter query matches it without needing a real Loki stream label.
+  const logTypeForScope = (scope?: string): string =>
+    scope === 'detection' ? 'detector' : scope === 'handler' ? 'handler' : scope === 'job' ? 'job' : 'system';
+  const logTypeForPhase = (phase: string): string =>
+    phase === 'detect' ? 'detector' : phase === 'handle' ? 'handler' : phase === 'job' ? 'job' : 'system';
+
+  const metadataFor = (
+    entry: LogEntry,
+    extra: { logType: string; scopeId?: string; jobExecutionId?: string; trackingToken?: string },
+  ): Record<string, unknown> => ({
     source,
+    logType: extra.logType,
     ...(entry.scope ? { scope: entry.scope } : {}),
     ...(entry.invocationId ? { invocationId: entry.invocationId } : {}),
     ...(entry.correlationId ? { correlationId: entry.correlationId } : {}),
     ...(entry.eventName ? { eventName: entry.eventName } : {}),
     ...(entry.jobName ? { jobName: entry.jobName } : {}),
-    ...(extra?.jobExecutionId ? { jobExecutionId: extra.jobExecutionId } : {}),
-    ...(extra?.trackingToken ? { trackingToken: extra.trackingToken } : {}),
+    ...(extra.jobExecutionId ? { jobExecutionId: extra.jobExecutionId } : {}),
+    ...(extra.scopeId ? { scopeId: extra.scopeId } : {}),
+    ...(extra.trackingToken ? { trackingToken: extra.trackingToken } : {}),
     ...(entry.data ? { data: entry.data } : {}),
   });
 
-  const forward = (entry: LogEntry, extra?: { jobExecutionId?: string; trackingToken?: string }): void => {
+  const forward = (
+    entry: LogEntry,
+    extra: { logType: string; scopeId?: string; jobExecutionId?: string; trackingToken?: string },
+  ): void => {
     if (LEVEL_ORDER[entry.level] < minLevel) return;
     emit(entry.level, entry.message, metadataFor(entry, extra), entry.error, entry.at);
   };
 
   return {
     name: 'grafana-logger',
-    onLog: (entry: LogEntry) => forward(entry),
-    // Per-job-execution queryability: stamp ctx.job.id (the job_executions row id, also
-    // the tracking token's 3rd segment) so dashboards can filter by it.
+    onLog: (entry: LogEntry) => {
+      // The per-job `✓/✗` lifecycle lines (emitted via the handler logger, so they
+      // arrive here, not via onJobLog) carry their jobExecutionId in `data`. Hoist it so
+      // those lines are scoped to the job (scopeId = jobExecutionId), consistent with
+      // logType='job' — otherwise they'd only match the invocation, not the job query.
+      const jeid = typeof entry.data?.['jobExecutionId'] === 'string' ? (entry.data['jobExecutionId'] as string) : undefined;
+      const scopeId = jeid ?? entry.invocationId;
+      forward(entry, {
+        logType: logTypeForScope(entry.scope),
+        ...(jeid ? { jobExecutionId: jeid } : {}),
+        ...(scopeId ? { scopeId } : {}),
+      });
+    },
+    // Per-job-execution queryability: stamp ctx.job.id (the job_executions row id, also the
+    // tracking token's 3rd segment) as both jobExecutionId and scopeId so dashboards can
+    // filter job logs by it — matching the legacy scoped-job convention (scopeId = jobExecutionId).
     onJobLog: (ctx: JobContext, entry: LogEntry) =>
-      forward(entry, { jobExecutionId: ctx.job.id, ...(ctx.trackingToken ? { trackingToken: ctx.trackingToken } : {}) }),
+      forward(entry, {
+        logType: 'job',
+        scopeId: ctx.job.id,
+        jobExecutionId: ctx.job.id,
+        ...(ctx.trackingToken ? { trackingToken: ctx.trackingToken } : {}),
+      }),
     onError: (ctx: ErrorContext) =>
       emit(
         'error',
         `[${ctx.phase}] ${ctx.error.name}: ${ctx.error.message}`,
         {
           source,
+          logType: logTypeForPhase(ctx.phase),
           scope: ctx.phase,
-          ...(ctx.invocationId ? { invocationId: ctx.invocationId } : {}),
+          ...(ctx.invocationId ? { invocationId: ctx.invocationId, scopeId: ctx.invocationId } : {}),
           ...(ctx.correlationId ? { correlationId: ctx.correlationId } : {}),
           ...(ctx.eventName ? { eventName: ctx.eventName } : {}),
           ...(ctx.jobName ? { jobName: ctx.jobName } : {}),
