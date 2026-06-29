@@ -1,14 +1,16 @@
 // =============================================================================
 // @hopdrive/eventkit/testing — event-name ↔ filename validator
 // =============================================================================
-// A test-time check that each event module's declared `name` matches its file
-// name (the ADR-025 / one-module-per-file convention, e.g. `appointment.ready.ts`
+// A test-time check that each event module's declared `name` exactly matches its
+// file name (the ADR-025 / one-module-per-file convention, e.g. `appointment.ready.ts`
 // → `defineEvent({ name: 'appointment.ready' })`). TypeScript cannot tie a string
 // literal to a filename, so this runs at test/CI time — but it reads SOURCE TEXT
 // (never imports the module), so it has no import side effects, needs no env, and
 // is unaffected by bundling. An "event module" is discovered as any scanned file
 // that contains a `defineEvent({ … })` call; everything else is skipped, so it
-// safely coexists with dispatchers, jobs, helpers, and legacy modules.
+// safely coexists with dispatchers, jobs, helpers, and legacy modules. The check is
+// exact: the filename stem (basename minus its extension) must equal the name — no
+// suffix stripping, no configuration.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
@@ -26,12 +28,6 @@ export interface EventNameMismatch {
 export interface ValidateEventNamesOptions {
   /** Directory (or directories) to scan recursively for event modules. */
   dir: string | string[];
-  /**
-   * Filename infixes stripped from the stem before comparison, e.g. `['.eventkit']`
-   * so `appointment.ready.eventkit.js` is expected to declare `'appointment.ready'`.
-   * The first matching suffix is removed. Default: none.
-   */
-  stripSuffixes?: string[];
   /** File extensions considered source. Default: ts/tsx/js/jsx/mjs/cjs. */
   extensions?: string[];
   /** Directory names skipped during the scan. Default: node_modules/dist/build/coverage/.git. */
@@ -133,21 +129,13 @@ function walk(dir: string, ignore: string[], extensions: string[], out: string[]
   }
 }
 
-function stemOf(file: string, extensions: string[], stripSuffixes: string[]): string {
-  let stem = basename(file);
+/** The filename stem: basename minus its extension (e.g. `appointment.ready.ts` → `appointment.ready`). */
+function stemOf(file: string, extensions: string[]): string {
+  const name = basename(file);
   for (const ext of extensions) {
-    if (stem.endsWith(ext)) {
-      stem = stem.slice(0, -ext.length);
-      break;
-    }
+    if (name.endsWith(ext)) return name.slice(0, -ext.length);
   }
-  for (const suffix of stripSuffixes) {
-    if (stem.endsWith(suffix)) {
-      stem = stem.slice(0, -suffix.length);
-      break;
-    }
-  }
-  return stem;
+  return name;
 }
 
 /**
@@ -158,7 +146,6 @@ function stemOf(file: string, extensions: string[], stripSuffixes: string[]): st
 export function findEventNameMismatches(options: ValidateEventNamesOptions): EventNameMismatch[] {
   const dirs = Array.isArray(options.dir) ? options.dir : [options.dir];
   const extensions = options.extensions ?? DEFAULT_EXTENSIONS;
-  const stripSuffixes = options.stripSuffixes ?? [];
   const ignore = options.ignore ?? DEFAULT_IGNORE;
 
   const files: string[] = [];
@@ -169,7 +156,7 @@ export function findEventNameMismatches(options: ValidateEventNamesOptions): Eve
     const src = readFileSync(file, 'utf8');
     const actual = extractTopLevelName(src);
     if (actual === undefined) continue; // not an event module — skip
-    const expected = stemOf(file, extensions, stripSuffixes);
+    const expected = stemOf(file, extensions);
     if (actual === null) {
       mismatches.push({ file, expected, actual: null, reason: 'missing-name' });
     } else if (actual !== expected) {
@@ -185,7 +172,7 @@ export function findEventNameMismatches(options: ValidateEventNamesOptions): Eve
  *
  *   import { assertEventNamesMatchFilenames } from '@hopdrive/eventkit/testing';
  *   it('event names match filenames', () =>
- *     assertEventNamesMatchFilenames({ dir: 'functions', stripSuffixes: ['.eventkit'] }));
+ *     assertEventNamesMatchFilenames({ dir: 'functions' }));
  */
 export function assertEventNamesMatchFilenames(options: ValidateEventNamesOptions): void {
   const mismatches = findEventNameMismatches(options);
