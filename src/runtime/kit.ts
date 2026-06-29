@@ -83,9 +83,32 @@ class Kit implements EventKit {
       this.readyPromise = (async () => {
         if (!this.validated) this.validate();
         await this.pm.runInit(this.kitLogger());
+        this.warnIfMissingPlatform();
       })();
     }
     return this.readyPromise;
+  }
+
+  // Detect-and-warn (ADR-021): if a deadline-capable runtime is detected but no
+  // platform adapter is registered, the time budget / cancellation / pre-kill flush
+  // silently won't work. Surface that once at init rather than leaving it a footgun.
+  private warnIfMissingPlatform(): void {
+    if (this.pm.platform) return;
+    const e = typeof process !== 'undefined' && process.env ? process.env : {};
+    const detected = e['AWS_LAMBDA_FUNCTION_NAME']
+      ? 'AWS Lambda'
+      : e['NETLIFY']
+        ? 'Netlify'
+        : e['VERCEL']
+          ? 'Vercel'
+          : null;
+    if (detected) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[eventkit] A deadline-capable platform (${detected}) was detected but no platform adapter is registered. ` +
+          `Time-budget cancellation and best-effort flush are disabled. Register one, e.g. kit.use(netlifyPlatform).`,
+      );
+    }
   }
 
   handler(opts?: { before?: (...args: unknown[]) => unknown }): (...args: unknown[]) => unknown {
@@ -103,7 +126,14 @@ class Kit implements EventKit {
     await this.ensureReady();
     const startedAt = new Date();
     const start = Date.now();
+    const fallbackId = newInvocationId();
+    let budgetTimer: ReturnType<typeof setTimeout> | undefined;
 
+    // A framework-level failure (normalize/extractPayload/etc.) produces a fatal
+    // InvocationResult with a top-level `error` → 500 → the platform/Hasura MAY
+    // retry. Business-logic crashes (detector/handler/job) are caught downstream
+    // and stay in events[] with NO top-level error → 200 → no retry.
+    try {
     // 1. Resolve raw payload + RequestContext (platform-aware).
     let raw: unknown;
     let req: RequestContext;
@@ -136,7 +166,6 @@ class Kit implements EventKit {
     // 4. Time budget → AbortSignal (best-effort flush margin).
     const controller = new AbortController();
     let timedOut = false;
-    let budgetTimer: ReturnType<typeof setTimeout> | undefined;
     if (req.getRemainingTimeMs) {
       const budget = req.getRemainingTimeMs() - FLUSH_SAFETY_MARGIN_MS;
       if (budget > 0) {
@@ -185,8 +214,13 @@ class Kit implements EventKit {
       return res;
     });
 
-    if (budgetTimer) clearTimeout(budgetTimer);
     return result;
+    } catch (err) {
+      await this.pm.reportError(err, 'normalize', { invocationId: fallbackId });
+      return { ok: false, invocationId: fallbackId, events: [], durationMs: Date.now() - start, error: serializeError(err) };
+    } finally {
+      if (budgetTimer) clearTimeout(budgetTimer);
+    }
   }
 
   /**

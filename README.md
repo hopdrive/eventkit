@@ -4,12 +4,13 @@ Source-agnostic business-event execution framework. The successor to
 `@hopdrive/hasura-event-detector` — Hasura becomes one *source adapter* rather than
 the center of the architecture.
 
-> **Status: Phase 3 (plugins).** The kit detects + runs jobs end to end with the real
-> `hasuraEvent` source plus the built-in plugins (loop-prevention, observability,
-> batchjobs, grafana/sentry transports). Platform adapters are still stubbed. Design
-> source of truth: `hasura-event-detector/docs/eventkit-rewrite/` (RFC v0.3.8 + kickoff).
+> **Status: Phase 4 (platform adapters).** The kit detects + runs jobs end to end with
+> the real `hasuraEvent` source, the built-in plugins, and platform adapters — a `db-*`
+> function runs via `kit.handler()` with no hand-written `getRemainingTimeInMillis`.
+> Design source of truth: `hasura-event-detector/docs/eventkit-rewrite/` (RFC v0.3.8 +
+> kickoff).
 
-## What works now (Phases 0–3)
+## What works now (Phases 0–4)
 
 - **Package skeleton** — dual ESM/CJS build, subpath `exports` map, three-tsconfig
   setup, marker `package.json` files, Changesets, and a CI **Netlify-bundle smoke
@@ -36,10 +37,13 @@ the center of the architecture.
   `./plugins/transports/grafana` and `./plugins/transports/sentry`.
 - **Testing** (`@hopdrive/eventkit/testing`) — `fakeSource`, `defineFakeEvent`,
   `buildDetectorContextFor`, `buildHandlerContextFor`; 42 unit tests.
+- **Platform adapters** (`@hopdrive/eventkit/platforms`) — `lambdaPlatform`,
+  `netlifyPlatform` (classic), `netlifyBackgroundPlatform`, `netlifyV2Platform`; three
+  time-budget strategies via `RequestContext.getRemainingTimeMs`; `kit.handler()`;
+  detect-and-warn.
 - **Pure utilities**: `serializeError`, `serializeOutput`, `replaceCircularReferences`,
   `job()`, branded-id helpers.
-- **Stubbed until later phases** (throw `NotImplementedError`): `hasuraCron` (Phase 5),
-  platform adapters (Phase 4).
+- **Stubbed until later phases** (throw `NotImplementedError`): `hasuraCron` (Phase 5).
 
 ## Public surface
 
