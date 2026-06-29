@@ -40,6 +40,7 @@ export function normalizeHasuraEvent(raw: unknown, request: RequestContext): Eve
   // (observability) can read them without parsing the Hasura payload.
   const session = getSession(payload);
   const meta: SourceMeta = {};
+  if (payload?.trigger?.name) meta.sourceFunction = payload.trigger.name;
   if (payload?.table) meta.sourceTable = `${payload.table.schema ?? 'public'}.${payload.table.name ?? 'unknown'}`;
   const op = getOperation(payload);
   if (op) meta.sourceOperation = op;
@@ -124,6 +125,7 @@ export function normalizeHasuraCron(raw: unknown, request: RequestContext): Even
   const correlationId = asCorrelationId(request.correlationId ?? randomId());
   const receivedAt = payload?.scheduled_time ? new Date(payload.scheduled_time) : new Date();
   const meta: SourceMeta = {};
+  if (payload?.name) meta.sourceFunction = payload.name; // the schedule name identifies the cron function
   if (payload?.id) meta.sourceEventId = payload.id;
 
   return {

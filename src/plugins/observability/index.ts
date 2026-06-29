@@ -112,6 +112,13 @@ export interface ObservabilityConfig {
   captureErrorStacks?: boolean;
   /** Periodic mid-invocation upsert cadence (ms) for the live Console view. Off by default. */
   flushIntervalMs?: number;
+  /**
+   * Record an event row for EVERY detector evaluation, including those that did not
+   * fire (`detected: false`, status `not_detected`) — matching the legacy plugin and
+   * the Console's detected/undetected counts. Default true. Set false to record only
+   * fired/errored events (leaner batches).
+   */
+  recordUndetectedEvents?: boolean;
   maxJsonSize?: number;
   maxDepth?: number;
 }
@@ -133,6 +140,7 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
   const captureSourcePayload = config.captureSourcePayload !== false;
   const captureJobMetadata = config.captureJobMetadata !== false;
   const captureErrorStacks = config.captureErrorStacks !== false;
+  const recordUndetectedEvents = config.recordUndetectedEvents !== false;
   const serOpts = { maxDepth: config.maxDepth ?? 10, ...(config.maxJsonSize ? { maxJsonSize: config.maxJsonSize } : {}) };
 
   const buffers = new Map<string, Buffer>();
@@ -201,7 +209,10 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
         total_jobs_succeeded: 0,
         total_jobs_failed: 0,
       };
-      if (ctx.sourceFunction !== undefined) invocation.source_function = ctx.sourceFunction;
+      // Prefer the source's business identity (Hasura trigger name) over the
+      // platform runtime function name ('handler' under netlify dev); fall back to
+      // either, then 'unknown' (source_function is NOT NULL).
+      invocation.source_function = meta.sourceFunction ?? ctx.sourceFunction ?? 'unknown';
       if (meta.sourceTable) invocation.source_table = meta.sourceTable;
       if (meta.sourceOperation) invocation.source_operation = meta.sourceOperation;
       if (meta.sourceEventId) invocation.source_event_id = meta.sourceEventId;
@@ -222,7 +233,9 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
     },
 
     onEventDetectionEnd(ctx: DetectorContext, result) {
-      if (!result.detected && !result.error) return;
+      // Record every evaluation by default (detected + not_detected) for Console
+      // parity; with recordUndetectedEvents:false, record only fired/errored events.
+      if (!recordUndetectedEvents && !result.detected && !result.error) return;
       const buf = buffers.get(ctx.invocationId);
       if (!buf) return;
       const rec = eventRecord(buf, ctx.invocationId, ctx.correlationId, result.eventName);

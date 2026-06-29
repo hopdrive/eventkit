@@ -157,12 +157,38 @@ describe('observability', () => {
     expect(batches[0]!.invocation.error_message).toBe('handler boom');
   });
 
-  it('does not record events that never fired', async () => {
-    const batches: ObservabilityBatch[] = [];
+  it('records undetected events by default (Console parity) and can be turned off', async () => {
     const mod = defineFakeEvent('never', () => false, (event, _ctx) => run(event, []));
-    const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b) }).registerEvents([mod]);
-    await kit.handle('x');
-    expect(batches[0]!.events).toHaveLength(0);
+
+    // default: undetected events ARE recorded (detected:false, not_detected)
+    const onBatches: ObservabilityBatch[] = [];
+    await createEventKit(fakeSource())
+      .use(observability, { sink: (b: ObservabilityBatch) => void onBatches.push(b) })
+      .registerEvents([mod])
+      .handle('x');
+    expect(onBatches[0]!.events).toHaveLength(1);
+    expect(onBatches[0]!.events[0]).toMatchObject({ event_name: 'never', detected: false, status: 'not_detected' });
+    expect(onBatches[0]!.invocation.events_detected_count).toBe(0);
+
+    // recordUndetectedEvents:false → only fired/errored events recorded
+    const offBatches: ObservabilityBatch[] = [];
+    await createEventKit(fakeSource())
+      .use(observability, { sink: (b: ObservabilityBatch) => void offBatches.push(b), recordUndetectedEvents: false })
+      .registerEvents([mod])
+      .handle('x');
+    expect(offBatches[0]!.events).toHaveLength(0);
+  });
+
+  it('source_function prefers the source identity (Hasura trigger name) over the platform function name', async () => {
+    const batches: ObservabilityBatch[] = [];
+    const detector = hasuraEvent.detector(() => false);
+    const handler = hasuraEvent.handler((event, _ctx) => run(event, []));
+    const kit = createEventKit(hasuraEvent)
+      .use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b) })
+      .registerEvents([{ name: asEventName('e'), detector, handler } as EventModule]);
+    // hasuraInsert sets trigger.name = 'db-appointments-test'
+    await kit.handle({ id: 'e', created_at: '2026-06-28T12:00:00Z', table: { schema: 'public', name: 't' }, trigger: { name: 'db-appointments-test' }, event: { op: 'INSERT', data: { old: null, new: { id: 1 } }, session_variables: {} } });
+    expect(batches[0]!.invocation.source_function).toBe('db-appointments-test');
   });
 });
 

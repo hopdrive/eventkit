@@ -11,6 +11,13 @@
 // missing key as "unknown". This is data on the envelope, not behavior.
 
 export interface SourceMeta {
+  /**
+   * The source's business-meaningful function/handler identity (Hasura trigger
+   * name, e.g. `'db-appointments'`). Observability prefers this for
+   * `source_function` over the platform's runtime function name, which can be
+   * unreliable (e.g. `'handler'` under `netlify dev`).
+   */
+  sourceFunction?: string;
   /** Fully-qualified source object, e.g. `'public.appointments'` (Hasura schema.table). */
   sourceTable?: string;
   /** Source operation, e.g. a Hasura op `'INSERT' | 'UPDATE' | 'DELETE' | 'MANUAL'`. */
@@ -33,6 +40,7 @@ export interface SourceMeta {
 
 /** The well-known key names, for writers/readers that prefer constants over literals. */
 export const SOURCE_META_KEYS = {
+  sourceFunction: 'sourceFunction',
   sourceTable: 'sourceTable',
   sourceOperation: 'sourceOperation',
   sourceEventId: 'sourceEventId',
