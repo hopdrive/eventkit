@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build (dual ESM/CJS + types)
+        run: npm run build
+      # D8 release gate: every subpath export must resolve under esbuild (the
+      # bundler Netlify's zisi uses). Fall back to a package family if this proves
+      # unreliable.
+      - name: Netlify-bundle smoke test
+        run: npm run smoke:bundle

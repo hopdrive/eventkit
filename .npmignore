@@ -1,0 +1,10 @@
+src/
+scripts/
+docs/
+node_modules/
+coverage/
+tsconfig*.json
+.gitignore
+.eslintrc*
+*.tsbuildinfo
+__smoke__/
