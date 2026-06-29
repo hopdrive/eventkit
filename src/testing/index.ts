@@ -187,3 +187,11 @@ export function defineFakeEvent<TPayload = unknown>(
   if (opts?.run) module.run = opts.run;
   return module;
 }
+
+// Event-name ↔ filename validator (ADR-025 convention check).
+export {
+  findEventNameMismatches,
+  assertEventNamesMatchFilenames,
+  type EventNameMismatch,
+  type ValidateEventNamesOptions,
+} from './validate-event-names.js';
