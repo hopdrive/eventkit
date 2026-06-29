@@ -127,6 +127,10 @@ class Kit implements EventKit {
     // 3. Per-request config refinement (delta), then resolve ids.
     req = this.pm.configureInvocation(req, envelope);
     const invocationId = req.invocationId ? asInvocationId(req.invocationId) : newInvocationId();
+    // Single correlationId lever, by precedence: a plugin's augmentEnvelope (e.g.
+    // loop-prevention lifting the inbound token's correlation — chaining beats a
+    // fresh id, ran above) > the source's normalize (which already folded in
+    // request.correlationId ?? trace_context ?? generated) > a defensive fallback.
     const correlationId = envelope.correlationId ?? newCorrelationId();
 
     // 4. Time budget → AbortSignal (best-effort flush margin).

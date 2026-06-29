@@ -6,7 +6,7 @@ import { loopPrevention, createTokenCodec } from '../loop-prevention/index.js';
 import { observability, type ObservabilityBatch } from '../observability/index.js';
 import { graphqlSink } from '../observability/graphql-sink.js';
 import { safeSerialize } from '../observability/serialize.js';
-import { batchJobs, type BatchJobUpdate } from '../batchjobs/index.js';
+import { batchJobs, type BatchJobUpdate, type DelayedBatchJobSpec } from '../batchjobs/index.js';
 import { grafanaTransport, type LokiPayload } from '../transports/grafana/index.js';
 import { sentry, type SentryEvent } from '../transports/sentry/index.js';
 
@@ -200,6 +200,35 @@ describe('observability: parent-child linkage (the capability behind the dropped
 
     // (c) the child invocation's source_job_id links back to A's job row id
     expect(bBatches[0]!.invocation.source_job_id).toBe(jobRowId);
+    // (d) correlation chaining: the child runs under the SAME correlationId as the parent
+    expect(bBatches[0]!.invocation.correlation_id).toBe(aBatches[0]!.invocation.correlation_id);
+  });
+});
+
+describe('loop-prevention: multi-strategy extraction (chains via metadata/session, not just updated_by)', () => {
+  const cfg = { codec: { separator: '|', validateCorrelationId: true } };
+  const captureCorrelation = (raw: unknown) => {
+    let cid = '';
+    const mod = defineFakeEvent('e', () => true, (event, ctx) => { cid = ctx.correlationId; return run(event, []); });
+    // detector reads correlation off the envelope; we read it via the handler ctx.
+    const kit = createEventKit(hasuraEvent).use(loopPrevention, cfg).registerEvents([
+      { name: asEventName('e'), detector: mod.detector, handler: mod.handler } as EventModule,
+    ]);
+    return kit.handle(raw).then(() => cid);
+  };
+
+  it('extracts a correlation id from a metadata column', async () => {
+    const cid = await captureCorrelation(hasuraInsert({ id: 1, correlation_id: UUID }));
+    expect(cid).toBe(UUID);
+  });
+
+  it('extracts a correlation id from a session variable', async () => {
+    const payload = {
+      id: 'e', created_at: '2026-06-28T12:00:00Z', table: { schema: 'public', name: 't' }, trigger: { name: 't' },
+      event: { op: 'INSERT', data: { old: null, new: { id: 1 } }, session_variables: { 'x-correlation-id': UUID } },
+    };
+    const cid = await captureCorrelation(payload);
+    expect(cid).toBe(UUID);
   });
 });
 
@@ -307,7 +336,36 @@ describe('batchJobs', () => {
     expect(statuses).toContain('done');
     const done = updates.find(u => u.fields.status === 'done');
     expect(done!.id).toBe('row-1');
-    expect(done!.fields.output).toEqual({ processed: true });
+    // result/logs/error are FOLDED INTO output (the real batch_jobs has only status+output)
+    expect(done!.fields.output).toEqual({ result: { processed: true } });
+    // never writes columns that don't exist on batch_jobs
+    expect(updates.every(u => Object.keys(u.fields).every(k => k === 'status' || k === 'output'))).toBe(true);
+  });
+
+  it('schedules a durable delayed retry on failure when durableRetry is configured', async () => {
+    const updates: Array<{ id: string | number; fields: BatchJobUpdate }> = [];
+    const delayed: DelayedBatchJobSpec[] = [];
+    const detector = hasuraEvent.detector(ctx => ctx.operation === 'INSERT');
+    const handler = hasuraEvent.handler((event, _ctx) =>
+      run(event, [job(() => { throw new Error('transient'); }, { name: 'proc' })]),
+    );
+    const kit = createEventKit(hasuraEvent)
+      .use(batchJobs, {
+        store: {
+          update: (id, fields) => void updates.push({ id, fields }),
+          enqueueDelayed: (spec: DelayedBatchJobSpec) => void delayed.push(spec),
+        },
+        durableRetry: { delayMs: 5000, maxAttempts: 3 },
+      })
+      .registerEvents([{ name: asEventName('batch.created'), detector, handler } as EventModule]);
+    await kit.handle(hasuraInsert({ id: 'row-7', input: { workUnit: 'W' }, trigger_type: 'ap', delay_key: 'ap-7' }));
+
+    expect(delayed).toHaveLength(1); // a crash-surviving retry row was scheduled
+    expect(delayed[0]!.triggerType).toBe('ap');
+    expect(delayed[0]!.uniqueKey).toBe('ap-7'); // dedup via delay_key
+    expect(delayed[0]!.delayMs).toBe(5000);
+    expect((delayed[0]!.input as Record<string, unknown>)['__retryAttempt']).toBe(1);
+    expect(updates.find(u => u.fields.status === 'error')).toBeTruthy(); // this row terminates
   });
 
   it('handler input overrides the row baseline (handler keys win)', async () => {
@@ -334,10 +392,11 @@ describe('batchJobs', () => {
 });
 
 describe('transports/grafana', () => {
-  it('buffers job logs and flushes a Loki payload via the injected sender', async () => {
+  it('buffers job logs (with jobExecutionId) and flushes a Loki payload; correlation fields stay out of stream labels', async () => {
     const payloads: LokiPayload[] = [];
+    let jobId = '';
     const mod = defineFakeEvent('e', () => true, (event, _ctx) =>
-      run(event, [job((c: JobContext) => void c.log.info('hello from job', { n: 1 }), { name: 'j' })]),
+      run(event, [job((c: JobContext) => { jobId = c.job.id; c.log.info('hello from job', { n: 1 }); }, { name: 'j' })]),
     );
     const kit = createEventKit(fakeSource())
       .use(grafanaTransport, { endpoint: 'http://loki', labels: { app: 'test' }, send: (p: LokiPayload) => void payloads.push(p) })
@@ -345,25 +404,65 @@ describe('transports/grafana', () => {
     await kit.handle('go');
 
     expect(payloads).toHaveLength(1);
-    const values = payloads[0]!.streams[0]!.values;
-    expect(payloads[0]!.streams[0]!.stream).toMatchObject({ app: 'test' });
-    expect(values.some(([, line]) => line.includes('hello from job'))).toBe(true);
+    const stream = payloads[0]!.streams[0]!;
+    expect(stream.stream).toMatchObject({ app: 'test' });
+    // high-cardinality fields must NOT be stream labels (Loki index cardinality)
+    expect(Object.keys(stream.stream)).not.toContain('jobExecutionId');
+    expect(Object.keys(stream.stream)).not.toContain('correlationId');
+    const jobLine = stream.values.map(([, line]) => JSON.parse(line)).find(l => l.message === 'hello from job');
+    expect(jobLine).toBeTruthy();
+    expect(jobLine.jobExecutionId).toBe(jobId); // per-job-execution queryability
+    expect(jobLine.jobName).toBe('j');
   });
 });
 
 describe('transports/sentry', () => {
-  it('forwards a handler crash to the injected sender', async () => {
+  it('forwards a handler crash as a Sentry event with tags intact', async () => {
     const events: SentryEvent[] = [];
     const mod = defineFakeEvent('e', () => true, () => {
       throw new Error('kaboom');
     });
     const kit = createEventKit(fakeSource())
-      .use(sentry, { dsn: 'http://sentry', send: (e: SentryEvent) => void events.push(e) })
+      .use(sentry, { dsn: 'https://pub@o1.ingest.sentry.io/42', send: (e: SentryEvent) => void events.push(e) })
       .registerEvents([mod]);
     await kit.handle('go');
 
     expect(events).toHaveLength(1);
-    expect(events[0]!.exception.value).toBe('kaboom');
+    expect(events[0]!.event_id).toMatch(/^[0-9a-f]{32}$/);
+    expect(events[0]!.exception.values[0]).toMatchObject({ type: 'Error', value: 'kaboom' });
     expect(events[0]!.tags.phase).toBe('handle');
+    expect(events[0]!.level).toBe('error');
+  });
+
+  it('the default sender posts a real Sentry envelope to the DSN-derived endpoint', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return { ok: true, status: 200, json: async () => ({}) } as Response;
+    }) as typeof fetch;
+    try {
+      const mod = defineFakeEvent('e', () => true, () => { throw new Error('boom'); });
+      const kit = createEventKit(fakeSource())
+        .use(sentry, { dsn: 'https://pub@o1.ingest.sentry.io/42', environment: 'test' })
+        .registerEvents([mod]);
+      await kit.handle('go');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe('https://o1.ingest.sentry.io/api/42/envelope/');
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['x-sentry-auth']).toContain('sentry_key=pub');
+    expect(headers['content-type']).toBe('application/x-sentry-envelope');
+    // envelope = 3 newline-delimited JSON lines: header, item header, event
+    const lines = String(calls[0]!.init.body).split('\n');
+    expect(lines).toHaveLength(3);
+    expect(JSON.parse(lines[2]!).exception.values[0].value).toBe('boom');
+  });
+
+  it('throws when neither a dsn nor a custom send is provided', () => {
+    expect(() => sentry({})).toThrow(/requires a `dsn`/);
   });
 });

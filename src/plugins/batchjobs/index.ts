@@ -8,29 +8,51 @@
 //   1. `augmentJobContext` injects the triggering `batch_jobs` row's `input` as
 //      the baseline `ctx.input` (handler input merges on top — ADR-020).
 //   2. lifecycle hooks transition the row (processing → done/error/timeout),
-//      persist output + logs, self-correlating the row id from the envelope.
-// Persistence goes through an injected `store` (generic — wire a GraphQL store);
-// own write failures are best-effort, never fatal to the job.
+//      persisting `output` (with logs + error + result FOLDED IN), self-correlating
+//      the row id from the envelope.
+//
+// SCHEMA ALIGNMENT (parity): the real `batch_jobs` table has `status`, `output`
+// (jsonb), `updatedat`, plus `delay_ms`/`delay_key`/`trigger_type`/`batch_id`/
+// `sequence`/`input`. It has NO started_at/completed_at/attempt/error/logs columns,
+// so this plugin writes ONLY `status` + `output` and folds logs/error/result into
+// `output` (matching the legacy batchJobUtils.updateBatchJobStatus). The store
+// adapter owns the `updatedat: now()` stamp.
+//
+// DURABLE DELAYED RETRY (opt-in): core's `options.retries` are FAST, in-process,
+// transient retries that die with the process. For CRASH-SURVIVING retries,
+// configure `durableRetry`; on a failed job the plugin schedules a NEW delayed
+// `batch_jobs` row via `store.enqueueDelayed` (delay_ms + delay_key dedup), exactly
+// like the legacy `createDelayedBatchJob`. Off by default (no behavior change).
 import type { EventKitPlugin, JobContext, JobExecution, LogEntry } from '../../core/index.js';
-import { replaceCircularReferences, serializeOutput } from '../../core/index.js';
+import { replaceCircularReferences } from '../../core/index.js';
 import { getNewRow, getOldRow } from '../../sources/hasura/payload.js';
 
 /** Lifecycle states of a `batch_jobs` row (§12.1). */
 export type BatchJobStatus = 'pending' | 'ready' | 'delaying' | 'processing' | 'done' | 'error' | 'timeout';
 
+/** The only columns this plugin writes (the store adds `updatedat`). */
 export interface BatchJobUpdate {
   status?: BatchJobStatus;
   output?: unknown;
-  error?: unknown;
-  logs?: unknown;
-  started_at?: string;
-  completed_at?: string;
-  attempt?: number;
+}
+
+/** Spec for a durable delayed retry row (ports legacy createDelayedBatchJob). */
+export interface DelayedBatchJobSpec {
+  triggerType: string;
+  /** Dedup key; the store forms `delay_key = ${triggerType}-${uniqueKey}` (unique while pending/delaying). */
+  uniqueKey: string;
+  delayMs: number;
+  sequence?: number;
+  input?: unknown;
+  user?: string;
 }
 
 /** Generic persistence adapter. HopDrive wires a GraphQL-backed store. */
 export interface BatchJobStore {
+  /** Update the triggering row's status/output (and stamp updatedat). */
   update(id: string | number, fields: BatchJobUpdate): void | Promise<void>;
+  /** Insert a delayed retry row (delay_ms/delay_key dedup). Required only if `durableRetry` is configured. */
+  enqueueDelayed?(spec: DelayedBatchJobSpec): void | Promise<void>;
 }
 
 export interface BatchJobsConfig {
@@ -40,28 +62,55 @@ export interface BatchJobsConfig {
     intervalMs?: number;
     everyNEntries?: number;
   };
+  /**
+   * Opt-in durable, crash-surviving retry. On a failed job, schedule a delayed
+   * `batch_jobs` row (dedup honored) carrying the same input + an incremented
+   * attempt counter, up to `maxAttempts`.
+   */
+  durableRetry?: {
+    delayMs: number;
+    maxAttempts: number;
+    /** Trigger type for the retry row; defaults to the triggering row's `trigger_type`. */
+    triggerType?: string;
+    user?: string;
+  };
 }
 
 type RowId = string | number;
+const RETRY_ATTEMPT_KEY = '__retryAttempt';
 
-const rowFor = (ctx: JobContext): { id: RowId; input: unknown } | undefined => {
+interface TriggeringRow {
+  id: RowId;
+  input: unknown;
+  triggerType?: string;
+  sequence?: number;
+  delayKey?: string;
+}
+
+const rowFor = (ctx: JobContext): TriggeringRow | undefined => {
   const payload = ctx.envelope.payload;
   const row = (getNewRow(payload as never) ?? getOldRow(payload as never)) as
-    | { id?: RowId; input?: unknown }
+    | { id?: RowId; input?: unknown; trigger_type?: string; sequence?: number; delay_key?: string }
     | null;
   if (!row || row.id === undefined || row.id === null) return undefined;
-  return { id: row.id, input: row.input };
+  const out: TriggeringRow = { id: row.id, input: row.input };
+  if (row.trigger_type !== undefined) out.triggerType = row.trigger_type;
+  if (row.sequence !== undefined) out.sequence = row.sequence;
+  if (row.delay_key !== undefined) out.delayKey = row.delay_key;
+  return out;
 };
+
+const serializeError = (err: JobExecution['error']): unknown =>
+  err ? { name: err.name, message: err.message, ...(err.code ? { code: err.code } : {}) } : undefined;
 
 export function batchJobs(config: BatchJobsConfig): EventKitPlugin {
   if (!config?.store || typeof config.store.update !== 'function') {
     throw new Error('batchJobs() requires a `store` with an `update(id, fields)` method.');
   }
-  const { store } = config;
+  const { store, durableRetry } = config;
   const everyNEntries = config.logFlush?.everyNEntries;
   const intervalMs = config.logFlush?.intervalMs;
 
-  // Per-row log buffers + periodic timers, keyed by batch_jobs row id.
   const buffers = new Map<RowId, LogEntry[]>();
   const timers = new Map<RowId, ReturnType<typeof setInterval>>();
 
@@ -73,12 +122,22 @@ export function batchJobs(config: BatchJobsConfig): EventKitPlugin {
     }
   };
 
+  const scrub = (v: unknown): unknown => replaceCircularReferences(v);
+
+  /** Build the `output` jsonb: the job's result + accumulated logs + error, folded into one object. */
+  const composeOutput = (id: RowId, result?: unknown, error?: unknown): unknown => {
+    const logs = buffers.get(id) ?? [];
+    const output: Record<string, unknown> = {};
+    if (result !== undefined) output['result'] = scrub(result);
+    if (logs.length) output['logs'] = scrub(logs);
+    if (error !== undefined) output['error'] = error;
+    return output;
+  };
+
   const flushLogs = async (id: RowId): Promise<void> => {
     const logs = buffers.get(id);
     if (!logs || logs.length === 0) return;
-    const snapshot = replaceCircularReferences(logs);
-    buffers.set(id, []);
-    await safeUpdate(id, { logs: snapshot });
+    await safeUpdate(id, { status: 'processing', output: { logs: scrub(logs) } });
   };
 
   const stopTimer = (id: RowId): void => {
@@ -89,11 +148,34 @@ export function batchJobs(config: BatchJobsConfig): EventKitPlugin {
     }
   };
 
+  const scheduleDurableRetry = async (row: TriggeringRow): Promise<boolean> => {
+    if (!durableRetry || typeof store.enqueueDelayed !== 'function') return false;
+    const input = (row.input && typeof row.input === 'object' ? (row.input as Record<string, unknown>) : {}) as Record<string, unknown>;
+    const attempt = typeof input[RETRY_ATTEMPT_KEY] === 'number' ? (input[RETRY_ATTEMPT_KEY] as number) : 0;
+    if (attempt >= durableRetry.maxAttempts) return false;
+    const triggerType = durableRetry.triggerType ?? row.triggerType;
+    if (!triggerType) return false;
+    const spec: DelayedBatchJobSpec = {
+      triggerType,
+      uniqueKey: row.delayKey ?? String(row.id),
+      delayMs: durableRetry.delayMs,
+      input: { ...input, [RETRY_ATTEMPT_KEY]: attempt + 1 },
+      ...(row.sequence !== undefined ? { sequence: row.sequence } : {}),
+      ...(durableRetry.user ? { user: durableRetry.user } : {}),
+    };
+    try {
+      await store.enqueueDelayed(spec);
+      return true;
+    } catch {
+      // dedup (uniqueness violation) or transport error → fall through to 'error'
+      return false;
+    }
+  };
+
   return {
     name: 'batchjobs',
     requires: ['source:hasura'],
 
-    // Inject the triggering row's `input` as the job's baseline input.
     augmentJobContext(ctx: JobContext) {
       const row = rowFor(ctx);
       if (row && row.input && typeof row.input === 'object') {
@@ -111,11 +193,7 @@ export function batchJobs(config: BatchJobsConfig): EventKitPlugin {
         if (typeof timer.unref === 'function') timer.unref();
         timers.set(row.id, timer);
       }
-      await safeUpdate(row.id, {
-        status: 'processing',
-        started_at: new Date().toISOString(),
-        attempt: ctx.job.attempt,
-      });
+      await safeUpdate(row.id, { status: 'processing' });
     },
 
     onJobLog(ctx: JobContext, entry: LogEntry) {
@@ -131,26 +209,15 @@ export function batchJobs(config: BatchJobsConfig): EventKitPlugin {
       const row = rowFor(ctx);
       if (!row) return;
       stopTimer(row.id);
-      await flushLogs(row.id);
 
-      const retryable = execution.status === 'failed' && execution.attempt < execution.maxAttempts;
       if (execution.status === 'completed') {
-        await safeUpdate(row.id, {
-          status: 'done',
-          output: serializeOutput(execution.output),
-          completed_at: new Date().toISOString(),
-        });
+        await safeUpdate(row.id, { status: 'done', output: composeOutput(row.id, execution.output) });
       } else if (execution.status === 'timed_out' || execution.status === 'cancelled') {
-        await safeUpdate(row.id, { status: 'timeout', completed_at: new Date().toISOString() });
-      } else if (retryable) {
-        // core retries in-process; record the interim state + schedule a delayed retry
-        await safeUpdate(row.id, { status: 'delaying', attempt: execution.attempt, error: execution.error });
+        await safeUpdate(row.id, { status: 'timeout', output: composeOutput(row.id, undefined, serializeError(execution.error)) });
       } else {
-        await safeUpdate(row.id, {
-          status: 'error',
-          error: execution.error,
-          completed_at: new Date().toISOString(),
-        });
+        // failed: try a durable delayed retry; either way this row terminates as 'error'.
+        await scheduleDurableRetry(row);
+        await safeUpdate(row.id, { status: 'error', output: composeOutput(row.id, undefined, serializeError(execution.error)) });
       }
       buffers.delete(row.id);
     },

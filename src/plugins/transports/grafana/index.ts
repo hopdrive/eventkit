@@ -44,10 +44,15 @@ export function grafanaTransport(config: GrafanaTransportConfig): EventKitPlugin
 
   const lines: Array<[string, string]> = [];
 
-  const buffer = (entry: LogEntry): void => {
+  // Correlation/identity fields go in the log LINE (structured data), never as Loki
+  // stream labels — high-cardinality values (correlationId, jobExecutionId) as labels
+  // would explode Loki's index. This matches the legacy scoped-job, which put
+  // jobExecutionId in structured metadata, not a stream label.
+  const buffer = (entry: LogEntry, extra?: { jobExecutionId?: string; trackingToken?: string }): void => {
     if (LEVEL_ORDER[entry.level] < minLevel) return;
     const ts = `${entry.at.getTime()}000000`; // Loki wants nanosecond timestamps
     const line = JSON.stringify({
+      source: 'eventkit',
       level: entry.level,
       message: entry.message,
       ...(entry.scope ? { scope: entry.scope } : {}),
@@ -55,6 +60,8 @@ export function grafanaTransport(config: GrafanaTransportConfig): EventKitPlugin
       ...(entry.correlationId ? { correlationId: entry.correlationId } : {}),
       ...(entry.eventName ? { eventName: entry.eventName } : {}),
       ...(entry.jobName ? { jobName: entry.jobName } : {}),
+      ...(extra?.jobExecutionId ? { jobExecutionId: extra.jobExecutionId } : {}),
+      ...(extra?.trackingToken ? { trackingToken: extra.trackingToken } : {}),
       ...(entry.data ? { data: entry.data } : {}),
     });
     lines.push([ts, line]);
@@ -73,7 +80,10 @@ export function grafanaTransport(config: GrafanaTransportConfig): EventKitPlugin
   return {
     name: 'grafana-transport',
     onLog: (entry: LogEntry) => buffer(entry),
-    onJobLog: (_ctx: JobContext, entry: LogEntry) => buffer(entry),
+    // Per-job-execution queryability: stamp ctx.job.id (the job_executions row id,
+    // also the tracking token's 3rd segment) so dashboards can filter by it.
+    onJobLog: (ctx: JobContext, entry: LogEntry) =>
+      buffer(entry, { jobExecutionId: ctx.job.id, ...(ctx.trackingToken ? { trackingToken: ctx.trackingToken } : {}) }),
     onError: (ctx: ErrorContext) =>
       buffer({
         level: 'error',
