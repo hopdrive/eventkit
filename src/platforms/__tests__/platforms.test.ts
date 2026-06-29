@@ -116,6 +116,34 @@ describe('netlifyV2Platform (Web Request/Response, bucket B)', () => {
   });
 });
 
+describe('handler({ before }) pre-handle rejection is shaped by the platform (not hand-coded)', () => {
+  const reject = () => ({ status: 401, body: 'Unauthorized!' });
+
+  it('classic netlifyPlatform shapes a rejection as { statusCode, body }', async () => {
+    const kit = createEventKit(hasuraEvent).use(netlifyPlatform).registerEvents([apptReady()]);
+    const handler = kit.handler({ before: reject });
+    const res = (await handler(hasuraHttpEvent({ id: 1, status: 'ready' }), {})) as { statusCode: number; body: string };
+    expect(res).toEqual({ statusCode: 401, body: 'Unauthorized!' });
+  });
+
+  it('netlifyV2Platform shapes the SAME rejection as a Web Response (not a malformed {statusCode})', async () => {
+    const kit = createEventKit(hasuraEvent).use(netlifyV2Platform).registerEvents([apptReady()]);
+    const handler = kit.handler({ before: reject });
+    const request = { json: async () => ({}) };
+    const res = (await handler(request, {})) as Response;
+    expect(res).toBeInstanceOf(Response);
+    expect(res.status).toBe(401);
+    expect(await res.text()).toBe('Unauthorized!');
+  });
+
+  it('proceeds to the invocation when before returns void', async () => {
+    const kit = createEventKit(hasuraEvent).use(netlifyPlatform).registerEvents([apptReady()]);
+    const handler = kit.handler({ before: () => undefined });
+    const res = (await handler(hasuraHttpEvent({ id: 1, status: 'ready' }), { getRemainingTimeInMillis: () => 5000 })) as { statusCode: number };
+    expect(res.statusCode).toBe(200);
+  });
+});
+
 describe('detect-and-warn', () => {
   afterEach(() => {
     delete process.env.NETLIFY;

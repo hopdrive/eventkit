@@ -13,6 +13,20 @@ import type { EventKitPlugin } from './plugin.js';
 export type PluginFactory = (config?: unknown) => EventKitPlugin;
 
 /**
+ * A platform-agnostic short-circuit response from a `handler({ before })` pre-check
+ * (auth, method gate, …). The `before` hook returns this (or void to proceed); the
+ * platform adapter shapes it via `formatRejection`, so the pre-check stays
+ * platform-agnostic — a `{ status: 401 }` becomes `{ statusCode, body }` under the
+ * classic adapter and a Web `Response` under `netlifyV2Platform`, with no hand-coded
+ * coupling to a runtime's response shape.
+ */
+export interface HandlerShortCircuit {
+  status: number;
+  body?: string;
+  headers?: Record<string, string>;
+}
+
+/**
  * The outcome of one registered event during an invocation. Appears for an event
  * that DETECTED, or for one whose DETECTOR threw (so the crash is visible in the
  * returned payload — observability parity with the legacy runtime, which recorded
@@ -61,8 +75,14 @@ export interface EventKit {
   /** Explicit validation; also run on first `handle()`. Throws on misconfig. */
   validate(): void;
 
-  /** Zero-boilerplate entry: the platform adapter owns the runtime signature & response. */
-  handler(opts?: { before?: (...args: unknown[]) => unknown }): (...args: unknown[]) => unknown;
+  /**
+   * Zero-boilerplate entry: the platform adapter owns the runtime signature & response.
+   * A `before` pre-check returns a platform-agnostic `HandlerShortCircuit` to reject
+   * (shaped by the adapter's `formatRejection`), or `void` to proceed.
+   */
+  handler(opts?: {
+    before?: (...args: unknown[]) => HandlerShortCircuit | void | Promise<HandlerShortCircuit | void>;
+  }): (...args: unknown[]) => unknown;
   /** Manual entry: forward raw platform args (the adapter extracts payload + budget). */
   handle(rawPayloadOrArgs: unknown, request?: RequestContext | unknown): Promise<InvocationResult>;
   shutdown(): Promise<void>;

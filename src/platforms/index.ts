@@ -11,7 +11,7 @@
 //   A — native countdown (Lambda, Netlify classic, Netlify background)
 //   B — computed deadline from a configured max (Vercel, Netlify v2)
 //   C — none (long-running servers, local/test)
-import type { InvocationResult, PlatformAdapter, RequestContext } from '../core/index.js';
+import type { HandlerShortCircuit, InvocationResult, PlatformAdapter, RequestContext } from '../core/index.js';
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -60,6 +60,9 @@ const jsonBody = (result: InvocationResult): string =>
 // invocation (even with failed business jobs) → 200, preserving the no-retry contract.
 const httpStatus = (result: InvocationResult): number => (result.error ? 500 : 200);
 
+// HTTP-style short-circuit (classic/lambda/background): { statusCode, body }.
+const httpRejection = (r: HandlerShortCircuit) => ({ statusCode: r.status, body: r.body ?? '' });
+
 const env = (): Record<string, string | undefined> =>
   typeof process !== 'undefined' && process.env ? process.env : {};
 
@@ -78,6 +81,7 @@ export function lambdaPlatform(): PlatformAdapter {
       return req;
     },
     formatResponse: (result: InvocationResult) => ({ statusCode: httpStatus(result), body: jsonBody(result) }),
+    formatRejection: httpRejection,
   };
 }
 
@@ -97,6 +101,7 @@ export function netlifyPlatform(): PlatformAdapter {
       return req;
     },
     formatResponse: (result: InvocationResult) => ({ statusCode: httpStatus(result), body: jsonBody(result) }),
+    formatRejection: httpRejection,
   };
 }
 
@@ -116,6 +121,8 @@ export function netlifyBackgroundPlatform(config: { maxExecutionMs?: number } = 
       return req;
     },
     formatResponse: () => ({ statusCode: 202 }),
+    // A rejection (auth/method) is NOT a successful dispatch — return its real status, not 202.
+    formatRejection: httpRejection,
   };
 }
 
@@ -139,5 +146,7 @@ export function netlifyV2Platform(config: { maxExecutionMs?: number } = {}): Pla
         status: httpStatus(result),
         headers: { 'content-type': 'application/json' },
       }),
+    // v2 needs a Web Response — a hand-shaped { statusCode } would be a malformed reply.
+    formatRejection: (r: HandlerShortCircuit) => new Response(r.body ?? '', { status: r.status, headers: r.headers ?? {} }),
   };
 }

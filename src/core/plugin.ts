@@ -25,7 +25,7 @@ import type { EventEnvelope } from './envelope.js';
 import type { JobContext, JobContextContribution, JobProgress, JobCheckpoint, JobExecution } from './job.js';
 import type { LogEntry } from './logger.js';
 import type { SerializedError, ErrorContext } from './errors.js';
-import type { InvocationResult } from './kit.js';
+import type { InvocationResult, HandlerShortCircuit } from './kit.js';
 
 /** Result handed to `onEventDetectionEnd`. */
 export interface DetectionResult {
@@ -96,6 +96,8 @@ export interface EventKitPlugin {
   extractPayload?(...args: unknown[]): unknown | Promise<unknown>;
   buildRequest?(...args: unknown[]): RequestContext;
   formatResponse?(result: InvocationResult, base?: FormatFn): unknown;
+  /** Shape a pre-handle short-circuit (e.g. an auth rejection from `handler({ before })`) into the platform's response. */
+  formatRejection?(rejection: HandlerShortCircuit): unknown;
 }
 
 /**
@@ -127,4 +129,6 @@ export interface PlatformAdapter<TArgs extends unknown[] = unknown[], TResponse 
   extractPayload(...args: TArgs): unknown | Promise<unknown>;
   buildRequest(...args: TArgs): RequestContext;
   formatResponse(result: InvocationResult): TResponse;
+  /** Shape a pre-handle short-circuit (auth/method rejection) into this platform's response. */
+  formatRejection(rejection: HandlerShortCircuit): TResponse;
 }

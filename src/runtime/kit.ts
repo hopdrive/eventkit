@@ -19,6 +19,7 @@ import {
   type EventSourceType,
   type HandlerContext,
   type HandlerResult,
+  type HandlerShortCircuit,
   type InvocationContext,
   type InvocationResult,
   type JobExecution,
@@ -111,11 +112,21 @@ class Kit implements EventKit {
     }
   }
 
-  handler(opts?: { before?: (...args: unknown[]) => unknown }): (...args: unknown[]) => unknown {
+  handler(opts?: {
+    before?: (...args: unknown[]) => HandlerShortCircuit | void | Promise<HandlerShortCircuit | void>;
+  }): (...args: unknown[]) => unknown {
     return async (...args: unknown[]) => {
+      // Resolve the kit (and thus the platform) up front so a `before` rejection can
+      // be shaped by the platform even though it never reaches handle().
+      await this.ensureReady();
       if (opts?.before) {
         const pre = await opts.before(...args);
-        if (pre !== undefined) return pre;
+        if (pre != null) {
+          // Route the pre-handle rejection through the platform so it is shaped
+          // correctly for the runtime (e.g. {statusCode,body} classic vs a Web
+          // Response on v2) — the pre-check stays platform-agnostic.
+          return this.pm.platform?.formatRejection ? this.pm.platform.formatRejection(pre) : pre;
+        }
       }
       const result = await this.handle(args[0], args[1]);
       return this.pm.platform ? this.pm.platform.formatResponse?.(result) : result;
