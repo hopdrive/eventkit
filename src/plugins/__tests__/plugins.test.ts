@@ -286,6 +286,88 @@ describe('observability/graphql-sink', () => {
     expect(Object.values(calls[0]!.objects[0] as Record<string, unknown>).every(v => v !== undefined)).toBe(true);
   });
 
+  const invocationRecord = (extra: Record<string, unknown> = {}) => ({
+    invocation: {
+      id: 'i1', correlation_id: 'c1', source_system: 'hasura', source_function: 'db-x',
+      source_event_payload: {}, status: 'completed', created_at: 'x', updated_at: 'x',
+      events_detected_count: 0, total_jobs_run: 0, total_jobs_succeeded: 0, total_jobs_failed: 0,
+      ...extra,
+    },
+    events: [],
+    jobs: [],
+  });
+
+  it('graceful-degrades a source_job_id FK violation: retries the invocation without the link', async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    let firstCall = true;
+    const sink = graphqlSink({
+      endpoint: 'http://h/v1/graphql',
+      request: async body => {
+        const obj = (body.variables as { objects: Record<string, unknown>[] }).objects[0]!;
+        if (/insert_invocations/.test(body.query)) {
+          sent.push(obj);
+          if (firstCall) {
+            firstCall = false;
+            // Simulate Hasura's FK violation on source_job_id (a GraphQL-level error).
+            return { errors: [{ message: 'Foreign key violation. ... constraint "fk_invocations_source_job_id"' }] } as never;
+          }
+        }
+        return {};
+      },
+    });
+    // The invocation carries an unverifiable prior-job link.
+    await sink(invocationRecord({ source_job_id: 'b194b7c0-49a5-4d02-b752-45008b472916' }) as never);
+
+    expect(sent).toHaveLength(2); // first attempt (with link) + degraded retry (without)
+    expect(sent[0]).toHaveProperty('source_job_id');
+    expect(sent[1]).not.toHaveProperty('source_job_id'); // link dropped, record preserved
+  });
+
+  it('does NOT retry a non-FK GraphQL error (deterministic — surfaces immediately)', async () => {
+    let calls = 0;
+    const sink = graphqlSink({
+      endpoint: 'http://h/v1/graphql',
+      maxRetries: 3,
+      request: async () => {
+        calls += 1;
+        return { errors: [{ message: 'field "bogus" not found' }] } as never;
+      },
+    });
+    await expect(sink(invocationRecord() as never)).rejects.toThrow(/GraphQL errors/);
+    expect(calls).toBe(1); // no wasteful retries on a deterministic GraphQL error
+  });
+
+  it('maps eventkit statuses to the legacy CHECK-constraint set (default) and can be disabled', async () => {
+    const captured: Array<{ table: string; status: string }> = [];
+    const capture = (mapStatuses?: boolean) =>
+      graphqlSink({
+        endpoint: 'http://h/v1/graphql',
+        ...(mapStatuses === false ? { mapStatuses: false } : {}),
+        request: async body => {
+          const table = body.query.match(/insert_(\w+)\(/)?.[1] ?? '';
+          for (const o of (body.variables as { objects: Array<{ status?: string }> }).objects) {
+            if (o.status) captured.push({ table, status: o.status });
+          }
+          return {};
+        },
+      });
+    const batch = {
+      invocation: { ...invocationRecord().invocation, status: 'timeout' },
+      events: [{ id: 'e', invocation_id: 'i1', correlation_id: 'c1', event_name: 'x', detected: true, jobs_count: 1, jobs_succeeded: 0, jobs_failed: 1, status: 'detected', created_at: 'x', updated_at: 'x' }],
+      jobs: [{ id: 'j', invocation_id: 'i1', correlation_id: 'c1', job_name: 'x', status: 'timed_out', created_at: 'x', updated_at: 'x' }],
+    };
+    await capture()(batch as never);
+    expect(captured).toEqual([
+      { table: 'invocations', status: 'failed' }, // timeout → failed
+      { table: 'event_executions', status: 'handling' }, // detected → handling
+      { table: 'job_executions', status: 'failed' }, // timed_out → failed
+    ]);
+
+    captured.length = 0;
+    await capture(false)(batch as never); // mapStatuses:false → passthrough (for a migrated schema)
+    expect(captured.map(c => c.status)).toEqual(['timeout', 'detected', 'timed_out']);
+  });
+
   it('retries on transport failure then succeeds', async () => {
     let attempts = 0;
     const sink = graphqlSink({

@@ -8,7 +8,27 @@
 // package — textbook generic-by-config (ADR-024). Dependency-free: uses `fetch`,
 // so `graphql-request` is not pulled in. On its own subpath so apps that wire a
 // custom sink don't bundle it.
-import type { ObservabilityBatch, InvocationRecord, EventRecord, JobRecord } from './index.js';
+//
+// Resilience (so telemetry survives real-world edge cases):
+//  - Transport failures (network / 5xx) retry with backoff; GraphQL-level errors
+//    (a malformed mutation, a constraint violation) are deterministic and are NOT
+//    retried — they surface immediately.
+//  - `source_job_id` is a FK to job_executions(id). If the prior job isn't recorded
+//    (a non-eventkit writer, observability was down when it ran, …) the invocation
+//    insert would FK-violate and drop the WHOLE record. We catch that specific
+//    violation and retry the invocation WITHOUT `source_job_id` — keeping the
+//    telemetry, dropping only the unverifiable link.
+//  - eventkit emits a richer status vocabulary than the legacy schema's CHECK
+//    constraints allow; `mapStatuses` (default on) maps to the allowed set so
+//    writes stay valid. Set `mapStatuses: false` if you migrate the schema to
+//    accept the full set, and/or override individual mappings via `statusMap`.
+import type { ObservabilityBatch, InvocationRecord } from './index.js';
+
+export interface StatusMap {
+  invocations?: Record<string, string>;
+  events?: Record<string, string>;
+  jobs?: Record<string, string>;
+}
 
 export interface GraphqlSinkConfig {
   /** Hasura GraphQL endpoint. */
@@ -17,12 +37,37 @@ export interface GraphqlSinkConfig {
   headers?: Record<string, string>;
   /** Per-request timeout (ms). Default 30000. */
   timeoutMs?: number;
-  /** Retry attempts on transport failure. Default 3. */
+  /** Retry attempts on TRANSPORT failure (network/5xx). Default 3. GraphQL errors are not retried. */
   maxRetries?: number;
   /** Base backoff (ms), doubled per attempt. Default 500. */
   retryDelayMs?: number;
+  /**
+   * Map eventkit statuses to the legacy schema's CHECK-constraint set (default true).
+   * Set false if your observability schema accepts eventkit's full status vocabulary.
+   */
+  mapStatuses?: boolean;
+  /** Override/extend the default status mappings (merged over the defaults). */
+  statusMap?: StatusMap;
   /** Override the transport (testing / custom client). Default posts via fetch. */
   request?: (body: { query: string; variables: Record<string, unknown> }, target: { endpoint: string; headers: Record<string, string> }) => Promise<unknown>;
+}
+
+// Default mappings from eventkit's status vocabulary to the legacy schema's CHECK sets:
+//   invocations.status   ∈ {running, completed, failed}
+//   event_executions     ∈ {detecting, not_detected, handling, completed, failed, detection_failed, handler_failed}
+//   job_executions.status∈ {running, completed, failed}
+const DEFAULT_STATUS_MAP: Required<StatusMap> = {
+  invocations: { timeout: 'failed' },
+  events: { pending: 'detecting', detected: 'handling' },
+  jobs: { timed_out: 'failed', cancelled: 'failed', skipped: 'failed' },
+};
+
+/** A GraphQL-level error (deterministic — not retried). */
+class GraphqlResponseError extends Error {
+  override readonly name = 'GraphqlResponseError';
+  constructor(public readonly errors: unknown[]) {
+    super(`GraphQL errors: ${JSON.stringify(errors)}`);
+  }
 }
 
 const INVOCATION_COLUMNS = [
@@ -63,12 +108,33 @@ const clean = <T extends object>(record: T): Record<string, unknown> => {
   return out;
 };
 
+const isSourceJobIdFkError = (err: unknown): boolean =>
+  err instanceof GraphqlResponseError && /source_job_id/i.test(JSON.stringify(err.errors));
+
 export function graphqlSink(config: GraphqlSinkConfig): (batch: ObservabilityBatch) => Promise<void> {
   if (!config?.endpoint) throw new Error('graphqlSink() requires an `endpoint`.');
   const headers = { 'content-type': 'application/json', ...(config.headers ?? {}) };
   const timeoutMs = config.timeoutMs ?? 30000;
   const maxRetries = config.maxRetries ?? 3;
   const retryDelayMs = config.retryDelayMs ?? 500;
+  const mapStatuses = config.mapStatuses !== false;
+  const statusMap: Required<StatusMap> = {
+    invocations: { ...DEFAULT_STATUS_MAP.invocations, ...(config.statusMap?.invocations ?? {}) },
+    events: { ...DEFAULT_STATUS_MAP.events, ...(config.statusMap?.events ?? {}) },
+    jobs: { ...DEFAULT_STATUS_MAP.jobs, ...(config.statusMap?.jobs ?? {}) },
+  };
+
+  // Clean a record (drop undefined keys) and map its status to the schema's allowed
+  // set — operating on the COPY, never mutating the caller's batch (which the
+  // observability buffer may re-send under periodic flush).
+  const cleanAndMap = <T extends object>(record: T, table: keyof StatusMap): Record<string, unknown> => {
+    const obj = clean(record);
+    if (mapStatuses && typeof obj['status'] === 'string') {
+      const mapped = statusMap[table][obj['status'] as string];
+      if (mapped) obj['status'] = mapped;
+    }
+    return obj;
+  };
 
   const defaultRequest = async (body: { query: string; variables: Record<string, unknown> }) => {
     const controller = new AbortController();
@@ -80,10 +146,9 @@ export function graphqlSink(config: GraphqlSinkConfig): (batch: ObservabilityBat
         body: JSON.stringify(body),
         signal: controller.signal,
       });
+      // Transport failure → retryable Error.
       if (!res.ok) throw new Error(`GraphQL HTTP ${res.status}`);
-      const json = (await res.json()) as { errors?: unknown[] };
-      if (json.errors && json.errors.length) throw new Error(`GraphQL errors: ${JSON.stringify(json.errors)}`);
-      return json;
+      return await res.json();
     } finally {
       clearTimeout(timer);
     }
@@ -95,20 +160,39 @@ export function graphqlSink(config: GraphqlSinkConfig): (batch: ObservabilityBat
     let lastErr: unknown;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        await doRequest({ query, variables: { objects } }, { endpoint: config.endpoint, headers });
+        const result = await doRequest({ query, variables: { objects } }, { endpoint: config.endpoint, headers });
+        // GraphQL-level failure → deterministic, NOT retried (applies to default + custom transports).
+        const errors = (result as { errors?: unknown[] } | null | undefined)?.errors;
+        if (errors && errors.length) throw new GraphqlResponseError(errors);
         return;
       } catch (err) {
         lastErr = err;
+        if (err instanceof GraphqlResponseError) throw err;
         if (attempt < maxRetries) await sleep(retryDelayMs * 2 ** attempt);
       }
     }
     throw lastErr;
   };
 
+  const sendInvocation = async (record: InvocationRecord): Promise<void> => {
+    const obj = cleanAndMap(record, 'invocations');
+    try {
+      await send(MUT_INVOCATIONS, [obj]);
+    } catch (err) {
+      // Graceful degrade: a bad source_job_id link must not drop the whole record.
+      if (isSourceJobIdFkError(err) && 'source_job_id' in obj) {
+        const { source_job_id: _dropped, ...withoutLink } = obj;
+        await send(MUT_INVOCATIONS, [withoutLink]);
+        return;
+      }
+      throw err;
+    }
+  };
+
   return async (batch: ObservabilityBatch): Promise<void> => {
     // Order matters for FKs: invocation → events → jobs.
-    await send(MUT_INVOCATIONS, [clean<InvocationRecord>(batch.invocation)]);
-    await send(MUT_EVENTS, batch.events.map(e => clean<EventRecord>(e)));
-    await send(MUT_JOBS, batch.jobs.map(j => clean<JobRecord>(j)));
+    await sendInvocation(batch.invocation);
+    await send(MUT_EVENTS, batch.events.map(e => cleanAndMap(e, 'events')));
+    await send(MUT_JOBS, batch.jobs.map(j => cleanAndMap(j, 'jobs')));
   };
 }
