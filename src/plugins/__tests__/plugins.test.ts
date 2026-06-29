@@ -5,6 +5,7 @@ import { hasuraEvent } from '../../sources/hasura/index.js';
 import { loopPrevention, createTokenCodec } from '../loop-prevention/index.js';
 import { observability, type ObservabilityBatch } from '../observability/index.js';
 import { graphqlSink } from '../observability/graphql-sink.js';
+import { safeSerialize } from '../observability/serialize.js';
 import { batchJobs, type BatchJobUpdate } from '../batchjobs/index.js';
 import { grafanaTransport, type LokiPayload } from '../transports/grafana/index.js';
 import { sentry, type SentryEvent } from '../transports/sentry/index.js';
@@ -162,6 +163,74 @@ describe('observability', () => {
     const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b) }).registerEvents([mod]);
     await kit.handle('x');
     expect(batches[0]!.events).toHaveLength(0);
+  });
+});
+
+describe('observability: parent-child linkage (the capability behind the dropped jobExecutionId mutation)', () => {
+  const codec = createTokenCodec({ separator: '|', validateCorrelationId: true });
+  const lpCfg = { field: 'updated_by', serviceId: 'svc', codec: { separator: '|', validateCorrelationId: true } };
+
+  it('the persisted job row id, the outbound token job segment, and the next invocation source_job_id all agree', async () => {
+    // ── Invocation A: run a job, capture its observability row id + outbound token ──
+    const aBatches: ObservabilityBatch[] = [];
+    let outboundToken = '';
+    const detA = hasuraEvent.detector(c => c.operation === 'INSERT');
+    const handA = hasuraEvent.handler((event, _ctx) =>
+      run(event, [job((c: JobContext) => void (outboundToken = c.trackingToken), { name: 'writer' })]),
+    );
+    const kitA = createEventKit(hasuraEvent)
+      .use(loopPrevention, lpCfg)
+      .use(observability, { sink: (b: ObservabilityBatch) => void aBatches.push(b) })
+      .registerEvents([{ name: asEventName('e'), detector: detA, handler: handA } as EventModule]);
+    await kitA.handle(hasuraInsert({ id: 'parent-row' })); // no inbound token → mints fresh
+
+    const jobRowId = aBatches[0]!.jobs[0]!.id;
+    // (a) persisted observability job row id === (b) the token's 3rd segment
+    expect(codec.getJobExecutionId(outboundToken)).toBe(jobRowId);
+
+    // ── Invocation B: a write stamped with A's outbound token triggers us ──
+    const bBatches: ObservabilityBatch[] = [];
+    const detB = hasuraEvent.detector(c => c.operation === 'INSERT');
+    const handB = hasuraEvent.handler((event, _ctx) => run(event, []));
+    const kitB = createEventKit(hasuraEvent)
+      .use(loopPrevention, lpCfg)
+      .use(observability, { sink: (b: ObservabilityBatch) => void bBatches.push(b) })
+      .registerEvents([{ name: asEventName('e'), detector: detB, handler: handB } as EventModule]);
+    await kitB.handle(hasuraInsert({ id: 'child-row', updated_by: outboundToken }));
+
+    // (c) the child invocation's source_job_id links back to A's job row id
+    expect(bBatches[0]!.invocation.source_job_id).toBe(jobRowId);
+  });
+});
+
+describe('observability: safeSerialize strips non-serializable clients (sanitizeJobOptions parity)', () => {
+  it('excludes SDK/Apollo/GraphQL clients, collapses circular refs, drops functions', () => {
+    const sdkLike = { apollo: { cache: {} }, gql: { query() {}, mutation() {} } };
+    const circular: Record<string, unknown> = { a: 1 };
+    circular['self'] = circular;
+    const out = safeSerialize({ sdk: sdkLike, circular, fn: () => 1, ok: 'value' }) as Record<string, unknown>;
+    expect(out['sdk']).toBe('[sdk excluded]');
+    expect((out['circular'] as Record<string, unknown>)['self']).toBe('[Circular]');
+    expect(out['fn']).toBe('[Function]');
+    expect(out['ok']).toBe('value');
+  });
+});
+
+describe('observability: periodic mid-invocation flush feeds the live view', () => {
+  it('upserts in-progress (running) snapshots before the terminal flush', async () => {
+    const batches: ObservabilityBatch[] = [];
+    const mod = defineFakeEvent('e', () => true, (event, _ctx) =>
+      run(event, [job(() => new Promise(resolve => setTimeout(resolve, 60)), { name: 'slow' })]),
+    );
+    const kit = createEventKit(fakeSource())
+      .use(observability, { sink: (b: ObservabilityBatch) => void batches.push(structuredClone(b)), flushIntervalMs: 10 })
+      .registerEvents([mod]);
+    await kit.handle('go');
+
+    expect(batches.length).toBeGreaterThan(1); // periodic + final
+    expect(batches.some(b => b.invocation.status === 'running')).toBe(true);
+    expect(batches.some(b => b.jobs.some(j => j.status === 'running'))).toBe(true);
+    expect(batches[batches.length - 1]!.invocation.status).toBe('completed'); // terminal
   });
 });
 
