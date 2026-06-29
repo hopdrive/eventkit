@@ -157,6 +157,22 @@ describe('observability', () => {
     expect(batches[0]!.invocation.error_message).toBe('handler boom');
   });
 
+  it('clears a prior attempt error when a retried job finally succeeds', async () => {
+    const batches: ObservabilityBatch[] = [];
+    let attempts = 0;
+    const mod = defineFakeEvent('e', () => true, (event, _ctx) =>
+      run(event, [
+        job(() => { attempts += 1; if (attempts < 3) throw new Error(`fail #${attempts}`); return 'ok'; }, { name: 'flaky', retries: 2 }),
+      ]),
+    );
+    const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b) }).registerEvents([mod]);
+    await kit.handle('x');
+    const jobRec = batches[0]!.jobs[0]!;
+    expect(jobRec.status).toBe('completed');
+    expect(jobRec.error_message).toBeUndefined(); // no stale error from attempts #1/#2
+    expect(jobRec.result).toBe('ok');
+  });
+
   it('records undetected events by default (Console parity) and can be turned off', async () => {
     const mod = defineFakeEvent('never', () => false, (event, _ctx) => run(event, []));
 

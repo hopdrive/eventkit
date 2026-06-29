@@ -304,6 +304,10 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
         rec.error_message = execution.error.message;
         const s = stack(execution.error.stack);
         if (s !== undefined) rec.error_stack = s;
+      } else {
+        // A retried attempt that finally succeeded must not keep a prior attempt's error.
+        delete rec.error_message;
+        delete rec.error_stack;
       }
       rec.updated_at = new Date().toISOString();
     },
