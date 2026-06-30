@@ -9,7 +9,7 @@
 // This is an EXAMPLE/fixture — type-checked (tsconfig.typetest.json) and exercised
 // by the Hasura adapter tests, but excluded from the published build.
 // =============================================================================
-import { job, defineEvent, type JobContext } from '../index.js';
+import { defineEvent, type JobContext } from '../index.js';
 import { hasuraEvent } from '../sources/hasura/index.js';
 
 export interface AppointmentRow {
@@ -83,5 +83,7 @@ export const appointmentReady = defineEvent({
   name: 'appointment.ready',
   detector,
   prepare,
-  jobs: [job(sendOfferSMS, { name: 'sendOfferSMS' }), job(sendAppointmentOfferedEmailToOrg, { name: 'sendAppointmentOfferedEmailToOrg' })],
+  // Bare job functions — auto-wrapped to job(fn); the job name comes from fn.name.
+  // Wrap in job(fn, {…}) only when a job needs options (retries, timeoutMs, input, …).
+  jobs: [sendOfferSMS, sendAppointmentOfferedEmailToOrg],
 });

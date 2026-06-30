@@ -49,14 +49,39 @@ describe('ADR-025: jobs is a static array — non-job entries throw at REGISTER 
     expect(() => createEventKit(fakeSource()).registerEvents([mod])).toThrow(/is not a job/);
   });
 
-  it('throws on a bare function (must wrap in job())', () => {
-    const mod = defineFakeEvent('e', always, [(() => {}) as never]);
-    expect(() => createEventKit(fakeSource()).registerEvents([mod])).toThrow(/is not a job/);
-  });
-
   it('throws when jobs is not an array', () => {
     const mod = { name: 'e', detector: always, jobs: 'nope' } as never;
     expect(() => createEventKit(fakeSource()).registerEvents([mod])).toThrow(/jobs must be a static array/);
+  });
+});
+
+describe('ADR-025 (amended): a bare job function is auto-wrapped with job(fn)', () => {
+  it('runs a bare function and derives its name from fn.name', async () => {
+    let ran = false;
+    function notifyDriver() { ran = true; return { ok: true }; }
+    // bare function — no job() wrapper, no options
+    const mod = defineFakeEvent('move.active.change', always, [notifyDriver as never]);
+    const result = await createEventKit(fakeSource()).registerEvents([mod]).handle('go');
+
+    expect(ran).toBe(true);
+    expect(result.events[0]!.jobs[0]!.jobName).toBe('notifyDriver'); // name from fn.name
+    expect(result.events[0]!.jobs[0]!.status).toBe('completed');
+    expect(result.ok).toBe(true);
+  });
+
+  it('mixes bare functions and job(fn, opts) in one array', async () => {
+    const ran: string[] = [];
+    function runAR() { ran.push('runAR'); }
+    const mod = defineFakeEvent('e', always, [runAR as never, job(() => void ran.push('retryable'), { name: 'withOpts', retries: 1 })]);
+    const result = await createEventKit(fakeSource()).registerEvents([mod]).handle('go');
+
+    expect(ran.sort()).toEqual(['runAR', 'retryable'].sort());
+    expect(result.events[0]!.jobs.map(j => j.jobName).sort()).toEqual(['runAR', 'withOpts']);
+  });
+
+  it('still rejects a non-function, non-job entry at register time', () => {
+    const mod = { name: 'e', detector: always, jobs: [{ fn: () => {}, name: 'x' }] } as never; // look-alike, no brand
+    expect(() => createEventKit(fakeSource()).registerEvents([mod])).toThrow(/is not a job\(fn\) or a job function/);
   });
 });
 

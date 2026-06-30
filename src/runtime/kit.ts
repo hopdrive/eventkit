@@ -7,6 +7,7 @@
 import {
   asEventName,
   asInvocationId,
+  job,
   serializeError,
   type DetectedEvent,
   type DetectionResult,
@@ -87,25 +88,29 @@ class Kit implements EventKit {
     if (module.jobs === undefined && module.resolve === undefined) {
       throw new Error(`Event '${module.name}': must declare 'jobs' and/or 'resolve' (a module with neither does nothing).`);
     }
-    // `jobs`, if present, is a static array of branded job(...) entries. Validate at
-    // REGISTER time (earlier than the old run-time check) — a non-job entry (a bare
-    // function, a look-alike object, a `false` from `cond && job()`) is a config error.
+    // `jobs`, if present, is a static array. Each entry is a branded job(...) OR a bare
+    // job function (auto-wrapped with `job(fn)` — ADR-025 amendment). Normalize at REGISTER
+    // time so the runtime always sees JobDefinitions. A non-job, non-function entry (a
+    // look-alike object, a `false` from `cond && job()`/`cond && fn`, `null`) is a config
+    // error — conditional inclusion stays impossible.
+    let normalizedJobs: typeof this.modules[number]['jobs'];
     if (module.jobs !== undefined) {
       if (!Array.isArray(module.jobs)) {
-        throw new Error(`Event '${module.name}': jobs must be a static array of job(...) entries (ADR-025).`);
+        throw new Error(`Event '${module.name}': jobs must be a static array of job(fn) entries or bare job functions (ADR-025).`);
       }
-      module.jobs.forEach((entry, i) => {
-        if (!isJobDefinition(entry)) {
-          throw new Error(
-            `Event '${module.name}': jobs[${i}] is not a job(...) (ADR-025). Every entry must be a job(fn, {…}); ` +
-              `put conditions in the detector (a named event) or inside a job, never at the array level.`,
-          );
-        }
+      normalizedJobs = module.jobs.map((entry, i) => {
+        if (isJobDefinition(entry)) return entry as ReturnType<typeof job>;
+        if (typeof entry === 'function') return job(entry as Parameters<typeof job>[0]); // bare fn → job(fn), no options
+        throw new Error(
+          `Event '${module.name}': jobs[${i}] is not a job(fn) or a job function (ADR-025). ` +
+            `Put conditions in the detector (a named event) or inside a job, never at the array level.`,
+        );
       });
     }
     if (this.moduleNames.has(module.name)) throw new Error(`Duplicate event name registered: '${module.name}'.`);
     this.moduleNames.add(module.name);
-    this.modules.push(module);
+    // Store a module with the normalized (fully-wrapped) jobs so dispatch/runJobs see only JobDefinitions.
+    this.modules.push(normalizedJobs ? { ...module, jobs: normalizedJobs } : module);
     return this;
   }
 

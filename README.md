@@ -154,14 +154,16 @@ kit** (the positional arg to `createEventKit`).
   Authoring helpers `hasuraEvent.detector<Row>(fn)` / `hasuraEvent.prepare<Row>(fn)`.
 - **`hasuraCron`** — Hasura scheduled triggers. Context: `scheduleName`, `scheduledAt`,
   `payload`.
-- **`webhook`** *(planned)* — vendor webhooks (`{ vendor, verify, eventTypeHeader }`);
-  context exposes `signatureVerified`, `vendor`, `eventType`, `body`.
-- **`hasuraAction`** *(planned)* — a **request/response** source for Hasura Actions
+- **`webhook`** — vendor webhooks (`{ vendor, verify, eventTypeHeader }`); context exposes
+  `signatureVerified`, `vendor`, `eventType`, `body`. A status-contract vendor (Stripe)
+  uses `resolve` + a thrown `ClientError(status, …)`.
+- **`hasuraAction`** — a **request/response** source for Hasura Actions
   (`sourceType:'action'`, gated by Hasura's permission model). Context: `actionName`,
   `input`, `sessionVariables`, `requestQuery?`. A module's `resolve` returns the output;
-  `hasuraActionPlatform` maps it → 2xx, and a thrown `ActionError(message, code?)` → 4xx
-  `{ message, extensions: { code? } }`. The bespoke `app-*` endpoints are replaced by
-  actions over time, not migrated.
+  the **generic** platform adapter you register (`netlifyV2Platform`/`netlifyPlatform`/
+  `lambdaPlatform`) maps it → 2xx, and a thrown `ActionError(message, code?)` → 4xx
+  `{ message, extensions: { code? } }` (no dedicated action platform). The bespoke `app-*`
+  endpoints are *converted* to actions over time (see the migration playbook), not migrated.
 
 ## Plugins
 

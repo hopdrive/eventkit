@@ -18,7 +18,7 @@
 
 import { asEventName, type EventName } from './brands.js';
 import type { DetectorContext, HandlerContext } from './context.js';
-import type { JobDefinition, JobInputContext, RunOptions } from './job.js';
+import type { JobDefinition, JobFunction, JobInputContext, RunOptions } from './job.js';
 
 export type DetectorFunction<
   TPayload = unknown,
@@ -87,10 +87,16 @@ export interface EventModule<
   prepare?: PrepareFunction<TPayload, TMeta>;
   /**
    * Static array of fire-and-forget jobs the runtime runs when the event is detected.
-   * Optional: a request/response module (with `resolve`) may declare none. A module
-   * MUST declare `jobs` and/or `resolve` (a do-nothing module is a register error).
+   * Each entry is a `job(fn, opts)` OR a bare job function — a bare function is sugar for
+   * `job(fn)` (no options), auto-wrapped at register time with its name from `fn.name`.
+   * Wrap in `job()` only when you need `{ name, retries, input, timeoutMs, … }`. This does
+   * NOT reopen the conditional-inclusion hole (ADR-025): `cond && fn` is `false | JobFunction`
+   * and `cond && job(fn)` is `false | JobDefinition` — `false` is assignable to neither, so
+   * both still fail to compile; `null`/non-job objects are rejected too. Optional: a
+   * request/response module (with `resolve`) may declare none, but a module MUST declare
+   * `jobs` and/or `resolve` (a do-nothing module is a register error).
    */
-  jobs?: JobDefinition<any>[];
+  jobs?: (JobDefinition<any> | JobFunction<any>)[];
   /**
    * Request/response seam (ADR-026): computes the invocation's response value. Optional
    * and source-agnostic; the source's platform adapter maps it to the wire. Jobs (if any)

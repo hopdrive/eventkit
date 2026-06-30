@@ -1324,8 +1324,9 @@ kit.registerEvents(events);
     <div class="refgroup">
       <h3>Import map</h3>
       <p class="ghint">Every public symbol and the subpath it comes from.</p>
-<pre><span class="k">import</span> { createEventKit, defineEvent, job } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
-<span class="k">import</span> { hasuraEvent, hasuraCron } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources/hasura'</span>;
+<pre><span class="k">import</span> { createEventKit, defineEvent, job, ClientError, ActionError } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
+<span class="k">import</span> { hasuraEvent, hasuraCron, hasuraAction } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources/hasura'</span>;
+<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources/webhook'</span>;
 <span class="k">import</span> { observability } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/observability'</span>;
 <span class="k">import</span> { graphqlSink } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/observability/graphql-sink'</span>;
 <span class="k">import</span> { batchJobs } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins/batchjobs'</span>;
@@ -1416,12 +1417,12 @@ kit.registerEvents(modules[] | record): EventKit</div>
         <p>Hasura scheduled (cron) triggers (<code>sourceType:'cron'</code>). Context: <code>scheduleName</code>, <code>scheduledAt</code>, <code>payload</code>.</p>
       </div>
       <div class="refentry">
-        <div class="rsig">webhook(config) <span class="refbadge planned">planned</span></div>
+        <div class="rsig">webhook(config) <span class="refbadge shipped">shipped</span></div>
         <p>Vendor webhooks (<code>{ vendor, verify, eventTypeHeader }</code>); context exposes <code>signatureVerified</code>, <code>vendor</code>, <code>eventType</code>, <code>body</code>. Covers <code>event-handlers</code>&rsquo; <code>webhook-*</code> (Stripe, Twilio, Dealerware) and the reverse-integration repos. Mostly fire-and-forget; a status-contract vendor (Stripe) uses <code>resolve</code> + a thrown <code>ClientError(status,…)</code> that the platform maps to the HTTP status.</p>
       </div>
       <div class="refentry">
-        <div class="rsig">hasuraAction <span class="refbadge planned">planned</span></div>
-        <p>A <b>request/response</b> source (<code>sourceType:'action'</code>) for Hasura Actions — custom GraphQL business logic gated by Hasura&rsquo;s permission model. Hasura POSTs <code>{ action:{name}, input, session_variables, request_query }</code>; the module&rsquo;s <code>resolve</code> returns the output type. Context: <code>actionName</code>, <code>input</code>, <code>sessionVariables</code> (<code>role</code>/<code>userId</code>/<code>email</code>), <code>requestQuery?</code>. Paired with <code>hasuraActionPlatform</code> (below), which maps <code>resolve</code>&rsquo;s return → <b>2xx</b> + the output JSON and a thrown <code>ActionError(message, code?)</code> → <b>4xx</b> + <code>{ message, extensions:{ code? } }</code>. Bespoke <code>app-*</code> endpoints are replaced by actions over time (security via RBAC; downstream effects traced by correlation id) — not migrated.</p>
+        <div class="rsig">hasuraAction <span class="refbadge shipped">shipped</span></div>
+        <p>A <b>request/response</b> source (<code>sourceType:'action'</code>) for Hasura Actions — custom GraphQL business logic gated by Hasura&rsquo;s permission model. Hasura POSTs <code>{ action:{name}, input, session_variables, request_query }</code>; the module&rsquo;s <code>resolve</code> returns the output type. Context: <code>actionName</code>, <code>input</code>, <code>sessionVariables</code> (<code>role</code>/<code>userId</code>/<code>email</code>), <code>requestQuery?</code>. The response is mapped by the <b>generic</b> platform adapter you register (<code>netlifyV2Platform</code>/<code>netlifyPlatform</code>/<code>lambdaPlatform</code>) — there is no dedicated action platform: <code>resolve</code>&rsquo;s return → <b>2xx</b> + the output JSON, a thrown <code>ActionError(message, code?)</code> → <b>4xx</b> + <code>{ message, extensions:{ code? } }</code>. Bespoke <code>app-*</code> endpoints are <i>converted</i> to actions over time (security via RBAC; downstream effects traced by correlation id) — see the migration playbook, not migrated as HTTP.</p>
       </div>
     </div>
 
@@ -1464,8 +1465,8 @@ kit.registerEvents(modules[] | record): EventKit</div>
         <li><b><code>netlifyV2Platform({ maxExecutionMs? })</code></b> <span class="refbadge shipped">shipped</span> — Netlify v2 / Web <code>Request</code>→<code>Response</code> (the reverse-integration repos).</li>
         <li><b><code>netlifyBackgroundPlatform({ maxExecutionMs? })</code></b> <span class="refbadge shipped">shipped</span> — 15-min background / 202 (the live batch-jobs watch view).</li>
         <li><b><code>lambdaPlatform()</code></b> <span class="refbadge shipped">shipped</span> — AWS Lambda (<code>getRemainingTimeInMillis</code> budget).</li>
-        <li><b><code>hasuraActionPlatform()</code></b> <span class="refbadge planned">planned</span> — Hasura Actions: maps a module&rsquo;s <code>resolve</code> output → <b>2xx</b> + the output JSON, and a thrown <code>ActionError(message, code?)</code> → <b>4xx</b> + <code>{ message, extensions:{ code? } }</code> (Hasura&rsquo;s contract).</li>
       </ul>
+      <p class="ghint" style="margin-top:12px"><b>No dedicated action platform.</b> The request/response contract <i>composes</i> onto these generic adapters: any of them maps a module&rsquo;s <code>resolve</code> output → <b>2xx</b> + the output JSON, and a thrown <code>ActionError</code>/<code>ClientError(status, message)</code> → that status + <code>{ message, extensions:{ code? } }</code> — serving Hasura Actions and status-contract webhooks (Stripe) identically. So a Hasura Action is just <code>createEventKit(hasuraAction).use(netlifyV2Platform)</code>.</p>
     </div>
 
     <div class="refgroup">

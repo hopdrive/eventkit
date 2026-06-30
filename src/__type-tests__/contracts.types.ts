@@ -24,27 +24,33 @@ declare const detector: () => boolean;
 // ── ADR-025: a static array of branded jobs is accepted ─────────────────────
 void defineEvent({ name: 'ok.event', detector, jobs: [job(work), job(work, { timeoutMs: 100 })] });
 
+// ── ADR-025 (amended): a BARE job function is accepted (auto-wrapped → job(fn)) ──
+void defineEvent({ name: 'ok.bare', detector, jobs: [work] });
+// ── …and bare + wrapped may be mixed (wrap only when you need options) ───────
+void defineEvent({ name: 'ok.mixed', detector, jobs: [work, job(work, { retries: 2 })] });
+
 // ── ADR-025/018 guard: `cond && job(...)` is `false | JobDefinition`, NOT a job ──
 declare const cond: boolean;
-// @ts-expect-error a conditional entry (false | JobDefinition) is not assignable to JobDefinition[]
+// @ts-expect-error a conditional entry (false | JobDefinition) is not assignable to the jobs element type
 void defineEvent({ name: 'bad.cond', detector, jobs: [cond && job(work)] });
 
-// ── ADR-025/018 guard: a bare function is not a JobDefinition (must wrap in job()) ──
-// @ts-expect-error a job function is not a JobDefinition
-void defineEvent({ name: 'bad.bare', detector, jobs: [work] });
+// ── ADR-025 guard: a conditional BARE fn is `false | JobFunction` — still rejected ──
+// (auto-wrapping bare fns does NOT reopen conditional inclusion: `false` is neither
+//  a JobDefinition nor a function, so it is not assignable to the element type.)
+// @ts-expect-error a conditional bare fn (false | JobFunction) is not assignable
+void defineEvent({ name: 'bad.cond.fn', detector, jobs: [cond && work] });
 
 // ── ADR-025/018 guard: a look-alike object without the brand is rejected ────
-// @ts-expect-error missing the `__eventkitJob` brand
+// @ts-expect-error not branded and not a function
 void defineEvent({ name: 'bad.lookalike', detector, jobs: [{ fn: work, name: 'x', options: {} }] });
 
 // ── ADR-025/018 guard: a falsy/empty entry is rejected ──────────────────────
-// @ts-expect-error null is not a JobDefinition
+// @ts-expect-error null is neither a JobDefinition nor a function
 void defineEvent({ name: 'bad.null', detector, jobs: [null] });
 
 // Note: there is no `handler` field to put an `if`/ternary/`.push` in — conditional
-// job inclusion is impossible by construction, not merely caught by the brand above.
-// A condition lives in the `detector` (a distinct business event) or inside a job
-// body (input-driven, runs every time and may no-op). See ADR-025 §19.1.
+// job inclusion is impossible by construction. A condition lives in the `detector` (a
+// distinct business event) or inside a job body (input-driven). See ADR-025 §19.1.
 
 // ── ADR-026: a request/response module compiles with `resolve` and NO `jobs` ──
 void defineEvent({ name: 'ok.resolve', detector, resolve: () => ({ accessToken: 't', userId: 1 }) });

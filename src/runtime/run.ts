@@ -6,10 +6,12 @@
 // Promise.allSettled fan-out so a flaky job never blocks billing. The branded
 // `JobDefinition` + the throw below remain the backstop against a non-job entry.
 import {
+  job,
   serializeError,
   type DetectedEvent,
   type JobContext,
   type JobDefinition,
+  type JobFunction,
   type JobExecution,
   type JobExecutionStatus,
   type JobInputContext,
@@ -74,19 +76,21 @@ const isJobDefinition = (x: unknown): x is JobDefinition =>
 export async function runJobs<TResult = unknown>(
   rt: InvocationRuntime,
   event: DetectedEvent,
-  jobs: JobDefinition<any>[],
+  rawJobs: (JobDefinition<any> | JobFunction<any>)[],
   options: RunOptions | undefined,
   jobInputCtx: JobInputContext,
 ): Promise<JobExecution<TResult>[]> {
-  // Backstop (the literal `jobs` array already makes conditional inclusion
-  // inexpressible): throw loudly on any non-job entry that slipped past the brand.
-  jobs.forEach((entry, i) => {
-    if (!isJobDefinition(entry)) {
-      throw new Error(
-        `Event '${event.name}' has a non-job entry in its jobs array at index ${i} (got ${describe(entry)}). ` +
-          `jobs must be a static array of job(...) entries (ADR-025); put conditions in the detector or inside a job.`,
-      );
-    }
+  // Normalize: a branded job(...) passes through; a bare job function is auto-wrapped
+  // (ADR-025 amendment). registerEvent already normalized these, so this is the backstop
+  // — it also throws on any truly non-job entry (a look-alike object, `false`, `null`),
+  // keeping conditional inclusion impossible.
+  const jobs: JobDefinition<any>[] = rawJobs.map((entry, i) => {
+    if (isJobDefinition(entry)) return entry as JobDefinition<any>;
+    if (typeof entry === 'function') return job(entry as JobFunction<any>);
+    throw new Error(
+      `Event '${event.name}' has a non-job entry in its jobs array at index ${i} (got ${describe(entry)}). ` +
+        `Each entry must be a job(fn) or a bare job function (ADR-025); put conditions in the detector or inside a job.`,
+    );
   });
 
   const mode = options?.mode ?? 'parallel';
