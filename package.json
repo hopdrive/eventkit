@@ -6,6 +6,7 @@
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
   "types": "dist/types/index.d.ts",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/types/index.d.ts",
@@ -16,6 +17,16 @@
       "types": "./dist/types/core/index.d.ts",
       "import": "./dist/esm/core/index.js",
       "require": "./dist/cjs/core/index.js"
+    },
+    "./sources": {
+      "types": "./dist/types/plugins/sources.d.ts",
+      "import": "./dist/esm/plugins/sources.js",
+      "require": "./dist/cjs/plugins/sources.js"
+    },
+    "./plugins": {
+      "types": "./dist/types/plugins/index.d.ts",
+      "import": "./dist/esm/plugins/index.js",
+      "require": "./dist/cjs/plugins/index.js"
     },
     "./sources/hasura": {
       "types": "./dist/types/plugins/source-hasura.d.ts",

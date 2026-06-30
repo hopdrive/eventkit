@@ -19,6 +19,8 @@ const ROOT = path.join(__dirname, '..');
 const SUBPATHS = [
   '@hopdrive/eventkit',
   '@hopdrive/eventkit/core',
+  '@hopdrive/eventkit/sources',
+  '@hopdrive/eventkit/plugins',
   '@hopdrive/eventkit/sources/hasura',
   '@hopdrive/eventkit/sources/webhook',
   '@hopdrive/eventkit/plugins/batchjobs',
