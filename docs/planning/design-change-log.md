@@ -2,7 +2,14 @@
 
 **Date:** 2026-06-28
 **Author:** Rob Newton (decisions) · Claude (drafting)
-**Trigger:** Review of the rewrite showcase surfaced six project-level concerns. These are changes to the **EventKit design and plan**, not just the showcase. Recorded here with rationale; applied to `EventKit Architecture RFC v0.2 (canonical-draft).md` (bumped to v0.3 draft) and the open-decisions register; reflected in the showcase artifact.
+**Trigger:** Review of the rewrite showcase surfaced six project-level concerns. These are changes to the **EventKit design and plan**, not just the showcase. Recorded here with rationale; applied to `architecture.md` (bumped to v0.3 draft) and the open-decisions register; reflected in the showcase artifact.
+
+> **Historical change log — covers CHG-1 … CHG-13 only.** This is a *why* record written during design; some
+> entries below describe an **intermediate** shape that a later CHG then changed — those spots are marked inline
+> with `[Superseded by …]`. The series continues past this file: **CHG-14** (generic plugins built-in / ADR-024),
+> **CHG-15** (fully declarative modules / ADR-025), **CHG-16** (full source coverage incl. `webhook`/`hasuraAction`),
+> and **CHG-17** (app-`*` → Hasura Action playbook) are recorded in the canonical RFC's revision history. For
+> *current* behavior, read the canonical RFC + `design-rationale.md`, not this log.
 
 ---
 
@@ -18,7 +25,7 @@
 
 Concretely for **BatchJobs**:
 - Drop `DurableJobOptions.record`, `batchJobs.record(...)`, `DurableJobContext`, and `ctx.batch.record`.
-- `durable` becomes a **declarative boolean flag** on `JobOptions` (`durable?: boolean`), peer to `retries`/`timeoutMs`.
+- `durable` becomes a **declarative boolean flag** on `JobOptions` (`durable?: boolean`), peer to `retries`/`timeoutMs`. **[Superseded by CHG-7 / ADR-015 revised: the `durable` flag was removed entirely — durability is emergent from registering the BatchJobs plugin. There is no `durable` field in shipped core.]**
 - The durable job is an **ordinary, batch-unaware job**. It reads its work from `ctx.input` (the handler maps the triggering `batch_jobs` row's `input` column into the job's `input`, which is normal handler→job business data).
 - The **BatchJobs plugin** owns all persistence. On `onJobStart`/`onJobEnd`/`onError`/timeout it transitions the triggering `batch_jobs` row (`processing → done / error / timeout`), persists output/logs, and schedules retries — **self-correlating** the row from the invocation's envelope. The job never knows a batch exists.
 
@@ -31,6 +38,8 @@ Concretely for **BatchJobs**:
 ---
 
 ## CHG-3 — Handlers are declarative job lists; conditional job inclusion is forbidden
+> **[Superseded in framing by CHG-15 / ADR-025: there is no handler that calls `run()` and no consumer `run()` export. A module is `defineEvent({ name, detector, prepare?, jobs, resolve? })` with a static `jobs` array the runtime runs. The no-conditional-jobs *rule* below still holds — it is now enforced by the branded `JobDefinition` element type, not by a `run(...)` signature.]**
+
 **What:** A handler MUST NOT conditionally add a job to the `run()` array (`cond && job(...)`, ternaries, `if (x) jobs.push(...)`). The `jobs` argument is a strict `JobDefinition[]`. Conditional logic has exactly two sanctioned homes:
 1. **Detection** — if whether work runs depends on a condition, that condition defines a distinct business event. Encode it in a detector and give the event its own name.
 2. **Inside the job** — input-driven branching that applies to *every* invocation of the job (e.g. "skip if no phone number"), based on `ctx.input`.
@@ -54,6 +63,8 @@ Enforcement:
 ---
 
 ## CHG-5 — Developer-friendly registration API
+> **[Partially superseded by CHG-10/CHG-11: the source is no longer the `createEventKit({ source: hasura.source() })` object form shown below — it is the first positional arg, `createEventKit(hasuraEvent)`; plugins register as `kit.use(plugin, config?)` (pass the factory, not a call); the adapter is named `hasuraEvent`/`hasuraCron`, not `hasura.source()`. The register-style *direction* below is what shipped.]**
+
 **What:** Replace the single nested `createEventKit({ sources:[...], plugins:[...], events:[...] })` object with a register-style API that mirrors the (well-liked) old `pluginManager.register(...)` ergonomics:
 
 ```ts
@@ -102,6 +113,8 @@ All of the above are recorded as design decisions and propagated to: the canonic
 ---
 
 ## CHG-8 — Runtime portability via a Platform Adapter contract
+> **[Superseded by CHG-10: the platform is registered via `kit.use(netlifyPlatform)`, not a `createEventKit({ platform })` param; factories carry the `*Platform` suffix (`netlifyPlatform()`, `lambdaPlatform()`, …). The shipped four are `lambdaPlatform`, `netlifyPlatform`, `netlifyV2Platform`, `netlifyBackgroundPlatform` — all real, none "planned." The PlatformAdapter contract itself is as below.]**
+
 **What:** Deployment-runtime specifics are abstracted behind a **`PlatformAdapter`** registered declaratively on `createEventKit({ platform })` — a sibling extension contract to `SourceAdapter` (what event came in) and `EventKitPlugin` (lifecycle). It implements four methods: `detect?()`, `extractPayload(...args)`, `buildRequest(...args)` (incl. the time-budget closure), `formatResponse(result)`.
 
 - The package ships **`lambda()`** and **`netlify()`**. The contract is open so teams can author `vercel()`, `cloudflare()`, `node()`, etc.
@@ -156,6 +169,8 @@ Plus: `provides`/`requires` capability declaration (fixing the muddled `requires
 ---
 
 ## CHG-13 — Detector preferred style: keep the `switch (ctx.operation)` house style
+> **[Updated after this entry: the operation-predicate helpers `inserted()/updated()/deleted()/manuallyInvoked()` were *removed* from the detector context. The `switch (ctx.operation)` house style below is exactly right and is now the *only* style; `ctx.operation`, `ctx.columnChanged/columnAdded/columnRemoved`, and `ctx.newRow/oldRow` remain. Ignore the "stays available as sugar" / "already exist" notes below for those four helpers.]**
+
 **What:** The canonical Hasura detector format is the `switch` on operation that the existing modules already use — named boolean facts declared **inside each case branch**, each case's `return` reading like a sentence, and `case 'MANUAL': return false` for console-edit suppression. This replaces the v0.1/early-showcase flat form that collapsed operations into combined booleans (`const becameReady = ctx.updated() && … ; return insertedReady || becameReady`).
 **Why:** Rob likes the readability of the per-operation switch from `hasura-event-detector`; turning each operation into a combined variable/`||` chain reads worse. This also matches saved team guidance ([[feedback_event_detector_style]]) — vars inside each case branch (even if duplicated), final return is a sentence, never an inline `columnChanged()` chain. The only EventKit changes vs the current detector are the typed `ctx` API (`ctx.operation`/`ctx.columnChanged`/`ctx.newRow`) and the typed row; `ctx.manuallyInvoked()` stays available as sugar but the `case 'MANUAL'` branch is preferred.
 **Impact:** RFC §3.2 (preferred example → switch; discouraged note covers both the flat-combined and inline-chain forms) and §8 (MANUAL note); showcase detector example 01 and the "Console edits" contract-shift row. No API change — `ctx.operation`/`inserted()`/`updated()`/`columnChanged()`/`manuallyInvoked()` all already exist; this is a style/authoring decision.

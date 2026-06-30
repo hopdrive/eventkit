@@ -1,27 +1,40 @@
 # EventKit — planning & design archive
 
-The full design record for EventKit, migrated here from `hasura-event-detector/docs/eventkit-rewrite/` (now the canonical home — make future design changes here). EventKit is the source-agnostic successor to `@hopdrive/hasura-event-detector`.
+The design record for EventKit, the source-agnostic successor to `@hopdrive/hasura-event-detector`.
+This is the canonical home for design changes — make future design decisions here.
+
+The framework is **built**. These docs are the *why* and the decision history; for *what the system
+does today*, the authority is the canonical RFC (below) and the code (`../../README.md` is the front door).
 
 ## Read order
 
-1. **`EventKit-implementation-kickoff.md`** — the self-contained build entry point: read order, decision coverage, open-decision defaults, phased plan, correctness guards. Start here to build.
-2. **`EventKit Architecture RFC v0.2 (canonical-draft).md`** — the canonical spec and source of truth. Filename says "v0.2" but the revision-history table is the real version (currently **v0.3.10**). Read §0 (change map), then §7–§13, then §22 (ADRs 001–026).
-3. **`EventKit-design-changes-202606282030.md`** — the CHG-1…16 record: the *why* behind each change since v0.2.
-4. **`EventKit-open-decisions-202606281830.md`** — the decision register (D1–D23): what's resolved vs. still open.
+1. **`architecture.md`** — the canonical spec and source of truth (revision **v0.3.13**; see its
+   revision-history table). Read §0 (change map), then §7–§13 (the API surface), then §22 (ADRs 001–026).
+2. **`design-rationale.md`** — the distilled *why*: the consumption-failure evidence that drove the
+   rewrite, and each major decision paired with the alternative it replaced. Read this so settled
+   decisions aren't re-litigated and rejected designs aren't mistaken for the current API.
+3. **`design-change-log.md`** — the CHG-1…13 change-by-change record (continued in
+   the RFC revision history through CHG-17).
+4. **`decision-register.md`** — the decision register (D1–D23). The STATUS block at
+   the top is authoritative; only D6/D10/D13 remain genuinely open (process/migration calls).
 
 ## The rest
 
-- **`EventKit-plugin-parity-punchlist-202606282200.md`** — per-plugin parity work to bring the built plugins to no-loss-of-functionality vs. the legacy package.
-- **`EventKit-design-evaluation-202606281700.md`** / **`EventKit-design-review-202606281600.md`** — the initial analyses of the v0.1 design against the current codebase.
-- **`EventKit-RFC-amendment-A-B-C-202606281730.md`** / **`EventKit-RFC-amendment-D-E-202606281800.md`** — historical amendments, since folded into the canonical RFC.
-- **`EventKit Architecture RFC.md`** — the original v0.1 RFC (superseded by the canonical-draft above; kept for history).
-- **`raw-conversations/`** — the raw ChatGPT planning conversations the design grew out of (framework redesign, event-module naming, expected-vs-actual flows, project-plan consolidation).
-- **`eventkit-chat-findings.md`** — analysis of those raw conversations.
-- **`eventkit-conversation-audit.html`** / **`eventkit-report.html`** / **`eventkit-review-packet.html`** — intermediate review artifacts (open in a browser).
+- **`implementation-plan.md`** — the original phased build plan. Historical: the build is
+  done (banner at top). Kept for provenance, not as a current build guide.
+- **`plugin-parity.md`** — per-plugin parity work vs the legacy package.
+  Complete: every P0/P1 item shipped; kept as a verification record.
+- **`raw-conversations/`** — the raw ChatGPT planning conversations the design grew out of (framework
+  redesign, event-module naming, expected-vs-actual flows, project-plan consolidation). Primary-source
+  provenance, with source URLs.
+
+> **Removed (folded into `design-rationale.md` + the canonical RFC; recoverable via git history):** the
+> v0.1 RFC, the A–E amendment docs, the pre-build design review and design evaluation, the chat-findings
+> analysis, and the intermediate `.html` review snapshots. They documented superseded/intermediate
+> designs in present tense and were a standing risk of being read as canonical.
 
 ## Related (outside this folder)
 
-- **`../guide.html`** — the DX guide + curated API reference (the showcase), rendered.
+- **`../guide.html`** — the DX guide + curated API reference (generated; `npm run docs`).
 - **`../api/`** — the exhaustive generated API reference (`npm run docs`).
 - **`../../README.md`** — the package front door.
-</content>

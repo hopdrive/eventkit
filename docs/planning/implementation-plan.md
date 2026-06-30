@@ -1,7 +1,14 @@
 # EventKit — Implementation Kickoff (seed for a fresh agent / new thread)
 
-**Date:** 2026-06-28 · **Design state:** RFC v0.3.7
-**Purpose:** Everything a new context window needs to start *building* EventKit. Read this first, then the canonical docs it points to. This file is the single entry point after the design conversation is compacted.
+> **📦 HISTORICAL — the build described here is DONE.** EventKit is built (core runtime, `hasuraEvent`/
+> `hasuraCron`/`hasuraAction`/`webhook` sources, all four platforms, the plugins, testing utils, ADRs
+> 001–026). This file is the *original phased build plan*, kept for provenance. **For how the system works
+> today, read `../../README.md`, the canonical RFC, and `design-rationale.md` — not this plan.** The phase
+> descriptions below are pre-build future-tense and some name APIs that were superseded before shipping
+> (noted inline where they'd actively mislead).
+
+**Date:** 2026-06-28 · **Design state (at writing):** RFC v0.3.7 · **As shipped:** RFC v0.3.13
+**Purpose:** Everything a new context window needed to start *building* EventKit. (The build is complete; see banner.)
 
 ---
 
@@ -9,25 +16,25 @@
 
 A fresh agent has only what's written down. Read, in order:
 1. **This file.**
-2. **`EventKit Architecture RFC v0.2 (canonical-draft).md`** — the canonical design and **source of truth**. ⚠️ The filename says "v0.2" but the document is at **revision v0.3.7** (see its revision-history table). Read §0 (change map) first, then §7–§13 (the API surface) and §22 (ADRs).
-3. **`EventKit-design-changes-202606282030.md`** — CHG-1…13, the *why* behind every change since v0.2.
-4. **`EventKit-open-decisions-202606281830.md`** — the decision register with current resolved/open status (read the STATUS block at top).
-5. **Current source to port from / verify against:**
-   - `hasura-event-detector/src/` — the runtime today (`handler.ts` = `run()`+`job()`; `plugin.ts` = plugin manager; `detector.ts`; `plugins/`; `helpers/tracking-token.ts`; `plugins/observability/`).
+2. **`architecture.md`** — the canonical design and **source of truth** (revision **v0.3.13**; see its revision-history table). Read §0 (change map) first, then §7–§13 (the API surface) and §22 (ADRs).
+3. **`design-rationale.md`** — the distilled *why* behind the final design (consumption evidence + the decisions and the alternatives they replaced).
+4. **`design-change-log.md`** — CHG-1…13, the change-by-change *why* (continued in the RFC revision history through CHG-17).
+5. **`decision-register.md`** — the decision register with current resolved/open status (read the STATUS block at top).
+6. **Current source to port from / verify against:**
+   - `hasura-event-detector/src/` — the legacy runtime (`handler.ts` = `run()`+`job()`; `plugin.ts` = plugin manager; `detector.ts`; `plugins/`; `helpers/tracking-token.ts`; `plugins/observability/`).
    - `event-handlers/functions/db-*/` — 245 consumer modules + `~lib/jobs` + `~lib/scoped-job.js` + `db-*.js` entrypoints.
    - `sparkserv-integration/functions/lib/spark/` — the reverse-integration pattern.
-6. **Memory** (auto-loaded): `project_eventkit_rewrite`, plus house-style notes `feedback_destructure_over_chaining`, `feedback_event_detector_style`, `feedback_event_handler_conditional_in_detector`, `feedback_event_handler_module_shape`, `feedback_event_handler_module_shape`.
-7. *(Optional, visual)* the **EventKit rewrite showcase** artifact and the **review-packet** artifact.
+7. **Memory** (auto-loaded): `project_eventkit_rewrite`, plus house-style notes `feedback_destructure_over_chaining`, `feedback_event_detector_style`, `feedback_event_handler_conditional_in_detector`, `feedback_event_handler_module_shape`.
 
 ---
 
 ## 1. Is the design complete? — coverage map
 
 **Decisions: captured.** Every architectural decision lives in one of:
-- **RFC §22 ADRs** — 001–010 (v0.1 foundations, summarized) and **011–023** (full):
-  011 input/metadata channels · 012 typed augmentation not mutation · 013 module-scoped runtime + `handle()` · 014 `run()` parallel+continueOnFailure default · 015 durability emergent from registration (no flag) · 016 loop-prevention mechanism · 017 plugins self-correlate / jobs plugin-agnostic · 018 declarative handlers (no conditional jobs) · 019 register-style API (positional source + `use(plugin,config?)`) · 020 `augmentJobContext` contribution · 021 platform adapters · 022 plugin composition model (3 hook shapes, DI not inheritance) · 023 `hasuraEvent`/`hasuraCron`.
-- **CHG-1…13** (changes doc) — rationale + before/after.
-- **D1…D22** (register) — resolved (D1–D5, D14) vs open (D6–D13, D15–D22).
+- **RFC §22 ADRs** — 001–010 (v0.1 foundations, summarized) and **011–026** (full):
+  011 input/metadata channels · 012 typed augmentation not mutation · 013 module-scoped runtime + `handle()` · 014 `run()` parallel+continueOnFailure default · 015 durability emergent from registration (no flag) · 016 loop-prevention mechanism · 017 plugins self-correlate / jobs plugin-agnostic · 018 declarative handlers (no conditional jobs) · 019 register-style API (positional source + `use(plugin,config?)`) · 020 `augmentJobContext` contribution · 021 platform adapters · 022 plugin composition model (3 hook shapes, DI not inheritance) · 023 `hasuraEvent`/`hasuraCron` · **024 generic plugins built-in (subpath exports)** · **025 fully declarative modules (`defineEvent`, no handler/`run()`)** · **026 `webhook`/`hasuraAction` sources + module-level `resolve` request/response**.
+- **CHG-1…17** (CHG-1…13 in the changes doc; CHG-14…17 in the RFC revision history) — rationale + before/after.
+- **D1…D23** (register) — see the register's STATUS block for resolved vs the few still-open process calls (D6, D10, D13).
 
 **Verdict:** the *design* is decision-complete and internally consistent. It is **not yet implementation-ready** without closing §2 below.
 
@@ -61,18 +68,18 @@ A fresh agent has only what's written down. Read, in order:
 
 Each phase lists what to build, the governing ADRs, and a done-bar. **Honest framing:** detectors port cheaply; handlers/jobs/`scoped-job`/plugins/tests are a rewrite; AR/tracking-token/billing are correctness-critical (§5).
 
-**Phase 0 — Skeleton & type freeze.** Decide D19/D20/D22 (or take defaults); freeze the public types (§2c) in `@hopdrive/eventkit/core`; set up build, dual output, subpath `exports`, and the **Netlify-bundle CI smoke test** (D8). *Done:* `import { createEventKit, job, run } from '@hopdrive/eventkit'` resolves in a built Netlify function.
+**Phase 0 — Skeleton & type freeze.** Decide D19/D20/D22 (or take defaults); freeze the public types (§2c) in `@hopdrive/eventkit/core`; set up build, dual output, subpath `exports`, and the **Netlify-bundle CI smoke test** (D8). *Done:* `import { createEventKit, defineEvent, job } from '@hopdrive/eventkit'` resolves in a built Netlify function. *(As shipped: there is no public `run()` export — the executor is runtime-internal, ADR-025.)*
 
 **Phase 1 — Core runtime.** `createEventKit(source, config?)`, `kit.use(plugin, config?)`, `registerEvents`, `validate`, `handle()`; `run()` (parallel + continueOnFailure default, strict `JobDefinition[]`, throws on falsy entry); `job()` with `input`/`metadata`; `JobContext`; lifecycle dispatch in registration order; `augmentJobContext` merge (`{...pluginBaselines, ...options.input}`); AbortSignal/timeout; `serializeError`/`serializeOutput`/`replaceCircularReferences`. ADRs 011,013,014,017,018,020. *Done:* a no-plugin kit detects + runs jobs in-memory with a fake source; unit tests for merge order, falsy-throw, timeout/cancel.
 
-**Phase 2 — `hasuraEvent` source adapter.** `normalize` (Hasura DB-event payload → EventEnvelope), `buildDetectorContext` (`operation`/`oldRow`/`newRow`/`row`/`inserted/updated/deleted/manuallyInvoked`/`columnChanged/columnAdded/columnRemoved`), `buildHandlerContext` (`HasuraHandlerContext`: operation/oldRow/newRow/role/userId/receivedAt), and the authoring exports `hasuraEvent.detector<T>()` / `hasuraEvent.handler<T>()`. ADRs 012,023. Detector style = **`switch (ctx.operation)`** house style (CHG-13). *Done:* `appointment.ready` detector+handler compile and pass detector unit tests (insert/update/delete/manual/malformed).
+**Phase 2 — `hasuraEvent` source adapter.** `normalize` (Hasura DB-event payload → EventEnvelope), `buildDetectorContext` (`operation`/`oldRow`/`newRow`/`row`/`columnChanged/columnAdded/columnRemoved` — *as shipped, the operation-predicate helpers `inserted/updated/deleted/manuallyInvoked` were removed in favor of the `switch (ctx.operation)` style*), `buildHandlerContext` (`HasuraHandlerContext`: operation/oldRow/newRow/role/userId/receivedAt), and the authoring exports `hasuraEvent.detector<T>()` / `hasuraEvent.prepare<T>()` *(there is no `.handler` helper — modules are declarative, ADR-025)*. ADRs 012,023. Detector style = **`switch (ctx.operation)`** house style (CHG-13). *Done:* `appointment.ready` detector compiles and passes detector unit tests (insert/update/delete/manual/malformed).
 
 **Phase 3 — Plugins + composition model.** Implement the 3-shape `EventKitPlugin` contract (notification `on…` / delta transform / singleton capability; DI-injected `base` for replacement) + `provides`/`requires` validation at `onInit`. Then:
 - `observability()` (buffered, flush at `onInvocationEnd`/`onFlush`; Invocation→Event→Job; best-effort).
 - `batchJobs()` — **registration-emergent durability**: `augmentJobContext` injects the `batch_jobs` row's `input`; lifecycle hooks drive `processing→done/error/timeout`; configurable periodic log flush; `requires:['source:hasura']`. No `durable` flag.
 - **Built-in generic plugins (ADR-024)** — config-driven, shipped as subpath exports of `@hopdrive/eventkit`:
   - `loopPrevention({ field, codec, serviceId })` — inbound reads the configured field (HopDrive: `updated_by`) into `envelope.meta.sourceTrackingToken`; outbound stamping is the core `ctx.trackingToken` seam (already in Phase 1). The `source|correlationId|jobExecutionId` codec is generic (separator + validation are config).
-  - `grafanaTransport({ endpoint, auth, labels })` and `sentry({ dsn })` — generic observability transports; secrets/endpoints arrive via injected config (plugins never read `process.env`).
+  - `grafanaLogger({ logger })` or `grafanaLogger({ grafana: { endpoint, auth, labels } })` and `sentry({ dsn })` — generic observability transports; secrets/endpoints arrive via injected config (plugins never read `process.env`). *(The export is `grafanaLogger`, not `grafanaTransport`.)*
 - HopDrive layer is config presets (token format / `updated_by` / service id) + any SDK-coupled enrichment plugin + event modules — see §2d / ADR-024. Do NOT build a `@hopdrive/app-eventkit` package for trackingToken/grafanaLogger/sentry.
 ADRs 015,016,017,019,020,022,024. *Done:* a durable consumer runs as a plain job reading `ctx.input`, state persisted to `batch_jobs`; observability records written once per invocation; `loopPrevention` configured with `field:'updated_by'` round-trips a token inbound→outbound.
 
@@ -106,4 +113,4 @@ Destructure over chained refs (`const { input, log } = ctx`); detector = `switch
 ---
 
 ## 7. One-paragraph brief to paste into the new thread
-> Build the EventKit package per `docs/eventkit-rewrite/EventKit Architecture RFC v0.2 (canonical-draft).md` (revision v0.3.7 — source of truth) and this kickoff plan. Decisions are captured in the RFC ADRs 001–023, the design-changes log (CHG-1…13), and the open-decisions register. Start at Phase 0: take the recommended defaults for the open decisions D19 (positional source), D20 (qualified capability tokens), D22 (lazy plugin instantiation), D6 (shadow-mode), D7 (no facade), D8 (subpaths + CI bundle test) unless the human overrides; freeze the public types; then build core → hasuraEvent source → plugins (composition model) → platform adapters → migrate `appointment.ready` end-to-end with shadow-mode parity. Verify against the current `hasura-event-detector/src` and `event-handlers` consumers. Respect the §4 correctness guards.
+> *(Historical seed — the build is done. Kept verbatim for provenance.)* Build the EventKit package per `architecture.md` (source of truth, now revision v0.3.13) and this kickoff plan. Decisions are captured in the RFC ADRs 001–026, the design-changes log (CHG-1…13 + CHG-14…17 in the RFC revision history), `design-rationale.md`, and the open-decisions register. Start at Phase 0: take the recommended defaults for the open decisions D19 (positional source), D20 (qualified capability tokens), D22 (lazy plugin instantiation), D6 (shadow-mode), D7 (no facade), D8 (subpaths + CI bundle test) unless the human overrides; freeze the public types; then build core → hasuraEvent source → plugins (composition model) → platform adapters → migrate `appointment.ready` end-to-end with shadow-mode parity. Verify against the current `hasura-event-detector/src` and `event-handlers` consumers. Respect the §4 correctness guards.

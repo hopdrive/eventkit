@@ -1,8 +1,8 @@
-# EventKit Architecture RFC — v0.2 (Canonical Draft, proposed replacement)
+# EventKit Architecture RFC — v0.3.13 (Canonical)
 
-> **Status of this document.** This is a *proposed* canonical replacement for `EventKit Architecture RFC.md` (v0.1). It folds the v0.1 design together with Amendments A–E (`EventKit-RFC-amendment-A-B-C-202606281730.md`, `EventKit-RFC-amendment-D-E-202606281800.md`) and the recoverable concepts identified in `EventKit-design-evaluation-202606281700.md`. It does not take effect until reviewed and accepted; until then v0.1 remains the source of truth. Changes from v0.1 are summarized in §0 and marked **[v0.2]** inline at each materially changed section.
+> **Status of this document.** This is the **canonical** EventKit architecture spec and the source of truth (revision **v0.3.13** — see the revision-history table below). It grew from an RFC: it folded the original v0.1 design, Amendments A–E, and the pre-build design evaluation; those source docs have since been removed (their rationale is distilled in `design-rationale.md`, and the decisions live in the ADRs in §22). Materially changed sections are marked **[v0.2]** / **[v0.3.x]** inline.
 
-Status: Proposed Canonical Draft
+Status: Canonical (accepted)
 Owner: HopDrive Engineering
 Document Purpose: Canonical architecture specification for EventKit. Records agreed decisions, rationale, examples, implementation guidance, and future considerations. Updated whenever meaningful architecture decisions are made.
 
@@ -20,11 +20,12 @@ Document Purpose: Canonical architecture specification for EventKit. Records agr
 | 2026-06-28 | 0.3.5 (draft) | Rob Newton + Claude | CHG-11: dropped the `createEventKit({ source })` object wrapper — the source is now the first positional arg, same `(plugin, config?)` shape as `use()`: `createEventKit(hasura)` / `createEventKit(webhook, { verify })`. Revised ADR-019. |
 | 2026-06-28 | 0.3.6 (draft) | Rob Newton + Claude | CHG-12: two Hasura source adapters named by transport — **`hasuraEvent`** (DB triggers) and **`hasuraCron`** (Hasura scheduled triggers, a sibling payload), replacing "hasura + generic cron." `createEventKit(hasura)` → `createEventKit(hasuraEvent)`; authoring helpers `hasuraEvent.detector/.handler` + `hasuraCron.detector/.handler`. Added ADR-023. |
 | 2026-06-28 | 0.3.7 (draft) | Rob Newton + Claude | CHG-13: detector preferred style restored to the **`switch (ctx.operation)`** house style (named booleans inside each case; per-case sentence return; `case 'MANUAL': return false`), replacing the flat `insertedReady \|\| becameReady` form. Aligns §3.2/§8 examples with existing team guidance. |
-| 2026-06-29 | 0.3.12 (draft) | Rob Newton + Claude | CHG-17: **`app-*` → Hasura Action conversion playbook** (§19.2). Per-endpoint, gradual: define the Action (input/output types + handler) via a `hasura-migrations` PR; port the handler into a `hasuraAction` module (`resolve` returns the output, `prepare`/`jobs` for setup/side-effects); **replace hand-rolled auth with Action RBAC permissions**; **verify every caller has the granted role and switch it from HTTP → the GraphQL action**; shadow + retire. Queries before mutations; convert one end-to-end first. |
-| 2026-06-29 | 0.3.11 (draft) | Rob Newton + Claude | **Implemented** `webhook` + `hasuraAction` sources + the `resolve` request/response capability (ADR-026). **Dropped `hasuraActionPlatform`** — the response contract (`resolve`→2xx, `ClientError`/`ActionError`→status+`{message,extensions}`) composes onto the **generic** platforms (`netlifyPlatform`/`netlifyV2Platform`/`lambdaPlatform`) via `InvocationResult.resolved`, avoiding a `contract × transport` matrix. Flipped §7.1/§7.2 to shipped. |
-| 2026-06-29 | 0.3.10 (draft) | Rob Newton + Claude | CHG-16: **full `event-handlers` source coverage.** Goal = migrate every function class, not just `db-*`. Added the source-inventory table (§7), the **`webhook`** source (§7.1), and the **`hasuraAction`** source (§7.2) with Hasura's exact request payload + response contract. Introduced the **request/response source class** (actions + `app-*` RPC return a synchronous payload, unlike fire-and-forget events) and proposed `resolve(ctx)=>output` + a `hasuraActionPlatform` mapping outcome→2xx / `ClientError`→4xx `{message,extensions}`. Added `'action'` to `EventSourceType`. Added ADR-026. |
-| 2026-06-29 | 0.3.9 (draft) | Rob Newton + Claude | CHG-15: **event modules are fully declarative** — the handler-that-calls-`run()` is replaced by a static `jobs` array the **runtime** executes. Module shape `defineEvent({ name, detector, prepare?, jobs, run? })`; detector keeps the `switch` house style; `prepare(ctx)` produces shared request-scoped refs (sdk/clients/closures) merged into every job's `input`. Three hard rules: no conditional job inclusion (impossible by construction — no handler body), **no fan-out** (do it in the job or via DB writes), **no inter-job dependencies** (siblings are mutually ignorant). `run()` becomes runtime-internal; `RunOptions` move onto the module. Migration playbook for the ≈14 conditional sites (promote-to-event vs job-internal short-circuit). Added ADR-025; supersedes the ADR-018 "handler returns JobDefinition[]" framing. |
 | 2026-06-28 | 0.3.8 (draft) | Rob Newton + Claude | CHG-14: **generic-by-config plugins ship built-in** (subpath exports of `@hopdrive/eventkit`), not in a separate HopDrive package. loop-prevention/tracking-token (a pure `source\|correlationId\|jobId` codec + a configurable read/write field + a service identity), grafanaLogger, and sentry are all fully config-driven, so they become parameterized built-ins. The HopDrive layer collapses to config presets + any genuinely SDK-coupled plugin + the app's event modules (which already live in the consumer repos). Reverses the earlier trackingToken/grafanaLogger/sentry → `@hopdrive/app-eventkit` plan. Added ADR-024. |
+| 2026-06-29 | 0.3.9 (draft) | Rob Newton + Claude | CHG-15: **event modules are fully declarative** — the handler-that-calls-`run()` is replaced by a static `jobs` array the **runtime** executes. Module shape `defineEvent({ name, detector, prepare?, jobs, run? })`; detector keeps the `switch` house style; `prepare(ctx)` produces shared request-scoped refs (sdk/clients/closures) merged into every job's `input`. Three hard rules: no conditional job inclusion (impossible by construction — no handler body), **no fan-out** (do it in the job or via DB writes), **no inter-job dependencies** (siblings are mutually ignorant). `run()` becomes runtime-internal; `RunOptions` move onto the module. Migration playbook for the ≈14 conditional sites (promote-to-event vs job-internal short-circuit). Added ADR-025; supersedes the ADR-018 "handler returns JobDefinition[]" framing. |
+| 2026-06-29 | 0.3.10 (draft) | Rob Newton + Claude | CHG-16: **full `event-handlers` source coverage.** Goal = migrate every function class, not just `db-*`. Added the source-inventory table (§7), the **`webhook`** source (§7.1), and the **`hasuraAction`** source (§7.2) with Hasura's exact request payload + response contract. Introduced the **request/response source class** (actions + `app-*` RPC return a synchronous payload, unlike fire-and-forget events) and proposed `resolve(ctx)=>output` + a `hasuraActionPlatform` mapping outcome→2xx / `ClientError`→4xx `{message,extensions}`. Added `'action'` to `EventSourceType`. Added ADR-026. |
+| 2026-06-29 | 0.3.11 (draft) | Rob Newton + Claude | **Implemented** `webhook` + `hasuraAction` sources + the `resolve` request/response capability (ADR-026). **Dropped `hasuraActionPlatform`** — the response contract (`resolve`→2xx, `ClientError`/`ActionError`→status+`{message,extensions}`) composes onto the **generic** platforms (`netlifyPlatform`/`netlifyV2Platform`/`lambdaPlatform`) via `InvocationResult.resolved`, avoiding a `contract × transport` matrix. Flipped §7.1/§7.2 to shipped. |
+| 2026-06-29 | 0.3.12 (draft) | Rob Newton + Claude | CHG-17: **`app-*` → Hasura Action conversion playbook** (§19.2). Per-endpoint, gradual: define the Action (input/output types + handler) via a `hasura-migrations` PR; port the handler into a `hasuraAction` module (`resolve` returns the output, `prepare`/`jobs` for setup/side-effects); **replace hand-rolled auth with Action RBAC permissions**; **verify every caller has the granted role and switch it from HTTP → the GraphQL action**; shadow + retire. Queries before mutations; convert one end-to-end first. |
+| 2026-06-29 | 0.3.13 (draft) | Rob Newton + Claude | **Removed the operation-predicate detector helpers** (`inserted()`/`updated()`/`deleted()`/`manuallyInvoked()`) from `HasuraDetectorContext`. The preferred `switch (ctx.operation)` style makes them redundant (`case 'MANUAL': return false` handles console-edit suppression). The column/value helpers (`columnChanged`/`columnAdded`/`columnRemoved`/`previousValue`/`currentValue`) stay, since they're used inside the switch cases. Updated §3.6/§7/§8 + the guide/README. |
 
 ---
 
@@ -34,14 +35,14 @@ v0.1 was conceptually strong but left the *seams to the existing system* undersp
 
 - **[A] Job data channel** (§9, §10). `job(fn, options)` now has two separately-typed channels: `input` (request-scoped, live, **never** persisted) and `metadata` (serializable, persisted/recorded). This is the migration target for today's overloaded options bag (live `sdk` clients, closures, `old`/`new` rows).
 - **[B] Source handler context** (§7, §9). Source adapters contribute a typed handler-context extension. `HasuraHandlerContext` exposes `operation`/`oldRow`/`newRow` + session-derived `role`/`userId`/`receivedAt` — **data only, no detection helpers** — so ADR-007's intent survives without stripping the data handlers legitimately need.
-- **[C] Per-invocation entry point** (§6, §9, §11). `createEventKit()` runs once at module scope and returns an `EventKit` with `handle(payload, request)`. Defines the previously-undefined `InvocationContext`, plus `RequestContext` for per-request config — replacing per-invocation plugin registration and the old `onPreConfigure` mutation hook. Specifies the **tracking-token loop-prevention mechanism** and restores `manuallyInvoked()`.
+- **[C] Per-invocation entry point** (§6, §9, §11). `createEventKit()` runs once at module scope and returns an `EventKit` with `handle(payload, request)`. Defines the previously-undefined `InvocationContext`, plus `RequestContext` for per-request config — replacing per-invocation plugin registration and the old `onPreConfigure` mutation hook. Specifies the **tracking-token loop-prevention mechanism** and preserves MANUAL suppression via the `switch (ctx.operation)` house style (`case 'MANUAL': return false`). *(An interim plan to restore a `manuallyInvoked()` helper was reversed in v0.3.13 — the operation-predicate helpers were removed; see §7/§8.)*
 - **[D] `run()` defaults pinned** (§9, §10). `mode` defaults to `'parallel'`, `continueOnFailure` to `true`, matching the current `Promise.allSettled` fan-out. Series/stop-on-failure is opt-in and explicitly **does not** preserve current behavior.
 - **[E] Durable contract** (§9, §12). BatchJobs becomes a durability plugin with the `BatchJobStatus` enum and a lifecycle-hook→status mapping; job code stops calling `batchJob(...)`. *(The v0.2 form — `DurableJobOptions`, `batchJobs.record(...)`, `ctx.batch.record` — was **superseded in v0.3.1**: durability is now emergent from registering the plugin, with no `durable` flag and no batch object on `ctx`. See the v0.3 refinements below and §12.)*
 - **Recovered concepts**: `SerializedError` + core serialization utilities (§9, §12), tiered logger interfaces (§9), `JobProgress`/`JobCheckpoint` shapes (§9), `EventModule.metadata` (§18), normative buffer-and-flush for Observability (§13), subpath-export bundling validation (§17), event-name backward-compatibility policy (§8), and a Compare-Mode phasing caveat (§14).
 
 If you only review one thing, review §9 (Runtime API) and §12 (BatchJobs) — that is where the migration succeeds or fails.
 
-**v0.3 refinements (see `EventKit-design-changes-202606282030.md`):**
+**v0.3 refinements (see `design-change-log.md`):**
 - **Plugins self-correlate; jobs stay plugin-agnostic** (§3.10, §12, ADR-017). **[v0.3.1]** Durability is **emergent from registering the BatchJobs plugin** — there is no core `durable` flag. The plugin (registered only in `db-batchjobs`, `requires` the Hasura source) makes every job durable, injects the `batch_jobs` row's `input` as the job's baseline `ctx.input` (handler input merges on top), persists state/output/logs, and offers configurable periodic log flushing for the live React view. Plugins supply job data via `augmentJobContext` (ADR-020); no `ctx.batch.record`, no record-passing.
 - **Handlers are strict declarative job lists** (§3.9, §9.5, ADR-018). Conditional job inclusion (`cond && job(...)`) is a compile/runtime error. Conditions live in the detector (a named event) or inside the job (input-driven). This reverses v0.2's "tolerate falsy entries."
 - **Register-style API** (§9.7, §11.4, §18, ADR-019). `createEventKit(hasuraEvent)` — the required source is the first positional arg, same `(plugin, config?)` shape as `use()` (no object wrapper; `createEventKit(webhook, { verify })` when the source needs config). Then `kit.use(plugin, config?)` — pass the plugin/factory itself, not a call; the kit instantiates it. The optional platform registers the same way: `kit.use(netlifyPlatform)`. Events via `kit.registerEvents(events)`. One source per kit (resolves D14).
@@ -73,7 +74,7 @@ The most important developer experience is the **event module**. A developer ope
 
 ## 2.1 Primary Goals
 - EventKit MUST generalize the Hasura Event Detector into a source-agnostic execution framework, supporting Hasura without making Hasura the central abstraction.
-- EventKit MUST preserve the event-module authoring model: business-event dot-notation names; each module exports exactly one detector and one handler.
+- EventKit MUST preserve the event-module authoring model: business-event dot-notation names; each module declares exactly one detector and a static `jobs` set (and/or a `resolve` for request/response). There is no handler body — the module is declarative (ADR-025).
 - EventKit MUST optimize detector readability (named boolean variables; final return reads like a sentence).
 - EventKit MUST support source adapters (Hasura, webhook, cron, application, queue, manual, and future).
 - EventKit MUST stay domain-agnostic. Core, source adapters, and generic plugins MUST NOT contain HopDrive business rules. Move/driver/dealer/AR helpers live in application packages.
@@ -128,7 +129,7 @@ Core knows invocations, envelopes, detectors, handlers, jobs, plugins, lifecycle
 Event modules MUST be explicitly registered (§18). This favors determinism over magic and is required for reliable serverless bundling. Filesystem auto-discovery is deferred; if introduced later it MUST generate explicit registration artifacts at build time, never rely on runtime dynamic imports.
 
 ## 3.5 One Detector Per Event Module
-Each module MUST export exactly one detector and one handler.
+Each module MUST declare exactly one detector. The work it triggers is a **static `jobs` array** (and/or a `resolve` for request/response) — there is no handler function (ADR-025).
 
 ## 3.6 Plugins Extend Infrastructure, Not Business Logic
 Plugins provide observability, durability, tracing, metrics, audit, error capture. They MUST NOT hide business detection. **[v0.2]** Plugins MUST NOT use mutation of arbitrary shared objects as their integration model (ADR-012); they augment context through typed extension contracts (§7, §11).
@@ -164,9 +165,9 @@ A plugin does its work **through the lifecycle interface alone**, correlating an
 
 # 5. Architecture Overview
 
-Every inbound request enters through a Source Adapter, which constructs an EventEnvelope and a DetectorContext. The runtime evaluates every registered detector independently; positive detections produce DetectedEvents dispatched to handlers; handlers orchestrate jobs via `run()`. Plugins surround the runtime without owning it.
+Every inbound request enters through a Source Adapter, which constructs an EventEnvelope and a DetectorContext. The runtime evaluates every registered detector independently; positive detections produce DetectedEvents whose declared `jobs` the **runtime** executes (after the module's optional `prepare`), and whose optional `resolve` computes a response for request/response sources (ADR-025/026). Plugins surround the runtime without owning it.
 
-The runtime guarantees deterministic ordering: normalization → detection → handlers → jobs, with consistent plugin callback ordering. Errors are isolated: a detector failure affects only that detector; a job failure is isolated from other jobs by default (§10, ADR-014).
+The runtime guarantees deterministic ordering: normalization → detection → prepare → jobs (+ resolve), with consistent plugin callback ordering. Errors are isolated: a detector failure affects only that detector; a job failure is isolated from other jobs by default (§10, ADR-014).
 
 # 6. Runtime Lifecycle
 
@@ -176,9 +177,10 @@ Every invocation follows the same lifecycle regardless of source.
 2. **Normalize** — the adapter validates and normalizes into an EventEnvelope and constructs the DetectorContext. **[v0.2]** The Hasura adapter (or a tracking-token plugin at `configureInvocation`/`onInvocationStart`) extracts inbound provenance from `updated_by` into `envelope.meta.sourceTrackingToken` (§13 loop prevention).
 3. **Invoke plugins** — `onInvocationStart(ctx: InvocationContext)`.
 4. **Evaluate detectors** — each registered detector runs independently; returns boolean. Detector duration is recorded.
-5. **Execute handlers** — each detected event invokes its handler with a (possibly source-extended) HandlerContext.
-6. **Execute jobs** — jobs run through `run()`; the runtime records timing, retries, failures, cancellation, checkpoints, progress, outputs.
-7. **Finalize** — completion callbacks fire; observability flushes; durability state is updated. **[v0.2]** `handle()` returns an `InvocationResult`.
+5. **Prepare** — **[v0.3.9]** for each detected event, the module's optional `prepare(ctx)` runs once, producing request-scoped shared refs the runtime merges into every job's `ctx.input`.
+6. **Execute jobs** — the runtime runs the module's declared `jobs` (no handler body — ADR-025); it records timing, retries, failures, cancellation, checkpoints, progress, outputs.
+7. **Resolve (request/response only)** — **[v0.3.11]** if the module declares `resolve(ctx)`, the runtime computes the response body and surfaces it on `InvocationResult.resolved`; a thrown `ClientError`/`ActionError` is captured there too. Jobs run alongside and are never read by `resolve` (ADR-026).
+8. **Finalize** — completion callbacks fire; observability flushes; durability state is updated. **[v0.2]** `handle()` returns an `InvocationResult`; the platform adapter maps `resolved` to the wire response.
 
 **[v0.2] Entry point.** A serverless function processes one payload by calling `kit.handle(rawPayload, request)` on a module-scoped `EventKit` (§9). This replaces `listenTo()` and the per-invocation plugin registration pattern.
 
@@ -186,7 +188,7 @@ Every invocation follows the same lifecycle regardless of source.
 
 Every source adapter identifies inbound work, normalizes payloads, creates an EventEnvelope, and constructs a DetectorContext. Adapters own translation, never business interpretation.
 
-Adapters MAY expose convenience helpers that improve detector readability, expressing *source* semantics (`columnChanged()`, `inserted()`, `updated()`, `deleted()`, `manuallyInvoked()`, `previousValue()`, `currentValue()`, `operation()`) — never application semantics.
+Adapters MAY expose convenience helpers that improve detector readability, expressing *source* semantics (`columnChanged()`, `columnAdded()`, `columnRemoved()`, `previousValue()`, `currentValue()`), never application semantics. **[v0.3.13]** Operation-predicate helpers (`inserted()`/`updated()`/`deleted()`/`manuallyInvoked()`) were removed in favor of switching on `operation`.
 
 **[v0.2] Source handler-context extension (Amendment B).** A source adapter MAY contribute a typed handler-context extension carrying source **data** (never detection helpers). The adapter that normalized the envelope owns this enrichment because it already parsed the source payload.
 
@@ -218,7 +220,7 @@ export interface SourceAdapter<TPayload = unknown, TDetectorCtx = unknown, THand
 
 **[v0.3.6] Two Hasura source adapters, not "hasura + a generic cron" (ADR-023).** HopDrive's scheduled jobs arrive as **Hasura scheduled (cron) triggers** — a Hasura payload (`{ name, scheduled_time, payload, id }`) that is a *sibling* of the DB-event payload (`{ event: { op, data }, table, trigger }`), not a generic cron. So the package ships **two** Hasura-origin source adapters, named for the transport they actually carry (echoing the current package's `hasuraEvent` export):
 
-- **`hasuraEvent`** — Hasura **DB event triggers**; `sourceType: 'database'`. Detector context: `operation`, `oldRow`, `newRow`, `row`, `inserted()/updated()/deleted()`, `manuallyInvoked()`, `columnChanged()`, … (§8). This is the current detector's domain.
+- **`hasuraEvent`** — Hasura **DB event triggers**; `sourceType: 'database'`. Detector context: `operation` (branch with a `switch`), `oldRow`, `newRow`, `row`, `columnChanged()`, `columnAdded()`, `columnRemoved()`, `previousValue()`, `currentValue()` (§8). This is the current detector's domain.
 - **`hasuraCron`** — Hasura **scheduled triggers**; `sourceType: 'cron'`. Detector context: `scheduleName`, `scheduledAt`, `payload` (the configured trigger payload) — **no** rows/operation. A cron function's detector typically matches `ctx.scheduleName` or branches on `ctx.payload`.
 
 Both `provides: ['source']`; a kit registers exactly one — `createEventKit(hasuraEvent)` for a `db-*` function, `createEventKit(hasuraCron)` for a scheduled function. The generic `'cron'` `sourceType` remains for a future non-Hasura scheduler, which would be a *different* adapter. Authoring helpers are `hasuraEvent.detector`/`hasuraEvent.prepare` and `hasuraCron.detector`/`hasuraCron.prepare`.
@@ -250,15 +252,17 @@ A **Hasura Action** is custom business logic exposed as a GraphQL query/mutation
 
 **`hasuraAction` source adapter** (`sourceType: 'action'`). `normalize()` wraps the payload into an envelope; detector/handler context exposes: `actionName`, `input` (typed args), `sessionVariables` (`role`/`userId`/`email`), and `requestQuery?`. A detector typically matches `ctx.actionName`. Authoring helpers `hasuraAction.detector`/`hasuraAction.prepare`/`hasuraAction.resolve`.
 
-**How a declarative module returns a synchronous response (the open piece — ADR-026).** EventKit modules are declarative *fire-and-forget* job sets (ADR-025); an action must return a value. Proposed shape: a request/response module adds a single **`resolve(ctx) => output`** that computes the response body; `jobs` remain *optional* for fire-and-forget side effects that run alongside (notifications, logging). The **generic** platform adapter the function already uses (`netlifyV2Platform` / `netlifyPlatform` / `lambdaPlatform`) maps `resolve`'s return → the 2xx body, and a thrown `ClientError`/`ActionError(message, code?)` → the 4xx `{ message, extensions }` shape — there is **no** dedicated action platform (the response contract composes with transport; v0.3.11, below). Rationale: keeps the response logic explicit and separate from the (sibling-ignorant) jobs, instead of overloading a job's output as the response. `resolve` is **source-agnostic** — any source's module may declare it (a Stripe `webhook` resolving its required response, a future RPC source) — and the source's platform adapter maps the result to the wire. The win that makes an action worth running through EventKit at all: its downstream effects (jobs + DB writes that fire further events) are **correlation-traced back to the action** by the Observability plugin. The bespoke `app-*` endpoints are *replaced* by actions over time, not migrated. **Decision to ratify (ADR-026): `resolve` mapper vs. designating a job's output as the response.** Recommendation: `resolve`.
+**How a declarative module returns a synchronous response (ADR-026 — ratified & implemented in v0.3.11).** EventKit modules are declarative *fire-and-forget* job sets (ADR-025); an action must return a value. The shape: a request/response module adds a single **`resolve(ctx) => output`** that computes the response body; `jobs` remain *optional* for fire-and-forget side effects that run alongside (notifications, logging). The **generic** platform adapter the function already uses (`netlifyV2Platform` / `netlifyPlatform` / `lambdaPlatform`) maps `resolve`'s return → the 2xx body, and a thrown `ClientError`/`ActionError(message, code?)` → the 4xx `{ message, extensions }` shape — there is **no** dedicated action platform (the response contract composes with transport; v0.3.11, below). Rationale: keeps the response logic explicit and separate from the (sibling-ignorant) jobs, instead of overloading a job's output as the response. `resolve` is **source-agnostic** — any source's module may declare it (a Stripe `webhook` resolving its required response, a future RPC source) — and the source's platform adapter maps the result to the wire. The win that makes an action worth running through EventKit at all: its downstream effects (jobs + DB writes that fire further events) are **correlation-traced back to the action** by the Observability plugin. The bespoke `app-*` endpoints are *replaced* by actions over time, not migrated. **Ratified (ADR-026): the `resolve` mapper, not a designated job output.**
+
+**Two failure types — `ClientError` vs `ActionError` (why both).** A `resolve` (or a job) reports failure by throwing one of two error classes, kept separate because the two callers react to fundamentally different things. `ClientError(status, message)` carries an **HTTP status**; the platform responds with that exact status — for a status-contract webhook (Stripe) the *status code* is the contract (it decides whether the vendor retries). `ActionError(message, code?, extensions?)` carries a **GraphQL error `code`**, *not* a status; the platform responds HTTP 4xx + `{ message, extensions: { code? } }`, which Hasura turns into a GraphQL `errors[]` entry — the GraphQL client reads `message`/`extensions.code` and never sees the HTTP status, so there is nothing meaningful to choose there. They are two different wire contracts (HTTP-status world vs. GraphQL-error world); folding them into one type would force a webhook author to invent a `code` and an action author to invent a `status` the client never sees. Both are read **duck-typed** by the runtime (not `instanceof` — unreliable across bundled module copies) and surfaced on `InvocationResult.resolved.error` for the generic platform to map.
 
 # 8. Detector API and Event Module Authoring
 
-The detector is the most important day-to-day API. It is a business-rule predicate answering one question: did this business event occur for this invocation? Every module MUST export exactly one detector, exported and appearing before the handler.
+The detector is the most important day-to-day API. It is a business-rule predicate answering one question: did this business event occur for this invocation? Every module MUST export exactly one detector, appearing at the top of the module (above its `jobs`/`resolve`).
 
-The Hasura DetectorContext includes `operation`, `schema`, `table`, `oldRow`, `newRow`, `row` (= `newRow ?? oldRow ?? null`), `inserted()`, `updated()`, `deleted()`, **`manuallyInvoked()`** **[v0.2]**, `columnChanged()`, `columnAdded()`, `columnRemoved()`. Detectors MUST return `boolean | Promise<boolean>` and SHOULD avoid side effects.
+The Hasura DetectorContext includes `operation`, `schema`, `table`, `oldRow`, `newRow`, `row` (= `newRow ?? oldRow ?? null`), `columnChanged()`, `columnAdded()`, `columnRemoved()`, `previousValue()`, `currentValue()`. **[v0.3.13]** The operation-predicate helpers (`inserted()`/`updated()`/`deleted()`/`manuallyInvoked()`) were **removed** — you branch on `operation` with a `switch`, which makes them redundant. Detectors MUST return `boolean | Promise<boolean>` and SHOULD avoid side effects.
 
-**[v0.2] MANUAL handling (recovers a lost concept).** Hasura console edits arrive as `op: 'MANUAL'`. The preferred switch style (§3.2) keeps the existing `case 'MANUAL': return false` branch verbatim; `ctx.manuallyInvoked()` is available as equivalent sugar for non-switch detectors. Either way, MANUAL suppression MUST be expressible — dropping it would silently begin firing events on console edits that are deliberately suppressed today.
+**[v0.2] MANUAL handling (recovers a lost concept).** Hasura console edits arrive as `op: 'MANUAL'`. The switch style (§3.2) keeps the existing `case 'MANUAL': return false` branch verbatim. **[v0.3.13]** There is no `manuallyInvoked()` helper; the `switch` case is the way to suppress MANUAL. MANUAL suppression MUST stay expressible, because dropping it would silently begin firing events on console edits that are deliberately suppressed today.
 
 Async detectors are permitted by the type but SHOULD be avoided: every detector runs for every invocation across all registered modules, so DB-touching detection is a scale and reliability risk. A future detection-phase timeout MAY be introduced; until then, detectors SHOULD be pure functions over the DetectorContext.
 
@@ -419,7 +423,7 @@ export interface JobContext<TInput = undefined, TPayload = unknown, TMeta = Reco
 Normative:
 - The runtime MUST pass `options.input` to `ctx.input` by reference, without cloning or serializing.
 - BatchJobs and Observability MUST read only `ctx.job.metadata`/`options.metadata`, never `ctx.input`.
-- When `durable` is set, the runtime SHOULD fail fast if `metadata` is non-serializable.
+- When the BatchJobs plugin is registered (durability active, §12), the runtime SHOULD fail fast if `metadata` is non-serializable. *(There is no `durable` flag — §9.4 above, [v0.3.1].)*
 
 `JobProgress`/`JobCheckpoint` shapes:
 
@@ -551,6 +555,13 @@ export interface InvocationResult {
   durationMs: number;
   timedOut?: boolean;
   error?: SerializedError;
+  // [v0.3.11, ADR-026] Request/response outcome for modules that declare `resolve`.
+  // The platform adapter maps this to the wire response (output → 2xx; error → status/4xx).
+  resolved?: {
+    hasResolved: boolean;
+    output?: unknown;
+    error?: { message: string; status?: number; code?: string; extensions?: Record<string, unknown> };
+  };
 }
 ```
 
@@ -582,7 +593,7 @@ Every runtime falls into one of three buckets; the adapter collapses all three i
 The runtime derives `InvocationContext.signal` and observability/batch flush timing from whatever `getRemainingTimeMs` the adapter provides — so cancellation and best-effort flush work uniformly across A/B/C without any platform code leaking into business logic.
 
 ### Provided adapters
-The package ships two:
+The package ships four — `lambdaPlatform()` and three Netlify flavors (classic / v2 / background, detailed just below):
 - **`lambdaPlatform()`** — raw AWS Lambda `(event, context)`; bucket A via `context.getRemainingTimeInMillis()`; `formatResponse` → `{ statusCode, body }`.
 - **`netlifyPlatform()`** — Netlify **classic** Functions `(event, context)`; bucket A (Lambda-backed); reads `event.httpMethod`/`event.body`; returns `{ statusCode, body }`.
 
@@ -608,32 +619,34 @@ export const handler = async (event, context) => {
 ```
 The explicit `RequestContext` form (`kit.handle(payload, { getRemainingTimeMs, sourceFunction })`) remains the escape hatch for custom runtimes and tests where no adapter applies.
 
-# 10. Handler and Job Execution
+# 10. Job Execution (declarative module — ADR-025)
 
-Handlers orchestrate; they receive a DetectedEvent and a (source-extended) HandlerContext, decide which jobs run, and call `run()`. Significant work belongs in jobs. Jobs SHOULD be idempotent; retried jobs MUST NOT produce duplicate externally-visible effects unless safe.
+**[v0.3.9] There is no handler body.** A module *declares* a static `jobs` array; the **runtime** executes it. Optional `prepare(ctx)` runs once and is merged into every job's `ctx.input` (the migration vehicle for the legacy "init the sdk once, thread it into each job" pattern). Jobs SHOULD be idempotent; retried jobs MUST NOT produce duplicate externally-visible effects unless safe.
 
-**[v0.2] Reference handler (post-migration of `move.pickup.started`):**
+**Reference module (post-migration of `move.pickup.started`):**
 
 ```ts
-export const handler = hasuraEvent.handler<MoveRow>(async (event, ctx) => {
-  const { oldRow, newRow, role, userId } = ctx;
-  const driverStatusIsActionable = isDriverStatusActionable(oldRow?.driver_status, newRow?.driver_status);
-  const isFromDriver = role === 'driver';
-  const moveIsOperationallyDone = isMoveOperationallyDone({ moveType: oldRow?.move_type, moveStatus: oldRow?.status, moveCancelStatus: oldRow?.cancel_status });
-
-  return run(event, [
-    job(publishGenericWebhook, { input: { sdk, receivedAt: ctx.receivedAt, delaySeconds: 2,
-      getWebhookData: (...a) => getMoveWebhookData(...a, newRow?.id), getCustomerId: () => newRow?.customer_id } }),
-    job(handleSMSInitiation, { input: { move: newRow, role, userId } }),
-    job(runAR,   { input: { moveId: newRow?.id, sdk, role, userId } }),
-    job(runARV2, { input: { moveId: newRow?.id, eventKey: MOVE_PICKUP_STARTED_EVENT_KEY, sdk, userId, role }, metadata: { eventKey: MOVE_PICKUP_STARTED_EVENT_KEY } }),
-    driverStatusIsActionable && !isFromDriver && !moveIsOperationallyDone &&
-      job(sendDriverSilentPushNotification, { input: { oldMove: oldRow, newMove: newRow, sdk } }),
-  ]);
+export const movePickupStarted = defineEvent<MoveRow>({
+  name: 'move.pickup.started',
+  detector,                                   // the §3.2 switch-style detector
+  // prepare runs ONCE; its result is merged into every job's ctx.input.
+  prepare: hasuraEvent.prepare<MoveRow>((ctx) => {
+    const sdk = initSdk();
+    return { sdk, move: ctx.newRow, role: ctx.role, userId: ctx.userId };
+  }),
+  // A STATIC array — no conditionals, no run() call. Bare fns auto-wrap to job(fn).
+  jobs: [
+    publishGenericWebhook,
+    handleSMSInitiation,
+    runAR,
+    job(runARV2, { metadata: { eventKey: MOVE_PICKUP_STARTED_EVENT_KEY } }),
+  ],
 });
 ```
 
-`run()` owns execution semantics: building JobContext, emitting plugin callbacks, retries, timeouts, honoring AbortSignal cancellation, collecting outputs, serializing errors, returning records. Retries are owned semantically by core; durability (persisting/scheduling retries) is owned by BatchJobs (ADR-008). Timeouts may be set per-job (`timeoutMs`) or per-run; the runtime SHOULD propagate cancellation through AbortSignal.
+**No conditional entry.** The legacy `driverStatusIsActionable && … && job(sendDriverSilentPushNotification, …)` site is **not** expressible here (there is no handler to branch in, and a `false | JobDefinition` entry is a compile error — §9.5). It migrates one of two ways (§19.1): promote it to its **own event** (a `move.driver_status.actionable` detector + module whose single job is the push), or fold the guard **inside** the job (`sendDriverSilentPushNotification` early-returns when the condition doesn't hold). Both keep the branch *visible* — to observability and Flow Manifests — which a hidden handler conditional would not.
+
+The internal executor (`runJobs`, §9.5) owns execution semantics: building JobContext, emitting plugin callbacks, retries, timeouts, honoring AbortSignal cancellation, collecting outputs, serializing errors, returning records. Retries are owned semantically by core; durability (persisting/scheduling retries) is owned by BatchJobs. Timeouts may be set per-job (`timeoutMs`) or per-run (the module's `run: {…}`); the runtime SHOULD propagate cancellation through AbortSignal.
 
 # 11. Plugin Architecture
 
@@ -869,13 +882,18 @@ The Console evolves from an observability viewer into an architecture explorer (
 EventKit is published as `@hopdrive/eventkit` with optional capabilities behind subpath exports:
 
 ```ts
-import { createEventKit, job, run } from '@hopdrive/eventkit';
-import { hasuraEvent } from '@hopdrive/eventkit/sources/hasura';
-import { batchJobs } from '@hopdrive/eventkit/plugins/batchjobs';
+import { createEventKit, defineEvent, job } from '@hopdrive/eventkit';
+import { hasuraEvent } from '@hopdrive/eventkit/sources/hasura';   // also: hasuraCron, hasuraAction
+import { webhook } from '@hopdrive/eventkit/sources/webhook';
+import { netlifyPlatform } from '@hopdrive/eventkit/platforms';
 import { observability } from '@hopdrive/eventkit/plugins/observability';
+import { batchJobs } from '@hopdrive/eventkit/plugins/batchjobs';
+import { loopPrevention } from '@hopdrive/eventkit/plugins/loop-prevention';
+import { grafanaLogger } from '@hopdrive/eventkit/plugins/transports/grafana';
+import { sentry } from '@hopdrive/eventkit/plugins/transports/sentry';
 ```
 
-Internal structure: `/core /runtime /registry /sources/* /plugins/* /console /flow /testing`. Public extension contracts: `SourceAdapter`, `PlatformAdapter`, `EventModule`, `EventKitPlugin`, `EventEnvelope`, `DetectorContext`, `DetectedEvent`, `HandlerContext`, `JobContext`, `JobExecution`, `RequestContext`, `InvocationContext`, `EventKit` (with `use()`/`registerEvents()`/`handler()`), `FlowManifest`, `createEventKit()`, `job()`, `run()`. Provided platform adapters: `lambdaPlatform()`, `netlifyPlatform()` (and the planned `netlifyV2Platform()`/`netlifyBackgroundPlatform()`, §9.8). Semantic versioning; breaking changes to public contracts require a major version.
+The shipped subpaths are: `.` (root), `./core`, `./sources/hasura` (exports `hasuraEvent`/`hasuraCron`/`hasuraAction`), `./sources/webhook`, `./platforms`, `./plugins/batchjobs`, `./plugins/observability` (+ `./plugins/observability/graphql-sink`), `./plugins/loop-prevention`, `./plugins/transports/grafana`, `./plugins/transports/sentry`, and `./testing`. Internal structure: `/core /runtime /sources/* /plugins/* /platforms /testing`. Public extension contracts: `SourceAdapter`, `PlatformAdapter`, `EventModule`, `EventKitPlugin`, `EventEnvelope`, `DetectorContext`, `DetectedEvent`, `HandlerContext`, `JobContext`, `JobExecution`, `RequestContext`, `InvocationContext`, `EventKit` (with `use()`/`registerEvents()`/`handler()`), `FlowManifest`, `createEventKit()`, `defineEvent()`, `job()`. *(`run()` is **not** a public export — the executor is runtime-internal, ADR-025.)* Provided platform adapters: `lambdaPlatform()`, `netlifyPlatform()`, `netlifyV2Platform()`, `netlifyBackgroundPlatform()` (§9.8). Semantic versioning; breaking changes to public contracts require a major version.
 
 **[v0.2] Bundling validation is a release gate, not an assumption.** v0.1 reversed the planning decision (separate `@hopdrive/eventkit-*` packages) to a single package with deep subpath exports without recording the trade-off. Deep `exports`-map subpaths are a known "works locally, module-not-found at deploy" risk under Netlify's esbuild/zisi packager and the repo's `hopdrive-inline` step. Before adopting subpath exports, CI MUST include a Netlify-bundle smoke test that imports every subpath from a built function and resolves it in the packaged output. If that proves unreliable, the package family remains the fallback. (Note: this risk is in tension with §3.4's bundler-determinism rationale and MUST be resolved with evidence, not assertion.)
 
@@ -889,8 +907,8 @@ const kit = createEventKit(hasuraEvent);   // required source — first position
 kit.use(netlifyPlatform);                                   // optional platform — registered like any capability (§9.8)
 kit.use(observability, { graphql: { endpoint: cfg.graphqlUrl, adminSecret: cfg.graphqlSecret } });
 kit.use(batchJobs,     { graphql: { endpoint: cfg.graphqlUrl, adminSecret: cfg.graphqlSecret } });
-kit.use(trackingToken, { extractFromUpdatedBy: true });
-kit.use(grafanaLogger);
+kit.use(loopPrevention, { field: 'updated_by', serviceId: 'event-handlers' });
+kit.use(grafanaLogger, { logger: getLogger() });
 
 kit.registerEvents(events);
 ```
@@ -900,12 +918,17 @@ The runtime SHOULD validate registration before the first invocation (duplicate 
 **[v0.2] `EventModule.metadata` (recovers a lost concept).**
 
 ```ts
+// [v0.3.9, ADR-025] Declarative module — no `handler` field; built via defineEvent({...}).
 export interface EventModule<TPayload = unknown> {
   name: EventName;
   detector: DetectorFunction;
-  handler: HandlerFunction;
-  metadata?: EventModuleMetadata;  // description, tags, owner, flowHints, deprecated, relatedDocs
+  prepare?: PrepareFunction;                      // runs once; merged into every job's ctx.input
+  jobs?: (JobDefinition | JobFunction)[];         // static array; bare fns auto-wrap to job(fn)
+  resolve?: ResolveFunction;                       // [v0.3.11, ADR-026] request/response output
+  run?: RunOptions;                                // mode/continueOnFailure overrides
+  metadata?: EventModuleMetadata;                  // description, tags, owner, flowHints, deprecated, relatedDocs
 }
+// A module MUST declare `jobs` and/or `resolve` (a do-nothing module is a register-time error).
 ```
 
 `metadata` is optional and feeds static analysis, Flow hints, and the Console. It is registration-time metadata on the module, distinct from runtime `DetectedEvent.metadata`.
@@ -932,7 +955,7 @@ Migration is incremental and preserves working behavior. **[v0.2]** The honest f
 
 Recommended phases:
 1. Introduce `@hopdrive/eventkit` alongside the existing package; prove subpath bundling in CI (§17).
-2. Build the Hasura source adapter, including `HasuraHandlerContext`, `manuallyInvoked()`, and inbound provenance extraction.
+2. Build the Hasura source adapter, including `HasuraHandlerContext`, the column helpers (`columnChanged()` etc.), and inbound provenance extraction.
 3. Port shared primitives: `job()`/`run()` with the `input`/`metadata` split and pinned defaults; loggers; `serializeError`/`serializeOutput`/`replaceCircularReferences`.
 4. Implement the per-invocation entry (`createEventKit`/`handle`/`InvocationContext`) and the tracking-token plugin with the outbound stamping contract.
 5. Migrate event modules one at a time to the declarative shape (ADR-025): convert `(e,h) => run(...)` into `defineEvent({ name, detector, prepare?, jobs, run? })`. The detector ports nearly verbatim (already the `switch` house style). The handler's shared setup (the near-universal `sdk.apollo.initialize(...)` + threading `sdk`/`user`/`role` into each job) becomes `prepare`; the `jobs.push(job(fn, bag))` lines become the literal `jobs` array. Preserve event name, detector semantics, job names, retry behavior, and observability identifiers unless a deliberate, recorded change is made.
@@ -990,7 +1013,7 @@ The ~20 bespoke `app-*` / `build-*` / `get-*` / `save-*` endpoints are **convert
 
 # 20. Testing Strategy
 
-Validate at multiple layers: detector unit tests (insert/update/delete, changed/unchanged columns, missing rows, **manual invocations**, malformed payloads); handler tests (assert `run()` called with the expected, unconditional `JobDefinition[]` — and that a conditional entry is a type/throw error per §3.9); job tests (idempotency, retry safety, outputs, external errors, timeout, cancellation, reading `ctx.input` — including a plugin-injected baseline merged with handler input); plugin lifecycle tests (idempotency, failure handling, buffer/flush); source adapter normalization tests (incl. provenance extraction and `HasuraHandlerContext` construction); runtime integration tests through `createEventKit()`/`handle()`; flow tests; golden-trace tests for observability regressions.
+Validate at multiple layers: detector unit tests (insert/update/delete, changed/unchanged columns, missing rows, **manual invocations**, malformed payloads); module tests (assert the declared `jobs` array is the expected, unconditional set — and that a conditional entry is a type/throw error per §3.9 — plus `prepare`/`resolve` where present); job tests (idempotency, retry safety, outputs, external errors, timeout, cancellation, reading `ctx.input` — including a plugin-injected baseline merged with handler input); plugin lifecycle tests (idempotency, failure handling, buffer/flush); source adapter normalization tests (incl. provenance extraction and `HasuraHandlerContext` construction); runtime integration tests through `createEventKit()`/`handle()`; flow tests; golden-trace tests for observability regressions.
 
 **[v0.2]** The current test suite mocks the old call shape (`run` arity, `job(fn, options)` → `{fn, options}`, `options.jobName`, 2-arg detector calls). These mocks MUST be rewritten against the new contracts; the `jobName`-via-options assertion pattern maps to `JobOptions.name`/`metadata`. Shadow-mode parity (§19.7) is the primary safety net for money paths, above unit mocks.
 
@@ -1006,7 +1029,7 @@ ADR-001…010 are unchanged from v0.1 (source-agnostic; Hasura is a source adapt
 Decision: `job()` exposes `input` (request-scoped, live, never persisted) and `metadata` (serializable, persisted/recorded). Rationale: the current options bag carries live `sdk` clients and closures that cannot be serialized; durability/observability require a serializable channel; conflating them is the core incompatibility. Consequence: jobs read live deps from `ctx.input` and persisted annotations from `ctx.job.metadata`; the runtime never serializes `input`.
 
 ## ADR-012: Context augmentation is typed, not mutation-based.
-Decision: plugins/sources augment context through typed extension contracts (`buildHandlerContext`, `DurableJobContext.batch`, `ctx.trackingToken`), not by mutating shared options. Rationale: the current `scoped-job`/`jobExecutionId` mutation channel is hard to reason about and is deprecated by the plugin model. Consequence: `scoped-job.js` collapses; the per-request config path is `RequestContext`/`InvocationContext`.
+Decision: plugins/sources augment context through typed extension contracts (`buildHandlerContext`, `augmentJobContext`, `ctx.trackingToken`), not by mutating shared options. Rationale: the current `scoped-job`/`jobExecutionId` mutation channel is hard to reason about and is deprecated by the plugin model. Consequence: `scoped-job.js` collapses; the per-request config path is `RequestContext`/`InvocationContext`.
 
 ## ADR-013: One module-scoped runtime; per-request data flows through handle().
 Decision: `createEventKit()` runs once; `kit.handle(payload, request)` processes each invocation; per-request config travels in `RequestContext` and reaches plugins via `InvocationContext`. Rationale: per-invocation plugin registration leaks on warm lambdas and v0.1 left the entry point undefined. Consequence: `listenTo()` and `onPreConfigure` are replaced; `configureInvocation` is the sanctioned pre-detection config hook.
@@ -1034,7 +1057,7 @@ Decision: an event module is a declarative record — `defineEvent({ name, detec
 Rationale: ADR-018's branded `JobDefinition[]` only caught `cond && job(...)`; imperative `if (x) jobs.push(...)` compiled and ran, so the job set was not statically knowable — defeating the observability / react-flow / Flow-Manifest goals that justify the rewrite. A literal `jobs` array makes the set analyzable without execution and makes the conditional anti-pattern inexpressible. Forbidding fan-out and inter-job deps keeps every chain deterministic and every job a context-free, reusable unit. Moving execution into the runtime also removes the only reason a free `run()` needed `AsyncLocalStorage` to reach invocation state (a moving part flagged in the Phase 1 review). Consequence: `run()` becomes runtime-internal (no longer a consumer export); `RunOptions` move onto the module as `run: {…}`; `prepare` is the migration vehicle for the near-universal legacy pattern of initializing the SDK once and threading it into every job (`appointment.ready.js` et al.). The ~248 modules convert their `(e,h) => run(...)` handlers to `{ prepare?, jobs }`; the ≈14 conditional-job sites migrate per the playbook in §19.1. Supersedes ADR-018's "handler returns a strict `JobDefinition[]`" framing with "module declares a static `jobs` array"; the branded `JobDefinition` + runtime throw remain as the second line of defense.
 
 ## ADR-024: Generic-by-config plugins ship built-in; the app layer holds only config presets + SDK-coupled plugins. [v0.3.8]
-Decision: a plugin lives in **core** — shipped as a tree-shakeable subpath export of `@hopdrive/eventkit` (e.g. `./plugins/loop-prevention`, `./plugins/transports/grafana`, `./plugins/transports/sentry`, alongside `./plugins/batchjobs` and `./plugins/observability`) — iff its behavior is fully determined by injected config. It lives in a **HopDrive layer** only if it imports `@hopdrive/sdk-*`, knows domain tables (`moves`/`appointments`), or hardcodes a cross-service convention that cannot be expressed as config. By this test, **loop-prevention/tracking-token** (a pure `source|correlationId|jobExecutionId` codec — the legacy `tracking-token.ts` imports nothing HopDrive — plus a configurable read/write field path, separator, and a service identity), **grafanaLogger**, and **sentry** are all generic → built-in, parameterized by config (`loopPrevention({ field, codec, serviceId })`, `grafanaTransport({ endpoint, auth, labels })`, `sentry({ dsn })`). Rationale: the "HopDrive-specific" label conflated a generic *mechanism* with the *config* it is given; the secrets-as-injected-config rule (plugins never read `process.env`; the app injects config — §11, ADR-013) is precisely what makes "generic plugin + injected config" possible, so almost nothing needs to hide in a separate package. The outbound loop-prevention seam is already in core (`ctx.trackingToken` default `${source}.${correlationId}.${jobId}`, plugin-overridable — §13); the inbound read field is config. Consequence: **reverses the earlier plan** to home trackingToken/grafanaLogger/sentry in `@hopdrive/app-eventkit`. Phase 3 builds these as generic built-in subpath plugins. The HopDrive layer collapses to (a) config presets pinning the shared token format / `updated_by` field / service id so all repos stay mutually intelligible (data, not logic), (b) any genuinely SDK-coupled enrichment plugin, (c) the app's event modules (which already live in the consumer repos, not a shared lib). Whether `@hopdrive/app-eventkit` is a published package or just a shared config object in the consumer repos is deferred (D23, new); if it shrinks to config presets it may not warrant a package at all.
+Decision: a plugin lives in **core** — shipped as a tree-shakeable subpath export of `@hopdrive/eventkit` (e.g. `./plugins/loop-prevention`, `./plugins/transports/grafana`, `./plugins/transports/sentry`, alongside `./plugins/batchjobs` and `./plugins/observability`) — iff its behavior is fully determined by injected config. It lives in a **HopDrive layer** only if it imports `@hopdrive/sdk-*`, knows domain tables (`moves`/`appointments`), or hardcodes a cross-service convention that cannot be expressed as config. By this test, **loop-prevention/tracking-token** (a pure `source|correlationId|jobExecutionId` codec — the legacy `tracking-token.ts` imports nothing HopDrive — plus a configurable read/write field path, separator, and a service identity), **grafanaLogger**, and **sentry** are all generic → built-in, parameterized by config (`loopPrevention({ field, codec, serviceId })`, `grafanaLogger({ logger })` or `grafanaLogger({ grafana: { endpoint, auth, labels } })`, `sentry({ dsn })`). Rationale: the "HopDrive-specific" label conflated a generic *mechanism* with the *config* it is given; the secrets-as-injected-config rule (plugins never read `process.env`; the app injects config — §11, ADR-013) is precisely what makes "generic plugin + injected config" possible, so almost nothing needs to hide in a separate package. The outbound loop-prevention seam is already in core (`ctx.trackingToken` default `${source}.${correlationId}.${jobId}`, plugin-overridable — §13); the inbound read field is config. Consequence: **reverses the earlier plan** to home trackingToken/grafanaLogger/sentry in `@hopdrive/app-eventkit`. Phase 3 builds these as generic built-in subpath plugins. The HopDrive layer collapses to (a) config presets pinning the shared token format / `updated_by` field / service id so all repos stay mutually intelligible (data, not logic), (b) any genuinely SDK-coupled enrichment plugin, (c) the app's event modules (which already live in the consumer repos, not a shared lib). Whether `@hopdrive/app-eventkit` is a published package or just a shared config object in the consumer repos is deferred (D23, new); if it shrinks to config presets it may not warrant a package at all.
 
 ## ADR-023: Hasura source adapters named by transport — `hasuraEvent` and `hasuraCron`.
 Decision: provide two Hasura-origin source adapters rather than "hasura + a generic cron." `hasuraEvent` handles DB event triggers (`sourceType:'database'`; rows/operation/columnChanged context); `hasuraCron` handles Hasura scheduled triggers (`sourceType:'cron'`; `scheduleName`/`scheduledAt`/`payload` context). Rationale: HopDrive's cron is a Hasura scheduled-trigger payload — a sibling of the DB-event payload, not a generic scheduler — so naming the adapters for their actual transport is honest and echoes the current package's `hasuraEvent` export; it also leaves a generic `'cron'` `sourceType` open for a future non-Hasura scheduler (a different adapter). Consequence: `createEventKit(hasura)` → `createEventKit(hasuraEvent)`; cron functions use `createEventKit(hasuraCron)`; authoring helpers split into `hasuraEvent.detector`/`.handler` and `hasuraCron.detector`/`.handler`. Both `provides: ['source']`; one source per kit.

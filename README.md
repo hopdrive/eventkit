@@ -1,16 +1,17 @@
 # @hopdrive/eventkit
 
-Source-agnostic business-event execution framework — the successor to
+Source-agnostic business-event execution framework. It's the successor to
 `@hopdrive/hasura-event-detector`. Hasura becomes one *source adapter* among many
-(webhooks, cron, …) rather than the center of the architecture. You name business
-events, declare the jobs they run, and the runtime detects, runs, observes, and
-(optionally) makes them durable.
+(webhooks, cron, and more) instead of the center of the architecture. You name business
+events, declare the jobs they run, and the runtime detects them, runs them, observes
+them, and (optionally) makes them durable.
 
-> **Status: in development (Phases 0–5 complete).** The runtime detects and runs jobs
-> end-to-end for Hasura DB triggers (`hasuraEvent`) and scheduled triggers
-> (`hasuraCron`), with the built-in plugins and platform adapters. Not yet published.
-> Design source of truth: `hasura-event-detector/docs/eventkit-rewrite/` (RFC v0.3.9 +
-> the kickoff doc, in `docs/planning/`). A few items below are marked **planned** — specified, not yet built.
+> **Status: built, shipping soon.** The runtime detects and runs jobs end to end for
+> Hasura DB triggers (`hasuraEvent`), scheduled triggers (`hasuraCron`), vendor webhooks
+> (`webhook`), and Hasura Actions (`hasuraAction`), with the built-in plugins, the
+> platform adapters, and the request/response capability. Not on npm yet. The design
+> record lives in `docs/planning/`. A few items below are marked **planned**, meaning
+> specified but not built yet.
 
 ---
 
@@ -19,6 +20,9 @@ events, declare the jobs they run, and the runtime detects, runs, observes, and
 ```bash
 npm install @hopdrive/eventkit
 ```
+
+> Not published to npm yet (see status above) — the command above is how you'll install it
+> once it ships. Until then, consume it via a local file link / workspace.
 
 Dual ESM/CJS, TypeScript types included. Imports are by **subpath**, so a serverless
 function only bundles what it uses.
@@ -53,8 +57,9 @@ const appointmentReady = defineEvent({
   }),
   // runs once before the jobs; merged into every job's ctx.input
   prepare: (ctx) => ({ sdk: initSdk(), appointment: ctx.newRow }),
-  // a STATIC list — the runtime runs them; there is no handler body
-  jobs: [job(sendOfferSMS), job(notifyOrg, { retries: 3 })],
+  // a STATIC list, the runtime runs them. no handler body.
+  // a bare function IS a job; wrap with job() only to pass options.
+  jobs: [sendOfferSMS, job(notifyOrg, { retries: 3 })],
 });
 
 // 2. Build the kit ONCE at module scope; register the source (positional) + plugins.
@@ -87,21 +92,21 @@ EventKit answers the same three questions for every inbound signal, regardless o
 | What business event did it represent? | a named **DetectedEvent** (your `detector`) |
 | What work ran because of it? | a recorded **JobExecution** per `job` |
 
-That answer-set is the entire runtime data model — observability, durability, and flow
-tooling all build on it.
+Those three answers are the entire runtime data model. Observability, durability, and
+flow tooling all build on top of them.
 
 ## Event modules (`defineEvent`)
 
-A module is a declarative record. **There is no handler function** — you declare the
-jobs and the runtime runs them.
+A module is a declarative record. There's no handler function. You declare the jobs and
+the runtime runs them.
 
 ```ts
 defineEvent<TPayload>({
   name,           // business event name (the identity)
-  detector,       // (ctx) => boolean — the predicate; keep the switch house style
-  prepare?,       // (ctx) => shared — runs once; result merges into every job's input
-  jobs?,          // JobDefinition[] — a STATIC array literal of job(fn, opts?)
-  resolve?,       // (ctx) => output — request/response seam (ADR-026); maps to the wire response
+  detector,       // (ctx) => boolean. the predicate, keep the switch house style
+  prepare?,       // (ctx) => shared. runs once, merges into every job's input
+  jobs?,          // a STATIC list of bare functions (or job(fn, opts) when you need options)
+  resolve?,       // (ctx) => output. request/response seam (ADR-026), maps to the wire response
   run?,           // RunOptions for the batch (mode / continueOnFailure / timeoutMs)
   metadata?,      // registration-time hints for tooling
 });  // a module must declare jobs and/or resolve
@@ -109,28 +114,32 @@ defineEvent<TPayload>({
 
 Three rules keep every event chain deterministic and analyzable:
 
-- **No conditional job inclusion.** `jobs` is a static literal — there's no handler body
-  to branch in. A condition either *defines a different event* (put it in a `detector`
-  and give it a name) or *means a job has nothing to do* (short-circuit at the top of the
-  job on its own `ctx.input`).
-- **No fan-out.** The job set is fixed. Data-driven multiplicity goes *inside a job* or via
-  DB writes that trigger further events — never N emitted jobs.
+- **No conditional job inclusion.** `jobs` is a static literal, so there's no handler body
+  to branch in. A condition either *defines a different event* (put it in a `detector` and
+  give it a name) or *means a job has nothing to do* (short-circuit at the top of the job
+  on its own `ctx.input`).
+- **No fan-out.** The job set is fixed. Data-driven multiplicity goes *inside a job*, or
+  via DB writes that trigger further events. Never N emitted jobs.
 - **No inter-job dependencies.** Sibling jobs are mutually ignorant of each other's
-  existence, result, order, and input. A job behaves identically regardless of which
-  siblings exist.
+  existence, result, order, and input. A job behaves the same no matter which siblings
+  exist.
 
 `prepare` is where shared, request-scoped references go (an initialized `sdk`, a fetched
-row, helper closures). Input merge precedence, lowest → highest: **plugin baselines →
-`prepare` → per-job `input`**.
+row, helper closures). Input merges lowest to highest: plugin baselines, then `prepare`,
+then per-job `input`.
 
 ## Jobs (`job()`)
+
+A job in the `jobs` array is just a function reference, and the runtime wraps it for you.
+You only reach for `job(fn, { ... })` when you need to override a setting for that one job.
+Pass the options as the second argument.
 
 ```ts
 job(fn, {
   retries?,            // in-process retry attempts (durable/delayed retries are BatchJobs')
   timeoutMs?,          // per-job deadline; runtime marks it `timed_out`
   continueOnFailure?,  // per-job override of the run-level default
-  name?,               // stable identity for observability (else fn.name — set it to survive minification)
+  name?,               // stable identity for observability (else fn.name, set it to survive minification)
   tags?,               // labels
   input?,              // live data: an object OR a pure (ctx) => object mapper; merges highest
   metadata?,           // serializable; persisted by BatchJobs, recorded by Observability
@@ -138,52 +147,53 @@ job(fn, {
 ```
 
 `RunOptions` (on the module's `run`) default to **`mode: 'parallel'`,
-`continueOnFailure: true`** (pinned — a flaky job never blocks a sibling). Opt into
-`mode: 'series'` + `continueOnFailure: false` to stop-and-skip on first failure.
+`continueOnFailure: true`**. These are pinned, so a flaky job never blocks a sibling. Opt
+into `mode: 'series'` + `continueOnFailure: false` to stop and skip on the first failure.
 
-> There is **no public `run()`** — the runtime runs the declared `jobs` (ADR-025).
+> There is **no public `run()`**. The runtime runs the declared `jobs` (ADR-025).
 
 ## Sources
 
 A source normalizes an inbound signal and supplies the typed context. **Exactly one per
 kit** (the positional arg to `createEventKit`).
 
-- **`hasuraEvent`** — Hasura DB event triggers. Detector context: `operation`,
-  `oldRow`/`newRow`/`row`, `inserted()`/`updated()`/`deleted()`/`manuallyInvoked()`,
-  `columnChanged()`/`columnAdded()`/`columnRemoved()`, `previousValue()`/`currentValue()`.
+- **`hasuraEvent`**. Hasura DB event triggers. Detector context: `operation` (branch on it
+  with a `switch`; `case 'MANUAL': return false` suppresses console edits),
+  `oldRow`/`newRow`/`row`, `columnChanged()`/`columnAdded()`/`columnRemoved()`,
+  `previousValue()`/`currentValue()`.
   Authoring helpers `hasuraEvent.detector<Row>(fn)` / `hasuraEvent.prepare<Row>(fn)`.
-- **`hasuraCron`** — Hasura scheduled triggers. Context: `scheduleName`, `scheduledAt`,
+- **`hasuraCron`**. Hasura scheduled triggers. Context: `scheduleName`, `scheduledAt`,
   `payload`.
-- **`webhook`** — vendor webhooks (`{ vendor, verify, eventTypeHeader }`); context exposes
-  `signatureVerified`, `vendor`, `eventType`, `body`. A status-contract vendor (Stripe)
-  uses `resolve` + a thrown `ClientError(status, …)`.
-- **`hasuraAction`** — a **request/response** source for Hasura Actions
+- **`webhook`**. Vendor webhooks (`{ vendor, verify, eventTypeHeader }`). The context
+  exposes `signatureVerified`, `vendor`, `eventType`, `body`. A status-contract vendor
+  (Stripe) uses `resolve` plus a thrown `ClientError(status, ...)`.
+- **`hasuraAction`**. A **request/response** source for Hasura Actions
   (`sourceType:'action'`, gated by Hasura's permission model). Context: `actionName`,
-  `input`, `sessionVariables`, `requestQuery?`. A module's `resolve` returns the output;
-  the **generic** platform adapter you register (`netlifyV2Platform`/`netlifyPlatform`/
-  `lambdaPlatform`) maps it → 2xx, and a thrown `ActionError(message, code?)` → 4xx
+  `input`, `sessionVariables`, `requestQuery?`. A module's `resolve` returns the output,
+  and the generic platform adapter you register (`netlifyV2Platform`/`netlifyPlatform`/
+  `lambdaPlatform`) maps it to 2xx. A thrown `ActionError(message, code?)` maps to 4xx
   `{ message, extensions: { code? } }` (no dedicated action platform). The bespoke `app-*`
-  endpoints are *converted* to actions over time (see the migration playbook), not migrated.
+  endpoints get *converted* to actions over time (see the migration playbook), not migrated.
 
 ## Plugins
 
-Generic and config-driven; registered via `kit.use(plugin, config?)`. I/O plugins take an
-**injected transport seam** (`sink` / `store` / `logger` / `send`) — they never read
-`process.env`; the app passes config.
+Generic and config-driven, registered via `kit.use(plugin, config?)`. I/O plugins take an
+**injected transport seam** (`sink` / `store` / `logger` / `send`). They never read
+`process.env`. The app passes the config.
 
 | Plugin | Subpath | Registers |
 |---|---|---|
-| `observability` | `/plugins/observability` | `{ sink, strict? }` — buffers Invocation→Event→Job, flushes once per invocation |
+| `observability` | `/plugins/observability` | `{ sink, strict? }`. Buffers Invocation→Event→Job, flushes once per invocation |
 | `graphqlSink` | `/plugins/observability/graphql-sink` | the built-in observability `sink` (bulk-upsert to Hasura) |
-| `batchJobs` | `/plugins/batchjobs` | `{ store, logFlush? }` — durability; `requires:['source:hasura']` |
-| `loopPrevention` | `/plugins/loop-prevention` | `{ field?, serviceId?, codec? }` — inbound provenance → `envelope.meta` |
+| `batchJobs` | `/plugins/batchjobs` | `{ store, logFlush? }`. Durability. `requires:['source:hasura']` |
+| `loopPrevention` | `/plugins/loop-prevention` | `{ field?, serviceId?, codec? }`. Inbound provenance into `envelope.meta` |
 | `grafanaLogger` | `/plugins/transports/grafana` | `{ logger }` (bridge to sdk-server-logger) or `{ grafana: { endpoint, auth } }` (direct Loki) |
-| `sentry` | `/plugins/transports/sentry` | `{ dsn?, send? }` — forwards `onError` |
+| `sentry` | `/plugins/transports/sentry` | `{ dsn?, send? }`. Forwards `onError` |
 
-> Durability is **emergent from registering `batchJobs`** — there is no `durable` flag; a
-> job stays batch-unaware. A built-in `graphqlBatchJobStore` is *planned*; provide your own
-> `store.update(id, fields)` meanwhile. These plugins are generic (ADR-024) — there is no
-> separate `@hopdrive/app-eventkit` package; HopDrive supplies config presets.
+> Durability is **emergent from registering `batchJobs`**. There's no `durable` flag, and
+> the job stays batch-unaware. A built-in `graphqlBatchJobStore` is *planned*. Until then,
+> provide your own `store.update(id, fields)`. These plugins are generic (ADR-024), so
+> there's no separate `@hopdrive/app-eventkit` package. HopDrive just supplies config presets.
 
 ## Platform adapters
 
@@ -191,33 +201,34 @@ Map a deployment runtime's invocation, time budget, and response. Register via `
 the source stays the positional arg. Use `kit.handler()` (adapter owns the signature) or a
 thin `kit.handle(...)`.
 
-- `netlifyPlatform()` — Netlify classic (`{ statusCode, body }`)
-- `netlifyV2Platform({ maxExecutionMs? })` — Netlify v2 / Web `Request`→`Response`
-- `netlifyBackgroundPlatform({ maxExecutionMs? })` — 15-min background / 202
-- `lambdaPlatform()` — AWS Lambda
+- `netlifyPlatform()`. Netlify classic (`{ statusCode, body }`)
+- `netlifyV2Platform({ maxExecutionMs? })`. Netlify v2 / Web `Request`→`Response`
+- `netlifyBackgroundPlatform({ maxExecutionMs? })`. 15-min background / 202
+- `lambdaPlatform()`. AWS Lambda
 
-The `before` hook on `kit.handler({ before })` runs pre-dispatch; return a
-platform-agnostic `{ status, body }` to short-circuit (auth / method) and the adapter's
+The `before` hook on `kit.handler({ before })` runs pre-dispatch. Return a
+platform-agnostic `{ status, body }` to short-circuit (auth or method) and the adapter's
 `formatRejection` shapes it to the runtime's native response.
 
 ## Testing
 
 From `@hopdrive/eventkit/testing`:
 
-- `fakeSource(opts?)` — minimal in-memory source for unit tests
-- `defineFakeEvent(name, detector, jobs, opts?)` — assemble a module without a real source
-- `buildDetectorContextFor(...)` / `buildHandlerContextFor(...)` — exercise a detector/job
-  against any source's context
+- `fakeSource(opts?)`. A minimal in-memory source for unit tests.
+- `defineFakeEvent(name, detector, jobs, opts?)`. Assemble a module without a real source.
+- `buildDetectorContextFor(...)` / `buildHandlerContextFor(...)`. Exercise a detector or job
+  against any source's context.
 
 ## Docs
 
-- **Guide** — `docs/guide.html`: the narrative walkthrough (before/after vs.
+- **Guide.** `docs/guide.html` is the narrative walkthrough (before/after vs.
   `hasura-event-detector`, the plugin model, migration patterns) plus a curated API
   reference. Open it in a browser.
-- **API reference (generated)** — `npm run docs` → `docs/api/`: the exhaustive,
+- **API reference (generated).** Run `npm run docs` to build `docs/api/`, the exhaustive,
   every-symbol reference generated from source, so it can't drift.
-- **Design** — the RFC, ADRs, kickoff, decision register, and raw planning conversations
-  in [`docs/planning/`](docs/planning/) (see its `README.md` for the read order).
+- **Design record.** The architecture decisions, ADRs, kickoff, decision register, and raw
+  planning conversations live in [`docs/planning/`](docs/planning/) (see its `README.md`
+  for the read order).
 
 ## Develop
 
@@ -233,8 +244,8 @@ npm run docs                 # generate docs/api/ via typedoc
 
 Open decisions are proceeding on recommended defaults (D19 positional source, D20
 qualified capability tokens, D22 lazy plugin instantiation, D6 shadow-mode parity, D7 no
-compat facade, D8 single package + subpath exports gated on the bundle smoke test) —
-flagged for ratification in the RFC.
+compat facade, D8 single package + subpath exports gated on the bundle smoke test). They're
+flagged for ratification in the design record.
 
 ## License
 

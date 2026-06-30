@@ -1,29 +1,52 @@
 # EventKit — Open Decisions Register
 
 **Date:** 2026-06-28
-**Purpose:** The decisions that must be made by a human before the v0.2 canonical draft (`EventKit Architecture RFC v0.2 (canonical-draft).md`) can be ratified and drive implementation. Each entry records **what the decision is, where it came from, the options, the blast radius, a recommendation, and what stays blocked until it is answered.**
+**Purpose:** The decisions that must be made by a human before the v0.2 canonical draft (`architecture.md`) can be ratified and drive implementation. Each entry records **what the decision is, where it came from, the options, the blast radius, a recommendation, and what stays blocked until it is answered.**
 ---
 
-## STATUS AS OF RFC v0.3.5 (2026-06-28) — read this first
+## STATUS AS OF v0.3.13 (canonical RFC) — read this first; this block is authoritative
 
-The design moved a lot after this register was first written. Current state, so nothing is lost on context compaction:
+The framework is now **built**. This status block is the current truth; the per-decision bodies below
+are the **original register, kept for provenance** — their `Decision: _____` blanks are historical, not
+live prompts. Where a decision has shipped, the code (not a blank line) is the source of truth.
 
-**RESOLVED (decided; folded into the RFC + `EventKit-design-changes-202606282030.md`):**
+**RESOLVED & IMPLEMENTED (folded into the canonical RFC + `design-rationale.md`):**
 - **D1** job data channel → `input` (live) vs `metadata` (persisted). **ADR-011 / CHG-1.**
-- **D2** durable model → **evolved past the original options:** durability is now *emergent from registering the BatchJobs plugin* (no `durable` flag; plugin injects the row's `input` and self-correlates). **ADR-015 (revised) + ADR-017 + ADR-020 / CHG-2, CHG-7.**
-- **D3** `run()` defaults → `mode:'parallel'`, `continueOnFailure:true`. **ADR-014 / CHG-3-adjacent.**
-- **D4** per-invocation entry + module-scoped kit. **ADR-013 / CHG-4-adjacent.**
-- **D5** tracking-token loop prevention → framework seams (outbound `ctx.trackingToken`) + a **generic built-in `loopPrevention` plugin** for the inbound field-read, parameterized by config (field/codec/serviceId). **ADR-016**, packaging revised by **ADR-024** (no longer an app-only plugin).
-- **D14** one source per kit → **yes**, now `createEventKit(hasura)` (positional). **ADR-019 / CHG-5, CHG-10, CHG-11.**
-- **New decisions made along the way:** declarative handlers / no conditional jobs (**ADR-018**); plugins self-correlate, jobs plugin-agnostic (**ADR-017**); `augmentJobContext` context contribution (**ADR-020**); platform adapters (**ADR-021**); plugin **composition model** — 3 hook shapes, default-always-runs, DI-not-inheritance, `on…` vs verb naming (**ADR-022**); `kit.use(plugin, config?)` + positional `createEventKit(source, config?)` (**ADR-019 revised**).
+- **D2** durable model → durability is *emergent from registering the BatchJobs plugin* (no `durable` flag, no `batchJobs.record()`, no `ctx.batch`; plugin injects the row's `input` and self-correlates). **ADR-015 (revised) + ADR-017 + ADR-020 / CHG-2, CHG-7.**
+- **D3** `run()` defaults → `mode:'parallel'`, `continueOnFailure:true`. **ADR-014.**
+- **D4** per-invocation entry + module-scoped kit (`createEventKit(...).handler()`). **ADR-013.**
+- **D5** tracking-token loop prevention → framework seams + built-in `loopPrevention` plugin. **ADR-016 / ADR-024.**
+- **D7** compatibility facade → **no facade**; modules are fully declarative (`defineEvent`, no `run()` call), so there is no legacy call shape to wrap. **ADR-025.**
+- **D8** package shape → **single package + subpath exports**, shipped. **ADR-024 / CHG-14.**
+- **D9** Compare/Console → observability + `graphqlSink` shipped; Console/Compare phased behind (Observed Mode first).
+- **D11** async detectors → allowed-but-discouraged; `boolean | Promise<boolean>`, no detection timeout. (a) shipped.
+- **D12** observability failure mode → best-effort default (graceful degrade in `graphql-sink`). (a) shipped.
+- **D14** one source per kit → **yes**, positional `createEventKit(hasuraEvent)`. **ADR-019 / CHG-5, CHG-10, CHG-11.**
+- **D15** `progress()` units → `[0,1]`.
+- **D17** MANUAL suppression → **the `manuallyInvoked()` helper was removed**; suppression is `case 'MANUAL': return false` in the `switch (ctx.operation)` house style. (Reversed the v0.2 "restore the helper" decision — see body note.)
+- **D18** `EventModule.metadata` optional field set → shipped.
+- **D19** registration → positional `createEventKit(source, config?)` + `.use()`. (C) shipped.
+- **D20** capability tokens → qualified (`'source:hasura'`). (a) shipped.
+- **D21** `netlifyV2Platform` time bucket → built (resolved at impl).
+- **D22** plugin instantiation → lazy (kit-owned). (a) shipped.
+- **D23** `@hopdrive/app-eventkit` package → **no package**; generic plugins are built-in subpath exports. **ADR-024.**
+- **Plus** declarative modules / no conditional jobs (**ADR-025**, supersedes ADR-018); plugins self-correlate (**ADR-017**); `augmentJobContext` (**ADR-020**); platform adapters (**ADR-021**); plugin composition model (**ADR-022**); `webhook`/`hasuraAction` sources + `resolve` request/response (**ADR-026**).
 
-**STILL OPEN — the remaining decisions:** **D6, D7, D8, D9, D10** (HIGH); **D11, D12, D13** (MEDIUM); **D15–D18** (LOW, safe to default); plus newly surfaced **D19–D22** and **D23** (ADR-024 packaging, LOW — defaults to "no package", not a Phase-0/1 gate) (added at the bottom). These are the items that still need a human call before/while implementing.
+**GENUINELY STILL OPEN — these are process/migration calls with no code yet:**
+- **D6** (HIGH) — shadow-mode parity vs straight cutover for money/loop-critical paths.
+- **D10** (HIGH) — event-name migration policy (preserve all names vs recorded renames).
+- **D13** (MEDIUM) — `metadata` serializability enforcement strictness (runtime check vs types-only).
 
 ---
 
-**How to use:** Fill in the `Decision:` line for each. Anything left blank inherits the **Recommendation** when the RFC is ratified. Decisions are grouped by tier: **BLOCKING** (now all resolved — kept for the record), **HIGH** (shapes a large surface; cheap now, expensive later), **MEDIUM** (scopes/sequences work), **LOW** (conventions; safe to default), **NEW** (surfaced after the original register).
+**How to use:** the status block above is current. The bodies below are the original register; read them
+for the *why* behind each call. Tiers: **BLOCKING** / **HIGH** / **MEDIUM** / **LOW** / **NEW**.
 
-Provenance shorthand: **v0.1** = original RFC; **v0.2** = canonical draft; **EVAL** = `EventKit-design-evaluation-202606281700.md`; **REVIEW** = `EventKit-design-review-202606281600.md`; **A–E** = the amendment docs; **CONV** = the raw planning conversations; **CODE** = current source in `hasura-event-detector` / `event-handlers`.
+Provenance shorthand: **v0.1** = the original RFC; **v0.2** = canonical draft (now v0.3.13); the **why**
+behind the resolved items is distilled in **`design-rationale.md`**; **CONV** = the raw planning
+conversations in `raw-conversations/`; **CODE** = current EventKit source / legacy `event-handlers`.
+(The earlier EVAL / REVIEW / amendment A–E docs cited below have been removed; their conclusions live in
+`design-rationale.md` and the canonical RFC's ADRs.)
 
 ---
 
@@ -221,7 +244,7 @@ Provenance shorthand: **v0.1** = original RFC; **v0.2** = canonical draft; **EVA
 - (b) Multi-source routing in one kit. Needs a claim/dispatch rule (by sourceType? by payload shape?) and conflict handling — real complexity for no current use case.
 **Blast radius:** Runtime routing logic; entrypoint shape.
 **Recommendation:** (a); revisit (b) only when a concrete multi-source-per-function case exists.
-**Decision:** ✅ **RESOLVED 2026-06-28 — (a) one source per kit.** API is now `createEventKit({ source: hasura.source() })` (singular). See `EventKit-design-changes-202606282030.md` CHG-5 / ADR-019.
+**Decision:** ✅ **RESOLVED — (a) one source per kit.** Final API is positional: `createEventKit(hasuraEvent)` (the source is the first arg; the early `{ source: ... }` object form was dropped). See `design-change-log.md` CHG-5/10/11 / ADR-019.
 
 ---
 
@@ -233,8 +256,8 @@ Provenance shorthand: **v0.1** = original RFC; **v0.2** = canonical draft; **EVA
 ### D16. Factory/naming ratification
 `createEventKit` (vs CONV's `createEventRuntime`); `hasura.detector` / `hasura.handler`; package scope `@hopdrive/eventkit`. Origin: CONV used `createEventRuntime`; everything else consistent. **Recommendation:** keep v0.2 names. **Decision:** _______
 
-### D17. `manuallyInvoked()` default behavior
-Provide the helper (confirmed needed, D-less — already in v0.2 §8); confirm modules opt into suppression explicitly (`if (ctx.manuallyInvoked()) return false`) rather than the framework suppressing MANUAL globally. **Recommendation:** explicit per-module (preserves current per-module `case 'MANUAL': return false`). **Decision:** _______
+### D17. MANUAL suppression behavior
+**Decision:** ✅ **RESOLVED — the `manuallyInvoked()` helper was removed** (along with `inserted()/updated()/deleted()`). MANUAL suppression stays explicit and per-module, expressed directly in the house style: `switch (ctx.operation) { … case 'MANUAL': return false }`. This reverses the v0.2 "restore the helper" recommendation — the operation-predicate helpers added surface area the `switch (ctx.operation)` style already covers. The framework does **not** suppress MANUAL globally; each detector decides.
 
 ### D18. `EventModule.metadata` fields
 Confirm the optional set: `description, tags, owner, flowHints, deprecated, relatedDocs` (v0.2 §18). **Recommendation:** ship the set as optional; nothing depends on it at runtime. **Decision:** _______
@@ -291,6 +314,17 @@ Confirm the optional set: `description, tags, owner, flowHints, deprecated, rela
 **Blast radius:** Where consumers import their loop-prevention/transport config from; one more package to version + release if (b).
 **Recommendation:** (a) — defer the package; revisit if a SDK-coupled enrichment plugin materializes. Not a Phase-0/1 gate; only matters at Phase 3 (plugins) / Phase 6 (first migration wiring).
 **Decision:** _______
+
+---
+
+### D24. Package version & repo strategy vs the predecessor [added 2026-06-30]
+**Question:** What initial `@hopdrive/eventkit` version should ship, and should EventKit replace the code in the `hasura-event-detector` repo (then rename the repo) or live in its own brand-new repo?
+**Origin:** EventKit is a new package name succeeding `@hopdrive/hasura-event-detector` (latest published `2.3.6`). The migration is gradual (~245 modules), so both packages run in production simultaneously for months.
+**Decision:** ✅ **RESOLVED 2026-06-30.**
+- **Version → start `0.1.0`, cut `1.0.0` at the first live prod migration (API freeze).** *Not* `3.0.0`: version numbers don't carry across package names, a `3.0.0` start leaves a confusing 1.x/2.x gap on a brand-new package and overstates maturity (still unpublished, open migration calls D6/D10/D13). Lineage is recorded in docs (the README "successor" note + `design-rationale.md`), not the version integer.
+- **Repo → keep EventKit as its own brand-new repo; do NOT replace-and-rename `hasura-event-detector`.** Reasons: (1) the predecessor must stay independently patchable during the long migration — overwriting its repo removes the home for a `hasura-event-detector@2.3.x` bugfix; (2) the two packages version independently while both are live in prod — one non-monorepo repo can't do that cleanly; (3) the renamed repo's history would be the old codebase + one wholesale replacement commit (the clean eventkit history is worth more); (4) a repo rename still breaks Netlify/CI/deploy references that GitHub redirects don't cover.
+- **End-state:** when the last consumer is migrated, `npm deprecate @hopdrive/hasura-event-detector "use @hopdrive/eventkit"` and archive the old repo. A standalone clean package is also trivial to absorb into the eventual monorepo.
+**Blast radius:** Release/versioning story; migration ops; the eventual monorepo move.
 
 ---
 

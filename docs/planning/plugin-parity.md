@@ -1,6 +1,16 @@
 # EventKit Plugin Parity Punch-List (2026-06-28)
 
-**For the build agent.** The prebuilt plugins in `/Users/robnewton/Github/eventkit/src/plugins/` are written and structurally sound, but a parity review against the originals found functional regressions. This list is the work to bring each to **no-loss-of-functionality** parity with `hasura-event-detector` + the `event-handlers` consumer.
+> **✅ STATUS: COMPLETE — this is a verification record, not pending work. Do not re-implement.**
+> Every **P0** and **P1** item below shipped and is verified in current source:
+> - **P0 correlation chaining / parent-job linkage** — `loop-prevention/index.ts` returns `correlationId` + `meta.sourceTrackingToken` + `meta.sourceJobId` from `augmentEnvelope`; `observability/graphql-sink.ts` persists `source_job_id` with FK graceful-degrade.
+> - **P0 durable delayed retry + schema** — `batchjobs/index.ts` schedules delayed rows via `store.enqueueDelayed` with `delay_ms`/`delay_key` dedup, and documents the in-process-vs-durable retry boundary.
+> - **P1 multi-strategy extraction** — `loop-prevention` ships `updatedByPattern`, session-variable, and metadata-key strategies (defaults on).
+> - **P1 grafana** — `transports/grafana` exports **`grafanaLogger`** (not `grafanaTransport`) with two modes: injected `@hopdrive/sdk-server-logger` *or* direct Loki with configurable labels.
+> - **P1 sentry** — `transports/sentry` derives the envelope endpoint + `X-Sentry-Auth` from the DSN, with an injectable `send`.
+>
+> The only items that remain genuinely open are **process sign-offs, not code**: the shadow-mode parity diff for the first migration (P2) and confirming with Rob which extraction strategies HopDrive relies on (P1, line 53). The detailed list below is kept as the record of what was done and why.
+
+**For the build agent (original framing — superseded by the status above).** The prebuilt plugins in `/Users/robnewton/Github/eventkit/src/plugins/` are written and structurally sound, but a parity review against the originals found functional regressions. This list is the work to bring each to **no-loss-of-functionality** parity with `hasura-event-detector` + the `event-handlers` consumer.
 
 Scope: `loop-prevention`, `batchjobs`, `transports/grafana`, `transports/sentry`. **Observability is owned by another agent** — coordinate on the two shared seams flagged below (`source_job_id`, the `ObservabilityBatch` fields), don't duplicate.
 
@@ -58,7 +68,7 @@ The original enabled four extraction strategies by default (`tracking-token-extr
 
 ## P1 — grafana: match the existing Grafana setup
 
-The original delegates to `@hopdrive/sdk-server-logger` (`grafanaLoggerPlugin.js:20`); the new `grafanaTransport` talks raw Loki HTTP. The raw approach is architecturally correct per ADR-024 (the SDK-coupled version would be HopDrive-layer), but it won't match the live dashboards out of the box.
+The original delegates to `@hopdrive/sdk-server-logger` (`grafanaLoggerPlugin.js:20`); the new `grafanaLogger` (then named `grafanaTransport`) talks raw Loki HTTP. The raw approach is architecturally correct per ADR-024 (the SDK-coupled version would be HopDrive-layer), but it won't match the live dashboards out of the box.
 
 - [ ] Verify the Loki **stream labels + log shape** against what `sdk-server-logger` emits and what the existing dashboards/alerts query on; expose them via config (or ship a HopDrive preset) so current dashboards keep working.
 - [ ] Preserve **per-job-execution queryability**: the old `scoped-job.js` set the log scope to the exact `jobExecutionId` (`scoped-job.js:40-48`). Add a `jobExecutionId` label/field (from `ctx.job.id`, or parsed from `ctx.trackingToken`) if any dashboard keys on it.
