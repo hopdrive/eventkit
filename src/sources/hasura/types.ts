@@ -58,11 +58,6 @@ export interface HasuraDetectorContext<
   newRow: TNewRow | null;
   /** `newRow ?? oldRow ?? null`. */
   row: TNewRow | TOldRow | null;
-  inserted(): boolean;
-  updated(): boolean;
-  deleted(): boolean;
-  /** True when the operation is a Hasura console edit (`op: 'MANUAL'`). */
-  manuallyInvoked(): boolean;
   columnChanged(column: keyof TNewRow | string): boolean;
   columnAdded(column: keyof TNewRow | string): boolean;
   columnRemoved(column: keyof TNewRow | string): boolean;

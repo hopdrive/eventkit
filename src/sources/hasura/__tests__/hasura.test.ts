@@ -75,15 +75,12 @@ describe('hasuraEvent detector context helpers', () => {
     expect(ctx.oldRow).toEqual({ id: 1, status: 'pending' });
     expect(ctx.newRow).toEqual({ id: 1, status: 'ready' });
     expect(ctx.row).toEqual({ id: 1, status: 'ready' });
-    expect(ctx.updated()).toBe(true);
-    expect(ctx.inserted()).toBe(false);
-    expect(ctx.deleted()).toBe(false);
-    expect(ctx.manuallyInvoked()).toBe(false);
+    expect(ctx.operation).toBe('UPDATE');
   });
 
   it('row falls back to oldRow on DELETE', () => {
     const ctx = ctxFor(payload('DELETE', { id: 7, status: 'done' }, null));
-    expect(ctx.deleted()).toBe(true);
+    expect(ctx.operation).toBe('DELETE');
     expect(ctx.row).toEqual({ id: 7, status: 'done' });
   });
 
@@ -99,10 +96,6 @@ describe('hasuraEvent detector context helpers', () => {
     expect(ctxFor(payload('UPDATE', { phone: null }, { phone: '555' })).columnAdded('phone')).toBe(true);
     expect(ctxFor(payload('UPDATE', { phone: '555' }, { phone: null })).columnRemoved('phone')).toBe(true);
     expect(ctxFor(payload('UPDATE', { phone: '555' }, { phone: '555' })).columnAdded('phone')).toBe(false);
-  });
-
-  it('manuallyInvoked() is true for op MANUAL (console edits)', () => {
-    expect(ctxFor(payload('MANUAL', { status: 'a' }, { status: 'b' })).manuallyInvoked()).toBe(true);
   });
 });
 
