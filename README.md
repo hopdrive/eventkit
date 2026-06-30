@@ -108,10 +108,12 @@ defineEvent<TPayload>({
   detector,       // (ctx) => boolean. the predicate, keep the switch house style
   prepare?,       // (ctx) => shared. runs once, merges into every job's input
   jobs?,          // a STATIC list of bare functions (or job(fn, opts) when you need options)
-  resolve?,       // (ctx) => output. request/response seam (ADR-026), maps to the wire response
+  resolve?,       // (ctx) => output. request/response seam (ADR-026), runs concurrent with jobs
+  respond?,       // (ctx, { jobs, ok }) => output. result-driven response (ADR-029): runs AFTER
+                  //   jobs settle so the reply reflects their outcome. mutually exclusive with resolve
   run?,           // RunOptions for the batch (mode / continueOnFailure / timeoutMs)
   metadata?,      // registration-time hints for tooling
-});  // a module must declare jobs and/or resolve
+});  // a module must declare jobs and/or a response seam (resolve or respond)
 ```
 
 Three rules keep every event chain deterministic and analyzable:
@@ -166,9 +168,12 @@ kit** (the positional arg to `createEventKit`).
   Authoring helpers `hasuraEvent.detector<Row>(fn)` / `hasuraEvent.prepare<Row>(fn)`.
 - **`hasuraCron`**. Hasura scheduled triggers. Context: `scheduleName`, `scheduledAt`,
   `payload`.
-- **`webhook`**. Vendor webhooks (`{ vendor, verify, eventTypeHeader }`). The context
-  exposes `signatureVerified`, `vendor`, `eventType`, `body`. A status-contract vendor
-  (Stripe) uses `resolve` plus a thrown `ClientError(status, ...)`.
+- **`webhook`**. Vendor webhooks (`{ vendor, verify, eventTypeHeader, rejectUnverified? }`).
+  The context exposes `signatureVerified`, `vendor`, `eventType`, `body`. `verify` runs once
+  (before `normalize`) and annotates `signatureVerified`; the detector decides. Set
+  `rejectUnverified: true` (ADR-030) to instead reject a bad signature with 401 before any
+  module runs. A status-contract vendor (Stripe) uses `resolve` plus a thrown
+  `ClientError(status, ...)`.
 - **`hasuraAction`**. A **request/response** source for Hasura Actions
   (`sourceType:'action'`, gated by Hasura's permission model). Context: `actionName`,
   `input`, `sessionVariables`, `requestQuery?`. A module's `resolve` returns the output,
