@@ -40,6 +40,18 @@ void defineEvent({ name: 'bad.cond', detector, jobs: [cond && job(work)] });
 // @ts-expect-error a conditional bare fn (false | JobFunction) is not assignable
 void defineEvent({ name: 'bad.cond.fn', detector, jobs: [cond && work] });
 
+// ── ADR-025 guard: a bare entry must be JOBFUNCTION-SHAPED (param ⊇ JobContext),
+// not merely "any function" — a function whose parameter is incompatible with
+// `JobContext` is rejected (strictFunctionTypes contravariance). So a stray helper
+// reference can't slip into `jobs`. (Zero-arg fns and explicit-`any`-param fns are
+// accepted — both are inherently JobContext-compatible and are legitimate jobs.)
+// @ts-expect-error a number-param function is not a JobFunction (ctx: JobContext)
+void defineEvent({ name: 'bad.numparam', detector, jobs: [(_n: number) => 1] });
+// @ts-expect-error a specific-object-param function is not JobFunction-shaped
+void defineEvent({ name: 'bad.objparam', detector, jobs: [(_deps: { db: string }) => 1] });
+// a zero-arg function IS accepted (a job that ignores ctx)
+void defineEvent({ name: 'ok.zeroarg', detector, jobs: [() => 'ok'] });
+
 // ── ADR-025/018 guard: a look-alike object without the brand is rejected ────
 // @ts-expect-error not branded and not a function
 void defineEvent({ name: 'bad.lookalike', detector, jobs: [{ fn: work, name: 'x', options: {} }] });
