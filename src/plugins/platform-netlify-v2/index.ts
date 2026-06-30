@@ -11,7 +11,7 @@ import { computedDeadline, env, extractHeaders, httpResponse } from '../platform
 export function netlifyV2Platform(config: { maxExecutionMs?: number } = {}): PlatformAdapter {
   const maxExecutionMs = config.maxExecutionMs ?? 10_000;
   return {
-    name: 'netlify-v2-platform',
+    name: 'platform-netlify-v2',
     provides: ['platform', 'platform:netlify-v2'],
     detect: () => !!env()['NETLIFY'],
     extractPayload: async (request: unknown) => {

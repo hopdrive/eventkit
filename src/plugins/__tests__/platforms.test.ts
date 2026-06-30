@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createEventKit, job, asEventName, type EventModule } from '../../index.js';
-import { hasuraEvent } from '../hasura/index.js';
+import { hasuraEvent } from '../source-hasura.js';
 import { lambdaPlatform, netlifyPlatform, netlifyBackgroundPlatform, netlifyV2Platform } from '../platforms.js';
 
 // A Netlify/Lambda classic event wrapping a Hasura DB-event payload as a JSON body.

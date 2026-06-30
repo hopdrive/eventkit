@@ -17,7 +17,6 @@ import {
   type EventKitPlugin,
   type EventModule,
   type EventOutcome,
-  type EventSourceName,
   type EventSourceType,
   type HandlerContext,
   type HandlerResult,
@@ -209,7 +208,6 @@ class Kit implements EventKit {
       req = (request as RequestContext) ?? {};
     }
 
-    const source = this.pm.source.name as EventSourceName;
     const sourceType: EventSourceType = this.pm.sourceType;
 
     // 2. Normalize → augment envelope.
@@ -247,7 +245,10 @@ class Kit implements EventKit {
     const invocation: InvocationContext = {
       invocationId,
       correlationId,
-      source,
+      // The recorded source is the NORMALIZED envelope's source (the meaningful
+      // "what came in" identity, e.g. 'hasura' / 'webhook:stripe'), NOT the plugin's
+      // registration `name` (which is folder-aligned, e.g. 'source-hasura-event').
+      source: envelope.source,
       sourceType,
       envelope,
       request: req,

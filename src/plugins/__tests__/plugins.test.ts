@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createEventKit, job, asEventName, type EventModule, type JobContext } from '../../index.js';
 import { fakeSource, defineFakeEvent } from '../../testing/index.js';
-import { hasuraEvent } from '../hasura/index.js';
+import { hasuraEvent } from '../source-hasura.js';
 import { loopPrevention, createTokenCodec } from '../loop-prevention/index.js';
 import { observability, type ObservabilityBatch } from '../observability/index.js';
 import { graphqlSink } from '../observability/graphql-sink.js';

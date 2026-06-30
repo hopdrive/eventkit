@@ -8,7 +8,7 @@ import { env, extractHttpBody, httpRejection, httpResponse, nativeCountdown, req
 
 export function lambdaPlatform(): PlatformAdapter {
   return {
-    name: 'lambda-platform',
+    name: 'platform-lambda',
     provides: ['platform', 'platform:lambda'],
     detect: () => !!env()['AWS_LAMBDA_FUNCTION_NAME'],
     extractPayload: (event: unknown) => extractHttpBody(event),

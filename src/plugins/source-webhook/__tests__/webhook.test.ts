@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createEventKit, defineEvent, job, ClientError, type JobContext } from '../../../index.js';
-import { netlifyV2Platform } from '../../netlify-v2-platform/index.js';
+import { netlifyV2Platform } from '../../platform-netlify-v2/index.js';
 import { webhook, type WebhookDetectorContext, type WebhookHandlerContext } from '../index.js';
 
 // A v2-style Web Request carrying a JSON webhook body + headers.

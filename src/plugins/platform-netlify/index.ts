@@ -8,7 +8,7 @@ import { env, extractHttpBody, httpRejection, httpResponse, nativeCountdown, req
 
 export function netlifyPlatform(): PlatformAdapter {
   return {
-    name: 'netlify-platform',
+    name: 'platform-netlify',
     provides: ['platform', 'platform:netlify'],
     detect: () => !!env()['NETLIFY'],
     extractPayload: (event: unknown) => extractHttpBody(event),

@@ -2,8 +2,8 @@
   "$schema": "https://typedoc.org/schema.json",
   "entryPoints": [
     "src/index.ts",
-    "src/plugins/hasura/index.ts",
-    "src/plugins/webhook/index.ts",
+    "src/plugins/source-hasura.ts",
+    "src/plugins/source-webhook/index.ts",
     "src/plugins/observability/index.ts",
     "src/plugins/observability/graphql-sink.ts",
     "src/plugins/batchjobs/index.ts",

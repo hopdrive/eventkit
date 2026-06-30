@@ -10,7 +10,7 @@
 // by the Hasura adapter tests, but excluded from the published build.
 // =============================================================================
 import { defineEvent, type JobContext } from '../index.js';
-import { hasuraEvent } from '../plugins/hasura/index.js';
+import { hasuraEvent } from '../plugins/source-hasura.js';
 
 export interface AppointmentRow {
   id: number;

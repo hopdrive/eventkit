@@ -104,7 +104,7 @@ export function webhook(config: WebhookConfig): WebhookSource {
   if (!config?.vendor) throw new Error('webhook() requires a `vendor`.');
   const { vendor, eventTypeHeader, verify } = config;
   return {
-    name: `webhook:${vendor}`,
+    name: 'source-webhook',
     provides: ['source', 'source:webhook'],
     sourceType: 'webhook',
     // Authoring helpers — identity wrappers carrying the vendor-typed context.

@@ -11,7 +11,7 @@ import { computedDeadline, env, extractHttpBody, httpRejection, nativeCountdown,
 export function netlifyBackgroundPlatform(config: { maxExecutionMs?: number } = {}): PlatformAdapter {
   const maxExecutionMs = config.maxExecutionMs ?? 15 * 60 * 1000;
   return {
-    name: 'netlify-background-platform',
+    name: 'platform-netlify-background',
     provides: ['platform', 'platform:netlify-background'],
     detect: () => !!env()['NETLIFY'],
     extractPayload: (event: unknown) => extractHttpBody(event),

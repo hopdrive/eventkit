@@ -18,14 +18,14 @@
       "require": "./dist/cjs/core/index.js"
     },
     "./sources/hasura": {
-      "types": "./dist/types/plugins/hasura/index.d.ts",
-      "import": "./dist/esm/plugins/hasura/index.js",
-      "require": "./dist/cjs/plugins/hasura/index.js"
+      "types": "./dist/types/plugins/source-hasura.d.ts",
+      "import": "./dist/esm/plugins/source-hasura.js",
+      "require": "./dist/cjs/plugins/source-hasura.js"
     },
     "./sources/webhook": {
-      "types": "./dist/types/plugins/webhook/index.d.ts",
-      "import": "./dist/esm/plugins/webhook/index.js",
-      "require": "./dist/cjs/plugins/webhook/index.js"
+      "types": "./dist/types/plugins/source-webhook/index.d.ts",
+      "import": "./dist/esm/plugins/source-webhook/index.js",
+      "require": "./dist/cjs/plugins/source-webhook/index.js"
     },
     "./plugins/batchjobs": {
       "types": "./dist/types/plugins/batchjobs/index.d.ts",

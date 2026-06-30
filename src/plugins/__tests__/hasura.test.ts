@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { createEventKit, job, asEventName, type EventModule, type JobContext } from '../../../index.js';
-import { hasuraEvent, hasuraCron } from '../index.js';
+import { createEventKit, job, asEventName, type EventModule, type JobContext } from '../../index.js';
+import { hasuraEvent, hasuraCron } from '../source-hasura.js';
 import type {
   HasuraCronContext,
   HasuraCronHandlerContext,
@@ -9,9 +9,9 @@ import type {
   HasuraEventPayload,
   HasuraHandlerContext,
   HasuraOperation,
-} from '../types.js';
-import { buildDetectorContextFor, buildHandlerContextFor } from '../../../testing/index.js';
-import { detector, appointmentReady, type AppointmentRow } from '../../../__examples__/appointment.ready.js';
+} from '../hasura-shared/types.js';
+import { buildDetectorContextFor, buildHandlerContextFor } from '../../testing/index.js';
+import { detector, appointmentReady, type AppointmentRow } from '../../__examples__/appointment.ready.js';
 
 type Row = Record<string, unknown>;
 

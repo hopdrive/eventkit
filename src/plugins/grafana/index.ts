@@ -182,7 +182,7 @@ export function grafanaLogger(config: GrafanaLoggerConfig): EventKitPlugin {
   };
 
   return {
-    name: 'grafana-logger',
+    name: 'grafana',
     onLog: (entry: LogEntry) => {
       // The per-job `✓/✗` lifecycle lines (emitted via the handler logger, so they
       // arrive here, not via onJobLog) carry their jobExecutionId in `data`. Hoist it so

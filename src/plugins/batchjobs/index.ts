@@ -25,7 +25,7 @@
 // like the legacy `createDelayedBatchJob`. Off by default (no behavior change).
 import type { EventKitPlugin, JobContext, JobExecution, LogEntry } from '../../core/index.js';
 import { replaceCircularReferences } from '../../core/index.js';
-import { getNewRow, getOldRow } from '../hasura/payload.js';
+import { getNewRow, getOldRow } from '../hasura-shared/payload.js';
 
 /** Lifecycle states of a `batch_jobs` row (§12.1). */
 export type BatchJobStatus = 'pending' | 'ready' | 'delaying' | 'processing' | 'done' | 'error' | 'timeout';
