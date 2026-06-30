@@ -8,14 +8,15 @@ does today*, the authority is the canonical RFC (below) and the code (`../../REA
 
 ## Read order
 
-1. **`architecture.md`** — the canonical spec and source of truth (revision **v0.3.15**; see its
-   revision-history table). Read §0 (change map), then §7–§13 (the API surface), then §22 (ADRs 001–027).
+1. **`architecture.md`** — the canonical spec and source of truth (revision **v0.3.17**; see its
+   revision-history table). Read §0 (change map), then §7–§13 (the API surface), then §22 (ADRs 001–027;
+   the newer ADR-029 `respond` / ADR-030 `rejectUnverified` are recorded in the revision-history table).
 2. **`design-rationale.md`** — the distilled *why*: the consumption-failure evidence that drove the
    rewrite, and each major decision paired with the alternative it replaced. Read this so settled
    decisions aren't re-litigated and rejected designs aren't mistaken for the current API.
 3. **`design-change-log.md`** — the CHG-1…13 change-by-change record (continued in
    the RFC revision history through CHG-17).
-4. **`decision-register.md`** — the decision register (D1–D23). The STATUS block at
+4. **`decision-register.md`** — the decision register (D1–D27). The STATUS block at
    the top is authoritative; only D6/D10/D13 remain genuinely open (process/migration calls).
 
 ## The rest
