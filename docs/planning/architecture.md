@@ -1,6 +1,6 @@
-# EventKit Architecture RFC — v0.3.13 (Canonical)
+# EventKit Architecture RFC — v0.3.14 (Canonical)
 
-> **Status of this document.** This is the **canonical** EventKit architecture spec and the source of truth (revision **v0.3.13** — see the revision-history table below). It grew from an RFC: it folded the original v0.1 design, Amendments A–E, and the pre-build design evaluation; those source docs have since been removed (their rationale is distilled in `design-rationale.md`, and the decisions live in the ADRs in §22). Materially changed sections are marked **[v0.2]** / **[v0.3.x]** inline.
+> **Status of this document.** This is the **canonical** EventKit architecture spec and the source of truth (revision **v0.3.14** — see the revision-history table below). It grew from an RFC: it folded the original v0.1 design, Amendments A–E, and the pre-build design evaluation; those source docs have since been removed (their rationale is distilled in `design-rationale.md`, and the decisions live in the ADRs in §22). Materially changed sections are marked **[v0.2]** / **[v0.3.x]** inline.
 
 Status: Canonical (accepted)
 Owner: HopDrive Engineering
@@ -26,6 +26,7 @@ Document Purpose: Canonical architecture specification for EventKit. Records agr
 | 2026-06-29 | 0.3.11 (draft) | Rob Newton + Claude | **Implemented** `webhook` + `hasuraAction` sources + the `resolve` request/response capability (ADR-026). **Dropped `hasuraActionPlatform`** — the response contract (`resolve`→2xx, `ClientError`/`ActionError`→status+`{message,extensions}`) composes onto the **generic** platforms (`netlifyPlatform`/`netlifyV2Platform`/`lambdaPlatform`) via `InvocationResult.resolved`, avoiding a `contract × transport` matrix. Flipped §7.1/§7.2 to shipped. |
 | 2026-06-29 | 0.3.12 (draft) | Rob Newton + Claude | CHG-17: **`app-*` → Hasura Action conversion playbook** (§19.2). Per-endpoint, gradual: define the Action (input/output types + handler) via a `hasura-migrations` PR; port the handler into a `hasuraAction` module (`resolve` returns the output, `prepare`/`jobs` for setup/side-effects); **replace hand-rolled auth with Action RBAC permissions**; **verify every caller has the granted role and switch it from HTTP → the GraphQL action**; shadow + retire. Queries before mutations; convert one end-to-end first. |
 | 2026-06-29 | 0.3.13 (draft) | Rob Newton + Claude | **Removed the operation-predicate detector helpers** (`inserted()`/`updated()`/`deleted()`/`manuallyInvoked()`) from `HasuraDetectorContext`. The preferred `switch (ctx.operation)` style makes them redundant (`case 'MANUAL': return false` handles console-edit suppression). The column/value helpers (`columnChanged`/`columnAdded`/`columnRemoved`/`previousValue`/`currentValue`) stay, since they're used inside the switch cases. Updated §3.6/§7/§8 + the guide/README. |
+| 2026-06-30 | 0.3.14 (draft) | Rob Newton + Claude | **One unified plugin model + code organization (ADR-027, §11.0).** Sources and platforms are documented as *narrowly-scoped plugins* — kinds of one `plugin` concept distinguished by the capability they `provide` (`'source'` / `'platform'`), each declaring `name`/`provides`/`requires`. The three interfaces (`SourceAdapter`/`PlatformAdapter`/`EventKitPlugin`) are kept (not collapsed); registration is unchanged (positional source preserved). Code reorganizes so every plugin lives in its own folder under `src/plugins/` (`/sources/*`, `/platforms/*` — each platform flavor its own folder — and the observer/transform plugins); public subpaths stay short via the `exports` map. Updated §7, §9.8, §11, §17. |
 
 ---
 
@@ -186,7 +187,7 @@ Every invocation follows the same lifecycle regardless of source.
 
 # 7. Source Adapter Contract
 
-Every source adapter identifies inbound work, normalizes payloads, creates an EventEnvelope, and constructs a DetectorContext. Adapters own translation, never business interpretation.
+**A source adapter is a plugin** — the kind that provides the required singleton `'source'` capability (§11.0). It declares `name`/`provides: ['source']`/`requires` like any plugin and lives in its own folder under `src/plugins/sources/<name>`; `SourceAdapter` below is just the capability-specific interface for this kind. Every source adapter identifies inbound work, normalizes payloads, creates an EventEnvelope, and constructs a DetectorContext. Adapters own translation, never business interpretation.
 
 Adapters MAY expose convenience helpers that improve detector readability, expressing *source* semantics (`columnChanged()`, `columnAdded()`, `columnRemoved()`, `previousValue()`, `currentValue()`), never application semantics. **[v0.3.13]** Operation-predicate helpers (`inserted()`/`updated()`/`deleted()`/`manuallyInvoked()`) were removed in favor of switching on `operation`.
 
@@ -196,6 +197,8 @@ Adapters MAY expose convenience helpers that improve detector readability, expre
 export interface SourceAdapter<TPayload = unknown, TDetectorCtx = unknown, THandlerExt = {}> {
   name: EventSourceName;
   sourceType: EventSourceType;
+  provides: Capability[];           // ['source'] — the singleton capability this plugin fills (§11.0)
+  requires?: Capability[];          // capabilities this source depends on, if any
   normalize(raw: unknown, request: RequestContext): EventEnvelope<TPayload>;
   buildDetectorContext(envelope: EventEnvelope<TPayload>, base: DetectorContext<TPayload>): TDetectorCtx;
   buildHandlerContext?(envelope: EventEnvelope<TPayload>, base: HandlerContext<TPayload>): THandlerExt; // [v0.2]
@@ -569,11 +572,13 @@ export interface InvocationResult {
 
 ## 9.8 Platform Adapters [v0.3.2, ADR-021]
 
-A **PlatformAdapter** normalizes a deployment runtime's invocation into the shape EventKit expects. It is a capability-providing plugin (`provides: ['platform']`, §11.1 Shape 3) that answers a different question than the source: *how did the runtime hand us this request, how long may we run, and what response shape does it expect back?* It is **optional** (auto-detected/none if absent) and therefore registered like any other capability via `kit.use(netlifyPlatform)` — not a `createEventKit` param (§11.4).
+A **PlatformAdapter** normalizes a deployment runtime's invocation into the shape EventKit expects. It is the **plugin kind that provides the optional singleton `'platform'` capability** (§11.0, §11.1 Shape 3) — a narrowly-scoped plugin that answers a different question than the source: *how did the runtime hand us this request, how long may we run, and what response shape does it expect back?* Like any plugin it declares `name`/`provides`/`requires` and lives in its own folder under `src/plugins/platforms/<name>` (each flavor its own folder). It is **optional** (auto-detected/none if absent) and registered like any other plugin via `kit.use(netlifyPlatform)` — not a `createEventKit` param (§11.4).
 
 ```ts
 export interface PlatformAdapter<TArgs extends any[] = any[], TResponse = unknown> {
   name: string;
+  provides: Capability[];                              // ['platform'] — the singleton capability this plugin fills (§11.0)
+  requires?: Capability[];
   detect?(): boolean;                                  // true if this adapter matches the current runtime (env-based)
   extractPayload(...args: TArgs): unknown | Promise<unknown>;   // raw body → the source adapter's input
   buildRequest(...args: TArgs): RequestContext;        // invocationId, correlation, sourceFunction, and getRemainingTimeMs
@@ -651,6 +656,20 @@ The internal executor (`runJobs`, §9.5) owns execution semantics: building JobC
 # 11. Plugin Architecture
 
 Plugins are infrastructure extensions; they MUST NOT be required for core detection/handling to work. Registered once at startup. Hooks are called in registration order unless a hook defines otherwise.
+
+## 11.0 One extension concept — the plugin — in three kinds [v0.3.14, ADR-027]
+
+There is exactly **one extension concept in EventKit: the plugin.** Everything that extends the framework is a plugin that declares `name`, `provides` (the capability it fills), and `requires` (capabilities it depends on), and contributes through the hook shapes in §11.1. Plugins differ only in **which capability they provide** — that gives three *kinds*:
+
+| Kind | Capability (`provides`) | Cardinality | Specialized interface | Examples |
+|---|---|---|---|---|
+| **Source plugin** | `'source'` | required, exactly one per kit | `SourceAdapter` (§7) | `hasuraEvent`, `hasuraCron`, `hasuraAction`, `webhook` |
+| **Platform plugin** | `'platform'` | optional, at most one | `PlatformAdapter` (§9.8) | `lambdaPlatform`, `netlifyPlatform`, `netlifyV2Platform`, `netlifyBackgroundPlatform` |
+| **Observer / transform plugin** | none (or a non-singleton tag) | zero or more | `EventKitPlugin` (§11.2) | `observability`, `batchJobs`, `loopPrevention`, `grafanaLogger`, `sentry` |
+
+A **source** and a **platform** are therefore just *narrowly-scoped plugins*: each owns a single Shape-3 singleton capability (the source provides `normalize` + the detector/handler contexts; the platform provides `extractPayload`/`buildRequest`/`formatResponse`). They keep their specialized interfaces (`SourceAdapter`/`PlatformAdapter`) for the capability-specific methods, but they are plugins — they declare `name`/`provides`/`requires` and may also implement the lifecycle notifications/transforms like any plugin.
+
+**[v0.3.14] Code organization mirrors the model.** Every plugin — source, platform, observer, transform — lives in **its own folder under `src/plugins/<…>/<name>`**, declaring its own `name`/`provides`/`requires`. Source plugins live under `src/plugins/sources/*`, platform plugins under `src/plugins/platforms/*` (each platform flavor its own folder), and the rest under `src/plugins/*` (`observability`, `batchjobs`, `loop-prevention`, `transports/grafana`, `transports/sentry`). The **public subpath imports stay short and ergonomic** (`./sources/hasura`, `./platforms/netlify`, `./plugins/observability`) — the `exports` map decouples the public path from the internal folder (§17). Registration is unchanged: the required source is the typed positional arg `createEventKit(hasuraEvent)` (the one compile-time "exactly one source" guarantee, D19); the platform and every other plugin register via `kit.use(plugin, config?)`.
 
 ## 11.1 Composition model [v0.3.3, ADR-022]
 
@@ -893,7 +912,23 @@ import { grafanaLogger } from '@hopdrive/eventkit/plugins/transports/grafana';
 import { sentry } from '@hopdrive/eventkit/plugins/transports/sentry';
 ```
 
-The shipped subpaths are: `.` (root), `./core`, `./sources/hasura` (exports `hasuraEvent`/`hasuraCron`/`hasuraAction`), `./sources/webhook`, `./platforms`, `./plugins/batchjobs`, `./plugins/observability` (+ `./plugins/observability/graphql-sink`), `./plugins/loop-prevention`, `./plugins/transports/grafana`, `./plugins/transports/sentry`, and `./testing`. Internal structure: `/core /runtime /sources/* /plugins/* /platforms /testing`. Public extension contracts: `SourceAdapter`, `PlatformAdapter`, `EventModule`, `EventKitPlugin`, `EventEnvelope`, `DetectorContext`, `DetectedEvent`, `HandlerContext`, `JobContext`, `JobExecution`, `RequestContext`, `InvocationContext`, `EventKit` (with `use()`/`registerEvents()`/`handler()`), `FlowManifest`, `createEventKit()`, `defineEvent()`, `job()`. *(`run()` is **not** a public export — the executor is runtime-internal, ADR-025.)* Provided platform adapters: `lambdaPlatform()`, `netlifyPlatform()`, `netlifyV2Platform()`, `netlifyBackgroundPlatform()` (§9.8). Semantic versioning; breaking changes to public contracts require a major version.
+The shipped subpaths are: `.` (root), `./core`, `./sources/hasura` (exports `hasuraEvent`/`hasuraCron`/`hasuraAction`), `./sources/webhook`, `./platforms`, `./plugins/batchjobs`, `./plugins/observability` (+ `./plugins/observability/graphql-sink`), `./plugins/loop-prevention`, `./plugins/transports/grafana`, `./plugins/transports/sentry`, and `./testing`.
+
+**[v0.3.14, ADR-027] Internal structure mirrors the "everything is a plugin" model (§11.0).** All extensions live under `/plugins`, each in its own folder declaring `name`/`provides`/`requires`:
+
+```
+/core  /runtime  /testing
+/plugins
+  /sources/hasura        (hasuraEvent, hasuraCron, hasuraAction)
+  /sources/webhook
+  /platforms/lambda  /platforms/netlify  /platforms/netlify-v2  /platforms/netlify-background
+  /observability  (+ /observability/graphql-sink)
+  /batchjobs
+  /loop-prevention
+  /transports/grafana  /transports/sentry
+```
+
+The **public subpath names stay short and stable** (`./sources/hasura`, `./platforms/netlify`, `./plugins/observability`) regardless of internal nesting — the `exports` map decouples the public path from the internal folder, so consumers keep clean imports while the source tree reflects the plugin model. Public extension contracts: `SourceAdapter`, `PlatformAdapter`, `EventModule`, `EventKitPlugin`, `EventEnvelope`, `DetectorContext`, `DetectedEvent`, `HandlerContext`, `JobContext`, `JobExecution`, `RequestContext`, `InvocationContext`, `EventKit` (with `use()`/`registerEvents()`/`handler()`), `FlowManifest`, `createEventKit()`, `defineEvent()`, `job()`. *(`run()` is **not** a public export — the executor is runtime-internal, ADR-025.)* Provided platform adapters: `lambdaPlatform()`, `netlifyPlatform()`, `netlifyV2Platform()`, `netlifyBackgroundPlatform()` (§9.8). Semantic versioning; breaking changes to public contracts require a major version.
 
 **[v0.2] Bundling validation is a release gate, not an assumption.** v0.1 reversed the planning decision (separate `@hopdrive/eventkit-*` packages) to a single package with deep subpath exports without recording the trade-off. Deep `exports`-map subpaths are a known "works locally, module-not-found at deploy" risk under Netlify's esbuild/zisi packager and the repo's `hopdrive-inline` step. Before adopting subpath exports, CI MUST include a Netlify-bundle smoke test that imports every subpath from a built function and resolves it in the packaged output. If that proves unreliable, the package family remains the fallback. (Note: this risk is in tension with §3.4's bundler-determinism rationale and MUST be resolved with evidence, not assertion.)
 
@@ -1039,6 +1074,9 @@ Decision: `mode='parallel'`, `continueOnFailure=true` by default. Rationale: the
 
 ## ADR-015: BatchJobs durability is emergent from registration; no core flag. [revised v0.3.1]
 Decision: there is no `durable` field in core `JobOptions`. A job is durable iff the BatchJobs plugin is registered in its kit; the plugin is registered only in the `db-batchjobs` function and applies to every job there. It `requires` the Hasura source. `batchJobs.enqueue(...)` is optional sugar over an ordinary producer-side insert; BatchJobs is not a source adapter. Rationale: a `durable: true` flag in core JobOptions means core knows batchjobs exists — the coupling the plugin model exists to remove. Durability must be a property of which plugins are registered, invisible to core and to jobs. Consequence: removes `durable` (and the earlier v0.3 flag, and the v0.2 `durable: batchJobs.record(...)`/`ctx.batch.record`); the consumer handler is `run(event, [job(fn)])`; input arrives via ADR-020. Supersedes both prior forms.
+
+## ADR-027: Sources and platforms are narrowly-scoped plugins; one unified plugin model + code organization. [v0.3.14]
+Decision: there is **one extension concept — the plugin** — in three *kinds* distinguished only by the capability they provide (§11.0): **source plugins** (`provides: ['source']`, the required singleton: `normalize` + detector/handler contexts), **platform plugins** (`provides: ['platform']`, optional singleton: `extractPayload`/`buildRequest`/`formatResponse`), and **observer/transform plugins** (zero-or-more lifecycle plugins). Every plugin declares `name`/`provides`/`requires`. The specialized interfaces `SourceAdapter` and `PlatformAdapter` are **kept** (not collapsed into one union) as the capability-specific shapes for the first two kinds — but they are understood and documented as plugins, and the **code is organized to match**: every plugin lives in its own folder under `src/plugins/` (`/plugins/sources/*`, `/plugins/platforms/*` with each platform flavor its own folder, and `/plugins/{observability,batchjobs,loop-prevention,transports/*}`). Public subpath imports stay short and stable (`./sources/hasura`, `./platforms/netlify`, `./plugins/observability`) — the `exports` map decouples the public path from the internal folder. Registration is **unchanged**: the required source remains the typed positional arg `createEventKit(hasuraEvent)` (preserving the compile-time "exactly one source" guarantee of ADR-019/D19); the platform and all other plugins register via `kit.use(plugin, config?)`. Rationale: ADR-022 already classified sources/platforms as Shape-3 singleton-capability providers — i.e. they were always plugins; the source tree just didn't show it (sources under `/sources`, all four platforms crammed in one `platforms/index.ts`). Unifying the folder layout and the self-declaration makes the one model legible in code and docs alike. Keeping the three interfaces (rather than one discriminated union) and the positional source keeps the change low-risk and preserves type safety + the required-source guarantee. Consequence: a follow-up code move relocates `src/sources/*` and `src/platforms/*` under `src/plugins/`, splits the four platforms into per-flavor folders, adds `provides`/`requires` to the source/platform adapters, and updates the `exports` map + bundle smoke test to keep the short public subpaths. Done while unpublished (`0.1.0`), so no consumer-visible break beyond the local proofs. Alternative considered: collapse `SourceAdapter`/`PlatformAdapter`/`EventKitPlugin` into one discriminated union — deferred (more churn for marginal gain now); revisit if the three interfaces drift.
 
 ## ADR-026: Request/response source class — actions and RPC return a synchronous payload. [v0.3.10]
 Decision: EventKit recognizes two source *classes*. **Fire-and-forget event sources** (`hasuraEvent`, `hasuraCron`, vendor `webhook`s that only need an ack) detect a business event and run a declarative `jobs` set whose results are recorded, not returned. **Request/response sources** (`hasuraAction`, and the `app-*` RPC endpoints in `event-handlers`) must return a computed payload to the caller. A request/response module adds a single **`resolve(ctx) => output`** that produces the response; `jobs` stay optional fire-and-forget side effects. The generic HTTP platform adapter (no dedicated action platform — v0.3.11 note below) maps `resolve`'s return → a 2xx body and a thrown `ClientError`/`ActionError(message, code?)` → the source's error envelope (for Hasura Actions: HTTP 4xx + `{ message, extensions: { code? } }`). `webhook` for a status-contract vendor (Stripe) is fire-and-forget but maps the outcome → an HTTP status the same way. Rationale: an action's purpose is to compute and return one value — overloading a job's output as the response would conflate the (sibling-ignorant, fire-and-forget) jobs model with synchronous resolution and reintroduce result-coupling; a dedicated `resolve` keeps the response explicit and the jobs model intact (ADR-025). `resolve` is **source-agnostic** (not action-only): any source may declare it and its platform adapter maps the result to the wire response. **Why run a request/response handler through EventKit at all** (vs. leaving it bespoke): (1) **observability** — the action's downstream effects (jobs, and DB writes that fire further `hasuraEvent` invocations) are traced with one correlation id back to the originating call, the same way for webhooks/crons/DB events; every entry point becomes the root of a visible chain. (2) **security** — a Hasura Action is gated by Hasura's permission model (grant a role the action's GraphQL field), replacing the uneven, hand-rolled auth of bespoke `app-*` endpoints. The full Hasura Action request/response contract is in §7.2. Consequence: `EventSourceType` gains `'action'`; `defineEvent` gains an optional `resolve`; ships the `hasuraAction` source; the bespoke `app-*` endpoints are **deprecated and replaced by actions over time, not migrated to EventKit**. **Sub-decision (ratified):** `resolve` mapper, not a designated job output.

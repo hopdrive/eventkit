@@ -4,7 +4,7 @@
 **Purpose:** The decisions that must be made by a human before the v0.2 canonical draft (`architecture.md`) can be ratified and drive implementation. Each entry records **what the decision is, where it came from, the options, the blast radius, a recommendation, and what stays blocked until it is answered.**
 ---
 
-## STATUS AS OF v0.3.13 (canonical RFC) — read this first; this block is authoritative
+## STATUS AS OF v0.3.14 (canonical RFC) — read this first; this block is authoritative
 
 The framework is now **built**. This status block is the current truth; the per-decision bodies below
 are the **original register, kept for provenance** — their `Decision: _____` blanks are historical, not
@@ -42,7 +42,7 @@ live prompts. Where a decision has shipped, the code (not a blank line) is the s
 **How to use:** the status block above is current. The bodies below are the original register; read them
 for the *why* behind each call. Tiers: **BLOCKING** / **HIGH** / **MEDIUM** / **LOW** / **NEW**.
 
-Provenance shorthand: **v0.1** = the original RFC; **v0.2** = canonical draft (now v0.3.13); the **why**
+Provenance shorthand: **v0.1** = the original RFC; **v0.2** = canonical draft (now v0.3.14); the **why**
 behind the resolved items is distilled in **`design-rationale.md`**; **CONV** = the raw planning
 conversations in `raw-conversations/`; **CODE** = current EventKit source / legacy `event-handlers`.
 (The earlier EVAL / REVIEW / amendment A–E docs cited below have been removed; their conclusions live in
@@ -327,6 +327,17 @@ Confirm the optional set: `description, tags, owner, flowHints, deprecated, rela
 **Blast radius:** Release/versioning story; migration ops; the eventual monorepo move.
 
 ---
+
+### D25. Unify sources & platforms as plugins; reorganize code under `src/plugins/` [added 2026-06-30]
+**Question:** Sources and platforms are already "singleton capability providers" in the composition model (ADR-022). Should the code and docs treat them as *plugins* — each in its own folder under `src/plugins/`, self-declaring `name`/`provides`/`requires` — and how far should the type unification go?
+**Origin:** Code-organization smell: observer/transform plugins each get their own folder under `src/plugins/`, but sources live under `src/sources/*` and all four platforms are crammed into a single `src/platforms/index.ts`. The model says they're plugins; the tree doesn't show it.
+**Decision:** ✅ **RESOLVED 2026-06-30 (ADR-027).**
+- **Model → one `plugin` concept, three kinds** by capability provided: source (`'source'`, required singleton), platform (`'platform'`, optional singleton), observer/transform (zero-or-more). All declare `name`/`provides`/`requires`.
+- **Type contracts → keep the three interfaces** (`SourceAdapter`/`PlatformAdapter`/`EventKitPlugin`); do **not** collapse into one discriminated union (deferred — more churn than gain now; revisit if they drift).
+- **Registration → unchanged.** Source stays the typed positional arg `createEventKit(hasuraEvent)` (preserves the compile-time exactly-one-source guarantee, D19); platform + others via `kit.use(plugin, config?)`.
+- **Code org → every plugin its own folder under `src/plugins/`** (`/sources/*`, `/platforms/*` with each flavor its own folder, plus `/observability`, `/batchjobs`, `/loop-prevention`, `/transports/*`). **Public subpaths stay short & ergonomic** (`./sources/hasura`, `./platforms/netlify`, `./plugins/observability`) — the `exports` map decouples public path from internal folder.
+- **Sequencing:** docs first (done — §7/§9.8/§11.0/§17 + ADR-027); the code move is a follow-up **after the in-flight detector-helper-removal agent commits** `src/sources/hasura/*` (a move now would collide). Cheap to do while unpublished (`0.1.0`).
+**Blast radius:** Internal source tree, the `exports` map + bundle smoke test, internal imports, and the local consumer proofs (their short import paths are unaffected).
 
 ## Decision dependency map (what unblocks what)
 

@@ -2,12 +2,12 @@
 
 > **📦 HISTORICAL — the build described here is DONE.** EventKit is built (core runtime, `hasuraEvent`/
 > `hasuraCron`/`hasuraAction`/`webhook` sources, all four platforms, the plugins, testing utils, ADRs
-> 001–026). This file is the *original phased build plan*, kept for provenance. **For how the system works
+> 001–027). This file is the *original phased build plan*, kept for provenance. **For how the system works
 > today, read `../../README.md`, the canonical RFC, and `design-rationale.md` — not this plan.** The phase
 > descriptions below are pre-build future-tense and some name APIs that were superseded before shipping
 > (noted inline where they'd actively mislead).
 
-**Date:** 2026-06-28 · **Design state (at writing):** RFC v0.3.7 · **As shipped:** RFC v0.3.13
+**Date:** 2026-06-28 · **Design state (at writing):** RFC v0.3.7 · **As shipped:** RFC v0.3.14
 **Purpose:** Everything a new context window needed to start *building* EventKit. (The build is complete; see banner.)
 
 ---
@@ -16,7 +16,7 @@
 
 A fresh agent has only what's written down. Read, in order:
 1. **This file.**
-2. **`architecture.md`** — the canonical design and **source of truth** (revision **v0.3.13**; see its revision-history table). Read §0 (change map) first, then §7–§13 (the API surface) and §22 (ADRs).
+2. **`architecture.md`** — the canonical design and **source of truth** (revision **v0.3.14**; see its revision-history table). Read §0 (change map) first, then §7–§13 (the API surface) and §22 (ADRs).
 3. **`design-rationale.md`** — the distilled *why* behind the final design (consumption evidence + the decisions and the alternatives they replaced).
 4. **`design-change-log.md`** — CHG-1…13, the change-by-change *why* (continued in the RFC revision history through CHG-17).
 5. **`decision-register.md`** — the decision register with current resolved/open status (read the STATUS block at top).
@@ -31,8 +31,8 @@ A fresh agent has only what's written down. Read, in order:
 ## 1. Is the design complete? — coverage map
 
 **Decisions: captured.** Every architectural decision lives in one of:
-- **RFC §22 ADRs** — 001–010 (v0.1 foundations, summarized) and **011–026** (full):
-  011 input/metadata channels · 012 typed augmentation not mutation · 013 module-scoped runtime + `handle()` · 014 `run()` parallel+continueOnFailure default · 015 durability emergent from registration (no flag) · 016 loop-prevention mechanism · 017 plugins self-correlate / jobs plugin-agnostic · 018 declarative handlers (no conditional jobs) · 019 register-style API (positional source + `use(plugin,config?)`) · 020 `augmentJobContext` contribution · 021 platform adapters · 022 plugin composition model (3 hook shapes, DI not inheritance) · 023 `hasuraEvent`/`hasuraCron` · **024 generic plugins built-in (subpath exports)** · **025 fully declarative modules (`defineEvent`, no handler/`run()`)** · **026 `webhook`/`hasuraAction` sources + module-level `resolve` request/response**.
+- **RFC §22 ADRs** — 001–010 (v0.1 foundations, summarized) and **011–027** (full):
+  011 input/metadata channels · 012 typed augmentation not mutation · 013 module-scoped runtime + `handle()` · 014 `run()` parallel+continueOnFailure default · 015 durability emergent from registration (no flag) · 016 loop-prevention mechanism · 017 plugins self-correlate / jobs plugin-agnostic · 018 declarative handlers (no conditional jobs) · 019 register-style API (positional source + `use(plugin,config?)`) · 020 `augmentJobContext` contribution · 021 platform adapters · 022 plugin composition model (3 hook shapes, DI not inheritance) · 023 `hasuraEvent`/`hasuraCron` · **024 generic plugins built-in (subpath exports)** · **025 fully declarative modules (`defineEvent`, no handler/`run()`)** · **026 `webhook`/`hasuraAction` sources + module-level `resolve` request/response** · **027 sources/platforms are narrowly-scoped plugins; unified `src/plugins/` code org**.
 - **CHG-1…17** (CHG-1…13 in the changes doc; CHG-14…17 in the RFC revision history) — rationale + before/after.
 - **D1…D23** (register) — see the register's STATUS block for resolved vs the few still-open process calls (D6, D10, D13).
 
@@ -113,4 +113,4 @@ Destructure over chained refs (`const { input, log } = ctx`); detector = `switch
 ---
 
 ## 7. One-paragraph brief to paste into the new thread
-> *(Historical seed — the build is done. Kept verbatim for provenance.)* Build the EventKit package per `architecture.md` (source of truth, now revision v0.3.13) and this kickoff plan. Decisions are captured in the RFC ADRs 001–026, the design-changes log (CHG-1…13 + CHG-14…17 in the RFC revision history), `design-rationale.md`, and the open-decisions register. Start at Phase 0: take the recommended defaults for the open decisions D19 (positional source), D20 (qualified capability tokens), D22 (lazy plugin instantiation), D6 (shadow-mode), D7 (no facade), D8 (subpaths + CI bundle test) unless the human overrides; freeze the public types; then build core → hasuraEvent source → plugins (composition model) → platform adapters → migrate `appointment.ready` end-to-end with shadow-mode parity. Verify against the current `hasura-event-detector/src` and `event-handlers` consumers. Respect the §4 correctness guards.
+> *(Historical seed — the build is done. Kept verbatim for provenance.)* Build the EventKit package per `architecture.md` (source of truth, now revision v0.3.14) and this kickoff plan. Decisions are captured in the RFC ADRs 001–027, the design-changes log (CHG-1…13 + CHG-14…17 in the RFC revision history), `design-rationale.md`, and the open-decisions register. Start at Phase 0: take the recommended defaults for the open decisions D19 (positional source), D20 (qualified capability tokens), D22 (lazy plugin instantiation), D6 (shadow-mode), D7 (no facade), D8 (subpaths + CI bundle test) unless the human overrides; freeze the public types; then build core → hasuraEvent source → plugins (composition model) → platform adapters → migrate `appointment.ready` end-to-end with shadow-mode parity. Verify against the current `hasura-event-detector/src` and `event-handlers` consumers. Respect the §4 correctness guards.
