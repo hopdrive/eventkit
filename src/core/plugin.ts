@@ -86,7 +86,13 @@ export interface EventKitPlugin {
 
   // ── Shape 2: delta transforms (return a partial; runtime merges) ────────
   configureInvocation?(request: RequestContext, envelope: EventEnvelope): Partial<RequestContext> | void;
-  augmentEnvelope?(envelope: EventEnvelope): Partial<EventEnvelope> | void;
+  /**
+   * Contribute a partial envelope before the correlation id locks. MAY be async: the
+   * runtime awaits each plugin's return in registration order, so a sync extractor
+   * (loop-guard) and an async resolver (correlation-resolver, which does a DB lookup
+   * across an external vendor round-trip — ADR-028) share this one seam.
+   */
+  augmentEnvelope?(envelope: EventEnvelope): Partial<EventEnvelope> | void | Promise<Partial<EventEnvelope> | void>;
   augmentJobContext?(ctx: JobContext): JobContextContribution | void;
 
   // ── Shape 3: singleton capabilities (one provider; `base` = injected default) ──

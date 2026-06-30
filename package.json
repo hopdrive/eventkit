@@ -58,6 +58,11 @@
       "import": "./dist/esm/plugins/loop-guard/index.js",
       "require": "./dist/cjs/plugins/loop-guard/index.js"
     },
+    "./plugins/correlation-resolver": {
+      "types": "./dist/types/plugins/correlation-resolver/index.d.ts",
+      "import": "./dist/esm/plugins/correlation-resolver/index.js",
+      "require": "./dist/cjs/plugins/correlation-resolver/index.js"
+    },
     "./plugins/transports/grafana": {
       "types": "./dist/types/plugins/grafana/index.d.ts",
       "import": "./dist/esm/plugins/grafana/index.js",

@@ -27,6 +27,7 @@ const SUBPATHS = [
   '@hopdrive/eventkit/plugins/observability',
   '@hopdrive/eventkit/plugins/observability/graphql-sink',
   '@hopdrive/eventkit/plugins/loop-guard',
+  '@hopdrive/eventkit/plugins/correlation-resolver',
   '@hopdrive/eventkit/plugins/transports/grafana',
   '@hopdrive/eventkit/plugins/transports/sentry',
   '@hopdrive/eventkit/platforms',

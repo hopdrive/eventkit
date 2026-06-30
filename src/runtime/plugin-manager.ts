@@ -180,10 +180,14 @@ export class PluginManager {
     return merged;
   }
 
-  augmentEnvelope(envelope: EventEnvelope): EventEnvelope {
+  // Awaitable (ADR-028): `await` tolerates a sync return (loop-guard) and a promise
+  // (correlation-resolver's DB lookup) alike. Registration-order folding is preserved
+  // — a later plugin sees the merged result of every earlier one, so loop-guard's
+  // echo-back extraction runs before the resolver's lookup fallback can fire.
+  async augmentEnvelope(envelope: EventEnvelope): Promise<EventEnvelope> {
     let merged = envelope;
     for (const p of this.plugins) {
-      const partial = p.augmentEnvelope?.(merged);
+      const partial = await p.augmentEnvelope?.(merged);
       if (partial) merged = { ...merged, ...partial };
     }
     return merged;
