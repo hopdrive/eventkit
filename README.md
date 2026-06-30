@@ -24,17 +24,19 @@ npm install @hopdrive/eventkit
 > Not published to npm yet (see status above) — the command above is how you'll install it
 > once it ships. Until then, consume it via a local file link / workspace.
 
-Dual ESM/CJS, TypeScript types included. Imports are by **subpath**, so a serverless
-function only bundles what it uses.
+Dual ESM/CJS, TypeScript types included. Import the **family barrels** —
+`@hopdrive/eventkit/sources`, `/platforms`, `/plugins` — for clean, few-line imports;
+the package is `sideEffects`-free, so a function only bundles the sources/plugins it
+actually names. (Granular subpaths like `/plugins/observability` remain available for the
+tightest possible bundle.)
 
 ## Quick start
 
 ```ts
 import { createEventKit, defineEvent, job } from '@hopdrive/eventkit';
-import { hasuraEvent } from '@hopdrive/eventkit/sources/hasura';
+import { hasuraEvent } from '@hopdrive/eventkit/sources';
 import { netlifyPlatform } from '@hopdrive/eventkit/platforms';
-import { observability } from '@hopdrive/eventkit/plugins/observability';
-import { graphqlSink } from '@hopdrive/eventkit/plugins/observability/graphql-sink';
+import { observability, graphqlSink } from '@hopdrive/eventkit/plugins';
 import { sendOfferSMS, notifyOrg } from './jobs';
 import { initSdk } from './lib/sdk';
 

@@ -4,7 +4,7 @@
 **Purpose:** The decisions that must be made by a human before the v0.2 canonical draft (`architecture.md`) can be ratified and drive implementation. Each entry records **what the decision is, where it came from, the options, the blast radius, a recommendation, and what stays blocked until it is answered.**
 ---
 
-## STATUS AS OF v0.3.14 (canonical RFC) — read this first; this block is authoritative
+## STATUS AS OF v0.3.15 (canonical RFC) — read this first; this block is authoritative
 
 The framework is now **built**. This status block is the current truth; the per-decision bodies below
 are the **original register, kept for provenance** — their `Decision: _____` blanks are historical, not
@@ -42,7 +42,7 @@ live prompts. Where a decision has shipped, the code (not a blank line) is the s
 **How to use:** the status block above is current. The bodies below are the original register; read them
 for the *why* behind each call. Tiers: **BLOCKING** / **HIGH** / **MEDIUM** / **LOW** / **NEW**.
 
-Provenance shorthand: **v0.1** = the original RFC; **v0.2** = canonical draft (now v0.3.14); the **why**
+Provenance shorthand: **v0.1** = the original RFC; **v0.2** = canonical draft (now v0.3.15); the **why**
 behind the resolved items is distilled in **`design-rationale.md`**; **CONV** = the raw planning
 conversations in `raw-conversations/`; **CODE** = current EventKit source / legacy `event-handlers`.
 (The earlier EVAL / REVIEW / amendment A–E docs cited below have been removed; their conclusions live in

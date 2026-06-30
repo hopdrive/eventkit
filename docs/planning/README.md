@@ -8,7 +8,7 @@ does today*, the authority is the canonical RFC (below) and the code (`../../REA
 
 ## Read order
 
-1. **`architecture.md`** — the canonical spec and source of truth (revision **v0.3.14**; see its
+1. **`architecture.md`** — the canonical spec and source of truth (revision **v0.3.15**; see its
    revision-history table). Read §0 (change map), then §7–§13 (the API surface), then §22 (ADRs 001–027).
 2. **`design-rationale.md`** — the distilled *why*: the consumption-failure evidence that drove the
    rewrite, and each major decision paired with the alternative it replaced. Read this so settled

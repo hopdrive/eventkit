@@ -7,7 +7,7 @@
 > descriptions below are pre-build future-tense and some name APIs that were superseded before shipping
 > (noted inline where they'd actively mislead).
 
-**Date:** 2026-06-28 · **Design state (at writing):** RFC v0.3.7 · **As shipped:** RFC v0.3.14
+**Date:** 2026-06-28 · **Design state (at writing):** RFC v0.3.7 · **As shipped:** RFC v0.3.15
 **Purpose:** Everything a new context window needed to start *building* EventKit. (The build is complete; see banner.)
 
 ---
@@ -16,7 +16,7 @@
 
 A fresh agent has only what's written down. Read, in order:
 1. **This file.**
-2. **`architecture.md`** — the canonical design and **source of truth** (revision **v0.3.14**; see its revision-history table). Read §0 (change map) first, then §7–§13 (the API surface) and §22 (ADRs).
+2. **`architecture.md`** — the canonical design and **source of truth** (revision **v0.3.15**; see its revision-history table). Read §0 (change map) first, then §7–§13 (the API surface) and §22 (ADRs).
 3. **`design-rationale.md`** — the distilled *why* behind the final design (consumption evidence + the decisions and the alternatives they replaced).
 4. **`design-change-log.md`** — CHG-1…13, the change-by-change *why* (continued in the RFC revision history through CHG-17).
 5. **`decision-register.md`** — the decision register with current resolved/open status (read the STATUS block at top).
@@ -113,4 +113,4 @@ Destructure over chained refs (`const { input, log } = ctx`); detector = `switch
 ---
 
 ## 7. One-paragraph brief to paste into the new thread
-> *(Historical seed — the build is done. Kept verbatim for provenance.)* Build the EventKit package per `architecture.md` (source of truth, now revision v0.3.14) and this kickoff plan. Decisions are captured in the RFC ADRs 001–027, the design-changes log (CHG-1…13 + CHG-14…17 in the RFC revision history), `design-rationale.md`, and the open-decisions register. Start at Phase 0: take the recommended defaults for the open decisions D19 (positional source), D20 (qualified capability tokens), D22 (lazy plugin instantiation), D6 (shadow-mode), D7 (no facade), D8 (subpaths + CI bundle test) unless the human overrides; freeze the public types; then build core → hasuraEvent source → plugins (composition model) → platform adapters → migrate `appointment.ready` end-to-end with shadow-mode parity. Verify against the current `hasura-event-detector/src` and `event-handlers` consumers. Respect the §4 correctness guards.
+> *(Historical seed — the build is done. Kept verbatim for provenance.)* Build the EventKit package per `architecture.md` (source of truth, now revision v0.3.15) and this kickoff plan. Decisions are captured in the RFC ADRs 001–027, the design-changes log (CHG-1…13 + CHG-14…17 in the RFC revision history), `design-rationale.md`, and the open-decisions register. Start at Phase 0: take the recommended defaults for the open decisions D19 (positional source), D20 (qualified capability tokens), D22 (lazy plugin instantiation), D6 (shadow-mode), D7 (no facade), D8 (subpaths + CI bundle test) unless the human overrides; freeze the public types; then build core → hasuraEvent source → plugins (composition model) → platform adapters → migrate `appointment.ready` end-to-end with shadow-mode parity. Verify against the current `hasura-event-detector/src` and `event-handlers` consumers. Respect the §4 correctness guards.
