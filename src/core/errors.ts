@@ -1,7 +1,7 @@
 // =============================================================================
 // Error + output serialization (§9.6)
 // =============================================================================
-// Core owns serialization because both durability (BatchJobs) and observability
+// Core owns serialization because both durability (Batch) and observability
 // must persist errors/outputs that may contain circular references or live,
 // non-serializable values. These are leaf utilities — pure and dependency-free —
 // so they are implemented here in Phase 0 rather than stubbed.

@@ -62,6 +62,7 @@ export type {
   JobCheckpoint,
   JobExecution,
   JobExecutionStatus,
+  JobsResult,
   RunOptions,
 } from './job.js';
 export { job, NotImplementedError } from './job.js';
@@ -73,6 +74,7 @@ export type {
   DetectorFunction,
   PrepareFunction,
   ResolveFunction,
+  RespondFunction,
 } from './event-module.js';
 export { defineEvent } from './event-module.js';
 

@@ -31,10 +31,10 @@ export interface SourceMeta {
   /**
    * The prior job execution id that produced the write which triggered this
    * invocation — the observability link back to `batch_jobs`/`job_executions`.
-   * Populated by loop-prevention from the inbound tracking token (§13).
+   * Populated by loop-guard from the inbound tracking token (§13).
    */
   sourceJobId?: string;
-  /** Inbound provenance token (loop-prevention). */
+  /** Inbound provenance token (loop-guard). */
   sourceTrackingToken?: string;
 }
 

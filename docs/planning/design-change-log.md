@@ -23,13 +23,13 @@
 ## CHG-2 — Plugins integrate via the lifecycle interface and self-correlate; jobs stay plugin-agnostic
 **What:** A plugin must do its work **through the EventKit lifecycle hooks alone**, correlating runtime state from the context IDs it already receives (invocationId, the triggering envelope, jobExecutionId). Jobs and handlers MUST NOT pass plugin-specific objects around to make a plugin work.
 
-Concretely for **BatchJobs**:
-- Drop `DurableJobOptions.record`, `batchJobs.record(...)`, `DurableJobContext`, and `ctx.batch.record`.
-- `durable` becomes a **declarative boolean flag** on `JobOptions` (`durable?: boolean`), peer to `retries`/`timeoutMs`. **[Superseded by CHG-7 / ADR-015 revised: the `durable` flag was removed entirely — durability is emergent from registering the BatchJobs plugin. There is no `durable` field in shipped core.]**
+Concretely for **Batch**:
+- Drop `DurableJobOptions.record`, `batch.record(...)`, `DurableJobContext`, and `ctx.batch.record`.
+- `durable` becomes a **declarative boolean flag** on `JobOptions` (`durable?: boolean`), peer to `retries`/`timeoutMs`. **[Superseded by CHG-7 / ADR-015 revised: the `durable` flag was removed entirely — durability is emergent from registering the Batch plugin. There is no `durable` field in shipped core.]**
 - The durable job is an **ordinary, batch-unaware job**. It reads its work from `ctx.input` (the handler maps the triggering `batch_jobs` row's `input` column into the job's `input`, which is normal handler→job business data).
-- The **BatchJobs plugin** owns all persistence. On `onJobStart`/`onJobEnd`/`onError`/timeout it transitions the triggering `batch_jobs` row (`processing → done / error / timeout`), persists output/logs, and schedules retries — **self-correlating** the row from the invocation's envelope. The job never knows a batch exists.
+- The **Batch plugin** owns all persistence. On `onJobStart`/`onJobEnd`/`onError`/timeout it transitions the triggering `batch_jobs` row (`processing → done / error / timeout`), persists output/logs, and schedules retries — **self-correlating** the row from the invocation's envelope. The job never knows a batch exists.
 
-**Why:** Jobs should be independent and reusable. A job that reads `ctx.batch.record` is coupled to the durability plugin and behaves differently depending on which plugin is loaded — the opposite of independence. The observability plugin already works this way (pure observer of lifecycle); BatchJobs should match. Reading ambient runtime values the framework populates (`ctx.log`, `ctx.signal`, `ctx.trackingToken`) is fine; importing/threading **plugin objects** is not.
+**Why:** Jobs should be independent and reusable. A job that reads `ctx.batch.record` is coupled to the durability plugin and behaves differently depending on which plugin is loaded — the opposite of independence. The observability plugin already works this way (pure observer of lifecycle); Batch should match. Reading ambient runtime values the framework populates (`ctx.log`, `ctx.signal`, `ctx.trackingToken`) is fine; importing/threading **plugin objects** is not.
 
 **Boundary clarified:** passing *business data the job needs* via `input` (a work unit, a row) = good. Passing *plugin/runtime objects* (a batch record, a token instance) = forbidden.
 
@@ -71,9 +71,9 @@ Enforcement:
 const kit = createEventKit({ source: hasura.source() });
 
 kit.use(observability({ ... }));
-kit.use(batchJobs({ ... }));
+kit.use(batch({ ... }));
 kit.use(trackingToken({ extractFromUpdatedBy: true }));
-kit.use(grafanaLogger());
+kit.use(grafana());
 
 kit.registerEvents(events);
 ```
@@ -95,18 +95,18 @@ All of the above are recorded as design decisions and propagated to: the canonic
 ---
 
 ## CHG-7 — Durability is emergent from plugin registration; remove the core `durable` flag
-**What:** Remove `durable` from core `JobOptions` entirely. **Core has no concept of durability.** Instead, the behavior is a pure property of *whether the BatchJobs plugin is registered in the kit*:
+**What:** Remove `durable` from core `JobOptions` entirely. **Core has no concept of durability.** Instead, the behavior is a pure property of *whether the Batch plugin is registered in the kit*:
 
-- **Registering BatchJobs makes every job in that kit durable automatically** — the equivalent of today's `batchJob(...)` wrapper, applied by virtue of registration, not a per-job flag.
+- **Registering Batch makes every job in that kit durable automatically** — the equivalent of today's `batchJob(...)` wrapper, applied by virtue of registration, not a per-job flag.
 - It is registered **only in the `db-batchjobs` function** (whose source is the `batch_jobs` table); it is never registered in any other kit, so no other function's jobs gain the behavior.
 - **Auto input injection.** The plugin injects the triggering `batch_jobs` row's `input` column as the **baseline** `ctx.input`. Handler-supplied `input` is shallow-merged on top (handler keys win — treated as overrides). The handler usually passes only live deps (or nothing); the serializable work payload arrives from the record automatically.
 - **Requires the Hasura source.** At its lowest level a batch job is a Hasura DB event on `batch_jobs` with an expected record shape. The plugin declares this dependency; `kit.use()` validates it at init and throws if the source isn't Hasura.
 - **Auto-persist** state, output, and logs back to the row via lifecycle hooks (exactly what the wrapper does now): `processing → done / error / timeout`, output, serialized errors.
 - **Log flushing is configurable.** End-of-job flush is mandatory; **periodic flushing is optional plugin config** (a flush interval and/or an every-N-entries trigger) to feed the live React view that watches `batch_jobs.output` via an Apollo GraphQL subscription while a background job runs for up to ~15 minutes.
 
-**Why:** A `durable: true` field in core `JobOptions` means core knows batchjobs exists — the precise coupling the plugin model is meant to remove (the smell Rob flagged). Durability must be invisible to core and to jobs: a property of *which plugins are registered*, nothing more. Bonus: the batch-consumer handler loses its last boilerplate — no wrapper, no flag, no input mapping. `run(event, [ job(runApBatch) ])` is the whole handler.
+**Why:** A `durable: true` field in core `JobOptions` means core knows batch exists — the precise coupling the plugin model is meant to remove (the smell Rob flagged). Durability must be invisible to core and to jobs: a property of *which plugins are registered*, nothing more. Bonus: the batch-consumer handler loses its last boilerplate — no wrapper, no flag, no input mapping. `run(event, [ job(runApBatch) ])` is the whole handler.
 
-**Mechanism (core stays domain-free):** core gains a generic plugin **context-contribution** step. Before each job runs, registered plugins MAY contribute a baseline `input` (and ambient context fields) which core merges *under* the handler's `options.input`. BatchJobs' contributor reads the triggering envelope (the row) and returns `{ input: row.input }`, and self-correlates the row id for persistence. The same mechanism cleanly homes `trackingToken`'s `ctx.trackingToken`. Core never names batchjobs.
+**Mechanism (core stays domain-free):** core gains a generic plugin **context-contribution** step. Before each job runs, registered plugins MAY contribute a baseline `input` (and ambient context fields) which core merges *under* the handler's `options.input`. Batch' contributor reads the triggering envelope (the row) and returns `{ input: row.input }`, and self-correlates the row id for persistence. The same mechanism cleanly homes `trackingToken`'s `ctx.trackingToken`. Core never names batch.
 
 **Impact:** removes `durable` from §9.4; adds `requires` + `augmentJobContext` to the plugin interface (§11); §12 rewritten; ADR-015 revised; ADR-020 added (context contribution / input injection). Supersedes CHG-2's `durable: true` flag with "registration-emergent." Migration gets *simpler* still: batch consumers drop the wrapper, the flag, and the input mapping.
 
@@ -145,8 +145,8 @@ Plus: `provides`/`requires` capability declaration (fixing the muddled `requires
 - **tracking-token:** `onPreConfigure` (mutates payload + returns options) → `configureInvocation` (delta) + `augmentJobContext` (ambient `ctx.trackingToken`). **Stops mutating the payload** — the biggest correctness win.
 - **order-enrichment:** `onPreConfigure` (mutates `hasuraEvent` by reference) → `augmentEnvelope` (delta). Stops mutating.
 - **observability:** notifications + `onFlush` (unchanged shape; renamed `flush`).
-- **batchJobs:** `augmentJobContext` (inject row input) + `onJobStart/End`/`onJobLog`/`onError` + `onFlush`; `requires: ['source:hasura']`.
-- **grafanaLogger:** `onLog` + `onJobLog` + `onFlush`; correlation from context, not the `scoped-job` wrapper.
+- **batch:** `augmentJobContext` (inject row input) + `onJobStart/End`/`onJobLog`/`onError` + `onFlush`; `requires: ['source:hasura']`.
+- **grafana:** `onLog` + `onJobLog` + `onFlush`; correlation from context, not the `scoped-job` wrapper.
 - **sentry/slackAlerts:** `onError` (+ `onFlush`).
 - **hasura source / netlify·lambda platform:** expressed as shape-3 capability providers (`provides: ['source']` / `['platform']`).
 

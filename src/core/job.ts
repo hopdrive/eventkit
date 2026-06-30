@@ -26,17 +26,17 @@ export type JobInputContext<
 /**
  * The two-channel job options bag (ADR-011). The single most important contract
  * for the migration: `input` is live and request-scoped and is NEVER persisted
- * or serialized; `metadata` is serializable and IS persisted by BatchJobs /
+ * or serialized; `metadata` is serializable and IS persisted by Batch /
  * recorded by Observability. There is deliberately NO `durable` field —
- * durability is emergent from registering the BatchJobs plugin (ADR-015), so
- * core JobOptions never names batchjobs.
+ * durability is emergent from registering the Batch plugin (ADR-015), so
+ * core JobOptions never names batch.
  */
 export interface JobOptions<TInput = undefined> {
   /** Overrides the job name (else derived from the function name). */
   name?: string;
   /** Per-job timeout; the runtime races the job against it and marks `timed_out`. */
   timeoutMs?: number;
-  /** Retry attempts core will make (durable scheduling of retries is BatchJobs'). */
+  /** Retry attempts core will make (durable scheduling of retries is Batch'). */
   retries?: number;
   tags?: string[];
   /** Per-job override of the run-level continue-on-failure default. */
@@ -51,7 +51,7 @@ export interface JobOptions<TInput = undefined> {
    */
   input?: TInput | ((ctx: JobInputContext) => TInput);
   /**
-   * Serializable annotations. Persisted by BatchJobs, recorded by Observability.
+   * Serializable annotations. Persisted by Batch, recorded by Observability.
    * MUST be JSON-serializable.
    */
   metadata?: Record<string, unknown>;
@@ -162,6 +162,19 @@ export interface JobExecution<TResult = unknown> {
   output?: TResult;
   error?: SerializedError;
   metadata: Record<string, unknown>;
+}
+
+/**
+ * What a module's `respond` seam receives alongside the context (ADR-026 amendment):
+ * the event's settled job executions plus a convenience `ok` flag. Unlike `resolve`
+ * (which runs concurrently and is sibling-ignorant), `respond` runs AFTER the jobs
+ * settle, so it can compose the synchronous response from their results.
+ */
+export interface JobsResult<TResult = unknown> {
+  /** Every job execution for this event, in declared order, already settled. */
+  jobs: JobExecution<TResult>[];
+  /** True when every job ended `completed` or `skipped` (same predicate as `InvocationResult.ok`). */
+  ok: boolean;
 }
 
 /** Options for `run()`. Defaults are PINNED (ADR-014) — see `run`. */

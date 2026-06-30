@@ -14,6 +14,7 @@ export function netlifyBackgroundPlatform(config: { maxExecutionMs?: number } = 
     name: 'platform-netlify-background',
     provides: ['platform', 'platform:netlify-background'],
     detect: () => !!env()['NETLIFY'],
+    deferredResponse: true,   // returns 202 before jobs finish → a result-driven `respond` can't apply here
     extractPayload: (event: unknown) => extractHttpBody(event),
     buildRequest: (_event: unknown, context?: LambdaContext): RequestContext => {
       const req: RequestContext = { getRemainingTimeMs: nativeCountdown(context) ?? computedDeadline(maxExecutionMs) };

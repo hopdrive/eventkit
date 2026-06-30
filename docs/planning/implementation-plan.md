@@ -32,7 +32,7 @@ A fresh agent has only what's written down. Read, in order:
 
 **Decisions: captured.** Every architectural decision lives in one of:
 - **RFC §22 ADRs** — 001–010 (v0.1 foundations, summarized) and **011–027** (full):
-  011 input/metadata channels · 012 typed augmentation not mutation · 013 module-scoped runtime + `handle()` · 014 `run()` parallel+continueOnFailure default · 015 durability emergent from registration (no flag) · 016 loop-prevention mechanism · 017 plugins self-correlate / jobs plugin-agnostic · 018 declarative handlers (no conditional jobs) · 019 register-style API (positional source + `use(plugin,config?)`) · 020 `augmentJobContext` contribution · 021 platform adapters · 022 plugin composition model (3 hook shapes, DI not inheritance) · 023 `hasuraEvent`/`hasuraCron` · **024 generic plugins built-in (subpath exports)** · **025 fully declarative modules (`defineEvent`, no handler/`run()`)** · **026 `webhook`/`hasuraAction` sources + module-level `resolve` request/response** · **027 sources/platforms are narrowly-scoped plugins; unified `src/plugins/` code org**.
+  011 input/metadata channels · 012 typed augmentation not mutation · 013 module-scoped runtime + `handle()` · 014 `run()` parallel+continueOnFailure default · 015 durability emergent from registration (no flag) · 016 loop-guard mechanism · 017 plugins self-correlate / jobs plugin-agnostic · 018 declarative handlers (no conditional jobs) · 019 register-style API (positional source + `use(plugin,config?)`) · 020 `augmentJobContext` contribution · 021 platform adapters · 022 plugin composition model (3 hook shapes, DI not inheritance) · 023 `hasuraEvent`/`hasuraCron` · **024 generic plugins built-in (subpath exports)** · **025 fully declarative modules (`defineEvent`, no handler/`run()`)** · **026 `webhook`/`hasuraAction` sources + module-level `resolve` request/response** · **027 sources/platforms are narrowly-scoped plugins; unified `src/plugins/` code org**.
 - **CHG-1…17** (CHG-1…13 in the changes doc; CHG-14…17 in the RFC revision history) — rationale + before/after.
 - **D1…D23** (register) — see the register's STATUS block for resolved vs the few still-open process calls (D6, D10, D13).
 
@@ -44,7 +44,7 @@ A fresh agent has only what's written down. Read, in order:
 
 ### 2a. Open decisions that GATE the public type freeze — decide before writing the interfaces
 - **D19** — source registration: positional `createEventKit(hasuraEvent)` (C) vs `kit.use(hasuraEvent)` (B). **Default: C.**
-- **D20** — `provides`/`requires` capability tokens: role-level (`'source'`) vs qualified (`'source:hasura'`). **Default: qualified** (BatchJobs must require Hasura specifically).
+- **D20** — `provides`/`requires` capability tokens: role-level (`'source'`) vs qualified (`'source:hasura'`). **Default: qualified** (Batch must require Hasura specifically).
 - **D22** — plugin instantiation timing under `use(plugin, config?)`: eager vs lazy. **Default: lazy** (at `validate()`/first `handle()`, so the kit can inject kit-level context + run `requires` checks).
 
 ### 2b. Open decisions that GATE cutover / packaging
@@ -58,7 +58,7 @@ A fresh agent has only what's written down. Read, in order:
 `Capability`, `EventSourceName`, `EventSourceType` (the union exists), `JobDefinition`, `PluginFactory`, `NormalizeFn`, `FormatFn`, `KitContext`, `DetectionResult`, `HandlerResult`, `JobProgress`/`JobCheckpoint` (shapes sketched), `SerializedError` (shape defined), the `LogEntry`/logger interfaces (`DetectorLogger`/`HandlerLogger`/`JobLogger`), `EventModuleMetadata`. These are mechanical to finalize once D19/D20/D22 are set.
 
 ### 2d. Not-yet-specified delivery concerns
-- **Repo/package location**: built in a fresh `@hopdrive/eventkit` repo (`/Users/robnewton/Github/eventkit`). **[ADR-024]** Generic-by-config plugins — loop-prevention/tracking-token, grafanaLogger, sentry — ship **built-in as subpath exports** of `@hopdrive/eventkit`, NOT in a separate package; each is parameterized by injected config. A HopDrive layer holds only (a) config presets pinning the shared token format / `updated_by` field / service id, (b) any genuinely SDK-coupled (`@hopdrive/sdk-*`) enrichment plugin, (c) the app's event modules (which live in the consumer repos). Whether that layer is a published `@hopdrive/app-eventkit` package or just a shared config object in the consumer repos is deferred (D23) — likely no package if it's only presets.
+- **Repo/package location**: built in a fresh `@hopdrive/eventkit` repo (`/Users/robnewton/Github/eventkit`). **[ADR-024]** Generic-by-config plugins — loop-guard/tracking-token, grafana, sentry — ship **built-in as subpath exports** of `@hopdrive/eventkit`, NOT in a separate package; each is parameterized by injected config. A HopDrive layer holds only (a) config presets pinning the shared token format / `updated_by` field / service id, (b) any genuinely SDK-coupled (`@hopdrive/sdk-*`) enrichment plugin, (c) the app's event modules (which live in the consumer repos). Whether that layer is a published `@hopdrive/app-eventkit` package or just a shared config object in the consumer repos is deferred (D23) — likely no package if it's only presets.
 - **Build/exports**: dual ESM/CJS (the current package does), `exports` map for subpaths, types. Reuse the current repo's tsconfig.* setup as a starting point.
 - **Console backend** (Flow/Compare APIs) — out of v1 scope; only an Observed-mode read over the observability tables if anything.
 
@@ -76,18 +76,18 @@ Each phase lists what to build, the governing ADRs, and a done-bar. **Honest fra
 
 **Phase 3 — Plugins + composition model.** Implement the 3-shape `EventKitPlugin` contract (notification `on…` / delta transform / singleton capability; DI-injected `base` for replacement) + `provides`/`requires` validation at `onInit`. Then:
 - `observability()` (buffered, flush at `onInvocationEnd`/`onFlush`; Invocation→Event→Job; best-effort).
-- `batchJobs()` — **registration-emergent durability**: `augmentJobContext` injects the `batch_jobs` row's `input`; lifecycle hooks drive `processing→done/error/timeout`; configurable periodic log flush; `requires:['source:hasura']`. No `durable` flag.
+- `batch()` — **registration-emergent durability**: `augmentJobContext` injects the `batch_jobs` row's `input`; lifecycle hooks drive `processing→done/error/timeout`; configurable periodic log flush; `requires:['source:hasura']`. No `durable` flag.
 - **Built-in generic plugins (ADR-024)** — config-driven, shipped as subpath exports of `@hopdrive/eventkit`:
-  - `loopPrevention({ field, codec, serviceId })` — inbound reads the configured field (HopDrive: `updated_by`) into `envelope.meta.sourceTrackingToken`; outbound stamping is the core `ctx.trackingToken` seam (already in Phase 1). The `source|correlationId|jobExecutionId` codec is generic (separator + validation are config).
-  - `grafanaLogger({ logger })` or `grafanaLogger({ grafana: { endpoint, auth, labels } })` and `sentry({ dsn })` — generic observability transports; secrets/endpoints arrive via injected config (plugins never read `process.env`). *(The export is `grafanaLogger`, not `grafanaTransport`.)*
-- HopDrive layer is config presets (token format / `updated_by` / service id) + any SDK-coupled enrichment plugin + event modules — see §2d / ADR-024. Do NOT build a `@hopdrive/app-eventkit` package for trackingToken/grafanaLogger/sentry.
-ADRs 015,016,017,019,020,022,024. *Done:* a durable consumer runs as a plain job reading `ctx.input`, state persisted to `batch_jobs`; observability records written once per invocation; `loopPrevention` configured with `field:'updated_by'` round-trips a token inbound→outbound.
+  - `loopGuard({ field, codec, serviceId })` — inbound reads the configured field (HopDrive: `updated_by`) into `envelope.meta.sourceTrackingToken`; outbound stamping is the core `ctx.trackingToken` seam (already in Phase 1). The `source|correlationId|jobExecutionId` codec is generic (separator + validation are config).
+  - `grafana({ logger })` or `grafana({ grafana: { endpoint, auth, labels } })` and `sentry({ dsn })` — generic observability transports; secrets/endpoints arrive via injected config (plugins never read `process.env`). *(The export is `grafana`, not `grafanaTransport`.)*
+- HopDrive layer is config presets (token format / `updated_by` / service id) + any SDK-coupled enrichment plugin + event modules — see §2d / ADR-024. Do NOT build a `@hopdrive/app-eventkit` package for trackingToken/grafana/sentry.
+ADRs 015,016,017,019,020,022,024. *Done:* a durable consumer runs as a plain job reading `ctx.input`, state persisted to `batch_jobs`; observability records written once per invocation; `loopGuard` configured with `field:'updated_by'` round-trips a token inbound→outbound.
 
 **Phase 4 — Platform adapters.** `netlifyPlatform()` (classic) + `lambdaPlatform()`; then `netlifyV2Platform()` + `netlifyBackgroundPlatform()` for reverse integrations. Three time-budget strategies; `kit.handler()`; detect-and-warn. ADR-021. *Done:* a `db-*` function runs via `kit.handler()` with no hand-written `getRemainingTimeInMillis`.
 
 **Phase 5 — `hasuraCron` source adapter.** Hasura scheduled-trigger payload → envelope; detector ctx `scheduleName`/`scheduledAt`/`payload`. ADR-023.
 
-**Phase 6 — First real migration + shadow mode.** Migrate one `db-*` function (recommend `db-appointments`, module `appointment.ready`) end-to-end; build the **shadow-mode parity harness** (D6) and diff against the current runtime for AR/tracking-token paths. *Done:* outputs match in shadow; observability + loop-prevention verified; then cut over.
+**Phase 6 — First real migration + shadow mode.** Migrate one `db-*` function (recommend `db-appointments`, module `appointment.ready`) end-to-end; build the **shadow-mode parity harness** (D6) and diff against the current runtime for AR/tracking-token paths. *Done:* outputs match in shadow; observability + loop-guard verified; then cut over.
 
 **Phase 7 — Expand `db-*`.** Migrate remaining modules; **refactor the ≈14 conditional-job sites** (§3.9/ADR-018) into named events or input-driven jobs; rewrite the test mocks.
 
@@ -105,7 +105,7 @@ ADRs 015,016,017,019,020,022,024. *Done:* a durable consumer runs as a plain job
 5. **Event names preserved verbatim** during migration (no opportunistic renames — breaks observability history).
 
 ## 5. Definition of done (v1)
-Core + `hasuraEvent` + `observability` + `batchJobs` + built-in `loopPrevention` + `netlifyPlatform` shipping; **one `db-*` function fully migrated and passing shadow-mode parity**; detector/handler/job/plugin unit tests; the Netlify-bundle CI smoke test green; the ≈14 conditional-job sites in the migrated function refactored.
+Core + `hasuraEvent` + `observability` + `batch` + built-in `loopGuard` + `netlifyPlatform` shipping; **one `db-*` function fully migrated and passing shadow-mode parity**; detector/handler/job/plugin unit tests; the Netlify-bundle CI smoke test green; the ≈14 conditional-job sites in the migrated function refactored.
 
 ## 6. House style (from memory — apply throughout)
 Destructure over chained refs (`const { input, log } = ctx`); detector = `switch (ctx.operation)` with named booleans per case + sentence return; handlers are declarative job lists; jobs read `ctx.input`, log via `ctx.log`; `${x ?? 0}` stringify; event-handler module = thin jobs-array builder (no business logic/SDK init/DB writes); Hasura changes via PR to hasura-migrations; invoke `hopdrive-ui:designer` for any UI (the Console).

@@ -44,7 +44,7 @@ export interface GrafanaTransportConfig {
   send?: (payload: LokiPayload, target: { endpoint: string; headers: Record<string, string> }) => void | Promise<void>;
 }
 
-export interface GrafanaLoggerConfig {
+export interface GrafanaConfig {
   /** Mode 1: forward to this logger (e.g. `getLogger()` from sdk-server-logger). */
   logger?: LoggerLike;
   /** Mode 2: build a Loki transport from this config when no `logger` is given. */
@@ -83,7 +83,7 @@ type Emit = (level: LogLevel, message: string, metadata: Record<string, unknown>
  *  log LINE (structured), never as Loki stream labels — high-cardinality values
  *  (correlationId, jobExecutionId) as labels would explode Loki's index. */
 function createLokiSink(cfg: GrafanaTransportConfig, source: string): { emit: Emit; flush: () => Promise<void> } {
-  if (!cfg.endpoint) throw new Error('grafanaLogger({ grafana }) requires an `endpoint`.');
+  if (!cfg.endpoint) throw new Error('grafana({ grafana }) requires an `endpoint`.');
   const labels = cfg.labels ?? {};
   const send = cfg.send ?? defaultSend;
   const headers: Record<string, string> = { ...(cfg.auth?.headers ?? {}) };
@@ -115,7 +115,7 @@ function createLokiSink(cfg: GrafanaTransportConfig, source: string): { emit: Em
   return { emit, flush };
 }
 
-export function grafanaLogger(config: GrafanaLoggerConfig): EventKitPlugin {
+export function grafana(config: GrafanaConfig): EventKitPlugin {
   const source = config.source ?? 'eventkit';
   const minLevel = LEVEL_ORDER[config.minLevel ?? 'debug'];
 
@@ -140,7 +140,7 @@ export function grafanaLogger(config: GrafanaLoggerConfig): EventKitPlugin {
     flush = loki.flush;
   } else {
     throw new Error(
-      'grafanaLogger() requires either `logger` (e.g. getLogger() from @hopdrive/sdk-server-logger) or `grafana` (direct Loki config).',
+      'grafana() requires either `logger` (e.g. getLogger() from @hopdrive/sdk-server-logger) or `grafana` (direct Loki config).',
     );
   }
 

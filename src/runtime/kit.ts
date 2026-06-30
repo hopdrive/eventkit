@@ -82,10 +82,22 @@ class Kit implements EventKit {
     if (module.resolve !== undefined && typeof module.resolve !== 'function') {
       throw new Error(`Event '${module.name}': resolve must be a function if provided.`);
     }
-    // ADR-025/026: a module declares `jobs` (fire-and-forget) and/or `resolve`
-    // (request/response). A module with neither does nothing — a config error.
-    if (module.jobs === undefined && module.resolve === undefined) {
-      throw new Error(`Event '${module.name}': must declare 'jobs' and/or 'resolve' (a module with neither does nothing).`);
+    if (module.respond !== undefined && typeof module.respond !== 'function') {
+      throw new Error(`Event '${module.name}': respond must be a function if provided.`);
+    }
+    // ADR-026: a module picks ONE response timing. `resolve` runs concurrently with the
+    // jobs (sibling-ignorant); `respond` runs after they settle and reads their results.
+    if (module.resolve !== undefined && module.respond !== undefined) {
+      throw new Error(`Event '${module.name}': declare 'resolve' OR 'respond', not both — they are two response timings for the same seam.`);
+    }
+    // `respond` composes the response FROM job results, so it needs jobs to read.
+    if (module.respond !== undefined && (module.jobs === undefined || module.jobs.length === 0)) {
+      throw new Error(`Event '${module.name}': 'respond' requires at least one job (it reads their results); use 'resolve' for a job-independent response.`);
+    }
+    // ADR-025/026: a module declares `jobs` (fire-and-forget) and/or a response seam
+    // (`resolve`/`respond`). A module with neither does nothing — a config error.
+    if (module.jobs === undefined && module.resolve === undefined && module.respond === undefined) {
+      throw new Error(`Event '${module.name}': must declare 'jobs' and/or 'resolve'/'respond' (a module with neither does nothing).`);
     }
     // `jobs`, if present, is a static array. Each entry is a branded job(...) OR a bare
     // job function (auto-wrapped with `job(fn)` — ADR-025 amendment). Normalize at REGISTER
@@ -124,6 +136,19 @@ class Kit implements EventKit {
     // plus registration sanity. onInit (async) runs in ensureReady()/handle().
     this.pm.resolve();
     if (this.modules.length === 0) throw new Error('No event modules registered. Call kit.registerEvents(...).');
+    // ADR-026: a result-driven `respond` cannot run under a platform that answers before
+    // the jobs finish (a background / 202-early adapter) — the outcome it reads hasn't
+    // happened yet. Reject the combination up front rather than silently dropping the body.
+    if (this.pm.platform?.deferredResponse) {
+      const offender = this.modules.find(m => m.respond !== undefined);
+      if (offender) {
+        throw new Error(
+          `Event '${offender.name}': 'respond' (result-driven response) is incompatible with platform ` +
+          `'${this.pm.platform.name}', which responds before jobs finish. Use 'resolve' for an immediate ` +
+          `ack, or register a non-deferred platform.`,
+        );
+      }
+    }
     this.validated = true;
   }
 
@@ -213,14 +238,14 @@ class Kit implements EventKit {
     // 2. Normalize → augment envelope.
     await this.pm.onBeforeNormalize(raw, req);
     let envelope: EventEnvelope = this.pm.normalize(raw, req);
-    envelope = this.pm.augmentEnvelope(envelope);
+    envelope = await this.pm.augmentEnvelope(envelope);
     await this.pm.onAfterNormalize(envelope);
 
     // 3. Per-request config refinement (delta), then resolve ids.
     req = this.pm.configureInvocation(req, envelope);
     const invocationId = req.invocationId ? asInvocationId(req.invocationId) : newInvocationId();
     // Single correlationId lever, by precedence: a plugin's augmentEnvelope (e.g.
-    // loop-prevention lifting the inbound token's correlation — chaining beats a
+    // loop-guard lifting the inbound token's correlation — chaining beats a
     // fresh id, ran above) > the source's normalize (which already folded in
     // request.correlationId ?? trace_context ?? generated) > a defensive fallback.
     const correlationId = envelope.correlationId ?? newCorrelationId();
@@ -279,6 +304,24 @@ class Kit implements EventKit {
 
     return result;
     } catch (err) {
+      // A source may reject a request in the PRE-DISPATCH phase with a client error —
+      // e.g. webhook `rejectUnverified` throws ClientError(401) from normalize (ADR-030).
+      // Duck-type `.status` (instanceof is unreliable across bundled copies, like ADR-026)
+      // and map it to that wire status via resolved.error — NOT the framework-500 path —
+      // and skip the run entirely. No Invocation record: it never became a valid event.
+      if (typeof (err as { status?: unknown })?.status === 'number') {
+        this.kitLogger().warn('Request rejected before dispatch (client error)', {
+          status: (err as { status: number }).status,
+          message: String((err as { message?: unknown }).message ?? ''),
+        });
+        return {
+          ok: true,
+          invocationId: fallbackId,
+          events: [],
+          durationMs: Date.now() - start,
+          resolved: { hasResolved: true, error: toResolvedError(err) },
+        };
+      }
       await this.pm.reportError(err, 'normalize', { invocationId: fallbackId });
       return { ok: false, invocationId: fallbackId, events: [], durationMs: Date.now() - start, error: serializeError(err) };
     } finally {
@@ -436,11 +479,31 @@ class Kit implements EventKit {
           }
         }
         jobs = await jobsPromise;
+        // ADR-026 amendment: `respond` is the RESULT-DRIVEN response — sequenced AFTER the
+        // jobs settle, handed their executions + an `ok` flag (same predicate as
+        // InvocationResult.ok), so the synchronous reply can reflect the outcome. Mutually
+        // exclusive with `resolve` (enforced at register time). Jobs keep their own retry /
+        // durability — `respond` only reads results; a throw maps to the wire error.
+        if (module.respond) {
+          const ok = jobs.every(j => j.status === 'completed' || j.status === 'skipped');
+          try {
+            const output = await module.respond(jobInputCtx, { jobs, ok });
+            moduleResolved = { hasResolved: true, output };
+          } catch (rErr) {
+            error = serializeError(rErr);
+            moduleResolved = { hasResolved: true, error: toResolvedError(rErr) };
+            await this.pm.reportError(rErr, 'handle', {
+              invocationId: invocation.invocationId,
+              correlationId: invocation.correlationId,
+              eventName: event.name,
+            });
+          }
+        }
       } catch (err) {
-        // A prepare() crash — neither jobs nor resolve produced anything. For a
+        // A prepare() crash — neither jobs nor a response seam produced anything. For a
         // request/response module this becomes the error response.
         error = serializeError(err);
-        if (module.resolve) moduleResolved = { hasResolved: true, error: toResolvedError(err) };
+        if (module.resolve || module.respond) moduleResolved = { hasResolved: true, error: toResolvedError(err) };
         await this.pm.reportError(err, 'handle', {
           invocationId: invocation.invocationId,
           correlationId: invocation.correlationId,

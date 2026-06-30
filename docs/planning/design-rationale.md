@@ -33,7 +33,7 @@ load-bearing in production, and the early RFC drafts under-specified the *seam* 
    throw at runtime on every non-matching invocation.
 5. **`scoped-job` depended on plugins mutating the options object** (`opts.jobExecutionId` injected
    in `onJobStart`, read back to build the log scope and tracking token).
-6. **The tracking token is loop-prevention infrastructure**, not just a log field — it stamps
+6. **The tracking token is loop-guard infrastructure**, not just a log field — it stamps
    `updated_by` provenance so the system recognizes its *own* DB writes and avoids infinite event
    loops. Mis-homing it produces **event storms** in production with no failing test.
 7. **Plugin config was per-invocation** (per-request `invocationId`, per-function client name), but
@@ -82,16 +82,16 @@ explicitly does *not* preserve current behavior.
 
 ### Loop prevention is a control mechanism, not just an observability field — ADR-016
 **Why:** in early drafts the tracking token survived only as something you *log*. It actually *gates
-execution*. It is specified as a real loop-prevention mechanism (the `source|correlationId|jobId`
+execution*. It is specified as a real loop-guard mechanism (the `source|correlationId|jobId`
 codec + a configurable read/write provenance field + a service identity), shipped as the built-in
-`loopPrevention` plugin. Getting this wrong is silent and catastrophic (event storms), so it is a
+`loopGuard` plugin. Getting this wrong is silent and catastrophic (event storms), so it is a
 first-class, tested control path — not an "app helper to move out."
 
 ### Durability is emergent from registering the plugin — no `durable` flag — ADR-015 (revised)
 **Why (and what was reversed):** an intermediate design put `durable?: boolean | DurableJobOptions` on
-job options, with `batchJobs.record(...)` and a `ctx.batch.record` channel. That was **reversed**:
-durability now comes purely from registering the BatchJobs plugin (registered only where needed, e.g.
-`db-batchjobs`, `requires` the Hasura source). There is **no `durable` flag, no `batchJobs.record()`,
+job options, with `batch.record(...)` and a `ctx.batch.record` channel. That was **reversed**:
+durability now comes purely from registering the Batch plugin (registered only where needed, e.g.
+`db-batchjobs`, `requires` the Hasura source). There is **no `durable` flag, no `batch.record()`,
 and no `ctx.batch` object** — the plugin auto-injects the row's `input`, auto-persists, and offers
 configurable periodic log flushing. The generic `augmentJobContext` contribution + input-merge
 (ADR-020) is the mechanism that replaced the bespoke `ctx.batch` channel.
@@ -110,7 +110,7 @@ mutate-the-options-object integration model that `scoped-job` relied on.
 ### One package with subpath exports, not a package family — ADR-024
 **Why (reversed twice):** planning first proposed a multi-package family, then a separate
 `@hopdrive/app-eventkit` for the HopDrive layer. Both were reversed: the generic-by-config plugins
-(loop-prevention, observability, `grafanaLogger`, sentry, batchjobs) ship **built-in as subpath exports**
+(loop-guard, observability, `grafana`, sentry, batch) ship **built-in as subpath exports**
 of `@hopdrive/eventkit`. They are fully parameterized, so a separate package bought nothing. The
 HopDrive layer collapses to config presets + any genuinely SDK-coupled plugin + the app's event modules
 (which already live in the consumer repos).

@@ -38,10 +38,10 @@
       "import": "./dist/esm/plugins/source-webhook/index.js",
       "require": "./dist/cjs/plugins/source-webhook/index.js"
     },
-    "./plugins/batchjobs": {
-      "types": "./dist/types/plugins/batchjobs/index.d.ts",
-      "import": "./dist/esm/plugins/batchjobs/index.js",
-      "require": "./dist/cjs/plugins/batchjobs/index.js"
+    "./plugins/batch": {
+      "types": "./dist/types/plugins/batch/index.d.ts",
+      "import": "./dist/esm/plugins/batch/index.js",
+      "require": "./dist/cjs/plugins/batch/index.js"
     },
     "./plugins/observability": {
       "types": "./dist/types/plugins/observability/index.d.ts",
@@ -53,10 +53,10 @@
       "import": "./dist/esm/plugins/observability/graphql-sink.js",
       "require": "./dist/cjs/plugins/observability/graphql-sink.js"
     },
-    "./plugins/loop-prevention": {
-      "types": "./dist/types/plugins/loop-prevention/index.d.ts",
-      "import": "./dist/esm/plugins/loop-prevention/index.js",
-      "require": "./dist/cjs/plugins/loop-prevention/index.js"
+    "./plugins/loop-guard": {
+      "types": "./dist/types/plugins/loop-guard/index.d.ts",
+      "import": "./dist/esm/plugins/loop-guard/index.js",
+      "require": "./dist/cjs/plugins/loop-guard/index.js"
     },
     "./plugins/transports/grafana": {
       "types": "./dist/types/plugins/grafana/index.d.ts",

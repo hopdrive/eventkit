@@ -98,6 +98,8 @@ export interface EventKitPlugin {
   formatResponse?(result: InvocationResult, base?: FormatFn): unknown;
   /** Shape a pre-handle short-circuit (e.g. an auth rejection from `handler({ before })`) into the platform's response. */
   formatRejection?(rejection: HandlerShortCircuit): unknown;
+  /** Platform answers before jobs finish (background/202-early); see `PlatformAdapter.deferredResponse`. */
+  deferredResponse?: boolean;
 }
 
 /**
@@ -126,6 +128,12 @@ export interface PlatformAdapter<TArgs extends unknown[] = unknown[], TResponse 
   extends EventKitPlugin {
   /** True if this adapter matches the current runtime (env-based). */
   detect?(): boolean;
+  /**
+   * True if this adapter returns its response BEFORE jobs finish (a background / 202-early
+   * runtime). The kit rejects a result-driven `respond` module on such a platform at
+   * `validate()` time, since the response can't reflect job outcomes that haven't happened.
+   */
+  deferredResponse?: boolean;
   extractPayload(...args: TArgs): unknown | Promise<unknown>;
   buildRequest(...args: TArgs): RequestContext;
   formatResponse(result: InvocationResult): TResponse;

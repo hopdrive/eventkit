@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/plugins/batchjobs
+// @hopdrive/eventkit/plugins/batch
 // =============================================================================
 // Durability plugin (§12, ADR-015/020). Durability is EMERGENT from registering
 // this plugin — there is NO core `durable` flag. Registered only in the
@@ -55,7 +55,7 @@ export interface BatchJobStore {
   enqueueDelayed?(spec: DelayedBatchJobSpec): void | Promise<void>;
 }
 
-export interface BatchJobsConfig {
+export interface BatchConfig {
   store: BatchJobStore;
   /** End-of-job flush is always on. These add periodic flushing for the live-watch UI (§12.6). */
   logFlush?: {
@@ -103,9 +103,9 @@ const rowFor = (ctx: JobContext): TriggeringRow | undefined => {
 const serializeError = (err: JobExecution['error']): unknown =>
   err ? { name: err.name, message: err.message, ...(err.code ? { code: err.code } : {}) } : undefined;
 
-export function batchJobs(config: BatchJobsConfig): EventKitPlugin {
+export function batch(config: BatchConfig): EventKitPlugin {
   if (!config?.store || typeof config.store.update !== 'function') {
-    throw new Error('batchJobs() requires a `store` with an `update(id, fields)` method.');
+    throw new Error('batch() requires a `store` with an `update(id, fields)` method.');
   }
   const { store, durableRetry } = config;
   const everyNEntries = config.logFlush?.everyNEntries;
@@ -173,7 +173,7 @@ export function batchJobs(config: BatchJobsConfig): EventKitPlugin {
   };
 
   return {
-    name: 'batchjobs',
+    name: 'batch',
     requires: ['source:hasura'],
 
     augmentJobContext(ctx: JobContext) {

@@ -19,6 +19,7 @@
 import {
   asCorrelationId,
   asEventSourceName,
+  ClientError,
   type DetectorContext,
   type DetectorFunction,
   type EventEnvelope,
@@ -64,6 +65,15 @@ export interface WebhookConfig {
    * Secrets arrive captured in this closure — the source never reads process.env.
    */
   verify?: (args: WebhookVerifyArgs) => boolean;
+  /**
+   * One-chokepoint rejection for forged requests (ADR-030). Default `false` — `verify`
+   * only annotates `signatureVerified` and the detector decides (§7.1). Set `true` to
+   * reject a failed/throwing `verify` with **401** before any module runs (no detector
+   * guard needed); pass `{ status?, message? }` to customize (e.g. `403`). Requires
+   * `verify`. Trade-off: a rejected request creates no Invocation record (it never became
+   * an event) — keep `false` and guard in the detector if you want the attempt recorded.
+   */
+  rejectUnverified?: boolean | { status?: number; message?: string };
 }
 
 interface WebhookFields<TBody> {
@@ -102,7 +112,19 @@ const fieldsFromMeta = <TBody>(envelope: EventEnvelope<TBody>): WebhookFields<TB
 /** Build a per-vendor webhook source adapter (§7.1). */
 export function webhook(config: WebhookConfig): WebhookSource {
   if (!config?.vendor) throw new Error('webhook() requires a `vendor`.');
-  const { vendor, eventTypeHeader, verify } = config;
+  const { vendor, eventTypeHeader, verify, rejectUnverified } = config;
+  if (rejectUnverified && !verify) {
+    throw new Error('webhook() `rejectUnverified` requires a `verify` function — there is nothing to verify otherwise.');
+  }
+  const reject = rejectUnverified
+    ? {
+        status: typeof rejectUnverified === 'object' && typeof rejectUnverified.status === 'number' ? rejectUnverified.status : 401,
+        message:
+          typeof rejectUnverified === 'object' && typeof rejectUnverified.message === 'string'
+            ? rejectUnverified.message
+            : `webhook signature verification failed (${vendor})`,
+      }
+    : undefined;
   return {
     name: 'source-webhook',
     provides: ['source', 'source:webhook'],
@@ -132,6 +154,12 @@ export function webhook(config: WebhookConfig): WebhookSource {
         } catch {
           signatureVerified = false;
         }
+      }
+      // ADR-030: opt-in one-chokepoint rejection. A failed verify throws a ClientError in
+      // the pre-dispatch phase; the runtime maps it to that wire status (not a 500) and
+      // skips detection/dispatch, so no module needs a `signatureVerified` guard.
+      if (!signatureVerified && reject) {
+        throw new ClientError(reject.status, reject.message);
       }
       return {
         id: randomId(),

@@ -15,10 +15,17 @@
 // optional `resolve(ctx) => output` that computes the invocation's response value; the
 // source's platform adapter maps it to the wire. `jobs` then become optional side
 // effects that run alongside (sibling-ignorant — `resolve` never reads their results).
+//
+// When the response must instead reflect the OUTCOME of the work, a module declares
+// `respond(ctx, { jobs, ok }) => output` (ADR-026 amendment) in place of `resolve`: it is
+// sequenced AFTER the jobs settle and receives their executions, so the synchronous reply
+// can be composed from the results. `resolve` and `respond` are mutually exclusive — a
+// module picks its response timing by which one it declares. Fire-and-forget stays the
+// default: declare neither and the platform returns its standard ack once jobs finish.
 
 import { asEventName, type EventName } from './brands.js';
 import type { DetectorContext, HandlerContext } from './context.js';
-import type { JobDefinition, JobFunction, JobInputContext, RunOptions } from './job.js';
+import type { JobDefinition, JobFunction, JobInputContext, JobsResult, RunOptions } from './job.js';
 
 export type DetectorFunction<
   TPayload = unknown,
@@ -53,6 +60,28 @@ export type ResolveFunction<
   TPrepared = Record<string, unknown>,
   TOutput = unknown,
 > = (ctx: JobInputContext<TPayload, TMeta, TPrepared>) => TOutput | Promise<TOutput>;
+
+/**
+ * Computes the invocation's RESPONSE value FROM the job results (ADR-026 amendment).
+ * The result-driven counterpart to `resolve`: the runtime runs the module's `jobs` under
+ * its `run` config, waits for them to settle, then calls `respond` with the handler
+ * context (incl. `prepare` output) AND the `JobsResult` (`{ jobs, ok }`). Whatever it
+ * returns becomes the response body via the source's platform adapter; a thrown
+ * `ClientError`/`ActionError` maps to the error envelope, exactly like `resolve`. Use it
+ * when the synchronous reply must reflect the outcome of the work. Mutually exclusive with
+ * `resolve`, and requires at least one job (it reads their results). Not usable under a
+ * platform that responds before jobs finish (e.g. a background/202 adapter).
+ */
+export type RespondFunction<
+  TPayload = unknown,
+  TMeta extends Record<string, unknown> = Record<string, unknown>,
+  TPrepared = Record<string, unknown>,
+  TOutput = unknown,
+  TResult = unknown,
+> = (
+  ctx: JobInputContext<TPayload, TMeta, TPrepared>,
+  result: JobsResult<TResult>,
+) => TOutput | Promise<TOutput>;
 
 /**
  * Optional, registration-time metadata on a module. Feeds static analysis, Flow
@@ -101,8 +130,17 @@ export interface EventModule<
    * Request/response seam (ADR-026): computes the invocation's response value. Optional
    * and source-agnostic; the source's platform adapter maps it to the wire. Jobs (if any)
    * run alongside as sibling-ignorant side effects — `resolve` never reads their results.
+   * Mutually exclusive with `respond`.
    */
   resolve?: ResolveFunction<TPayload, TMeta>;
+  /**
+   * Result-driven response seam (ADR-026 amendment): like `resolve`, but sequenced AFTER
+   * the jobs settle and handed their `JobsResult` (`{ jobs, ok }`) so the synchronous reply
+   * can reflect the outcome of the work. Mutually exclusive with `resolve`; requires at
+   * least one job. The fire-and-forget guarantee is unchanged — jobs keep their own retry
+   * and durability; `respond` only reads their executions to shape the reply.
+   */
+  respond?: RespondFunction<TPayload, TMeta>;
   /** Run options for this module's job set (defaults pinned: parallel + continue). */
   run?: RunOptions;
   metadata?: EventModuleMetadata;

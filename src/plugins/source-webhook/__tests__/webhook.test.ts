@@ -95,3 +95,49 @@ describe('webhook source', () => {
     expect(await bad.json()).toEqual({ message: 'unprocessable webhook' });
   });
 });
+
+describe('webhook rejectUnverified (ADR-030): one-chokepoint signature rejection', () => {
+  const mkKit = (ran: { fired: boolean }) => {
+    const stripe = webhook({
+      vendor: 'stripe',
+      eventTypeHeader: 'stripe-event',
+      verify: args => args.headers['stripe-signature'] === 'good',
+      rejectUnverified: true,
+    });
+    const mod = defineEvent({
+      name: 'stripe.any',
+      detector: stripe.detector(() => true), // no signatureVerified guard needed
+      jobs: [job(() => { ran.fired = true; }, { name: 'work' })],
+    });
+    return createEventKit(stripe).registerEvents([mod]);
+  };
+
+  it('a forged request is rejected with 401 before any module runs', async () => {
+    const ran = { fired: false };
+    const res = await mkKit(ran).handle({ id: 1 }, { meta: { headers: { 'stripe-event': 'x', 'stripe-signature': 'forged' } } });
+    expect(res.resolved?.error?.status).toBe(401);
+    expect(res.events).toEqual([]); // detection + dispatch skipped
+    expect(ran.fired).toBe(false); // no job ran
+  });
+
+  it('a verified request passes straight through to the modules', async () => {
+    const ran = { fired: false };
+    const res = await mkKit(ran).handle({ id: 1 }, { meta: { headers: { 'stripe-event': 'x', 'stripe-signature': 'good' } } });
+    expect(res.resolved?.error).toBeUndefined();
+    expect(res.events).toHaveLength(1);
+    expect(ran.fired).toBe(true);
+  });
+
+  it('the object form customizes status/message; the platform renders it (403)', async () => {
+    const stripe = webhook({ vendor: 'stripe', verify: () => false, rejectUnverified: { status: 403, message: 'nope' } });
+    const mod = defineEvent({ name: 'stripe.any', detector: stripe.detector(() => true), jobs: [job(() => 'x')] });
+    const handler = createEventKit(stripe).use(netlifyV2Platform).registerEvents([mod]).handler();
+    const res = (await handler(v2Request({ id: 1 }, {}))) as Response;
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ message: 'nope' });
+  });
+
+  it('rejectUnverified without verify is a construction error', () => {
+    expect(() => webhook({ vendor: 'stripe', rejectUnverified: true })).toThrow(/requires a `verify`/);
+  });
+});

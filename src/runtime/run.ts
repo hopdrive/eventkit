@@ -194,7 +194,7 @@ async function runOne<TResult>(
     const start = Date.now();
 
     // Build the job context, then merge the input channels (ADR-025 precedence,
-    // lowest→highest): plugin baselines (ADR-020, e.g. BatchJobs row input) →
+    // lowest→highest): plugin baselines (ADR-020, e.g. Batch row input) →
     // `prepare` output → the job's own resolved input. The job reads it from
     // `ctx.input` and stays plugin-agnostic.
     const ctx = buildJobContext(event, def, rt, jobId, attempt, signal);
@@ -230,7 +230,7 @@ async function runOne<TResult>(
       });
 
       if (!retryable) return exec;
-      // else: loop and retry immediately (durable delayed retry is BatchJobs' job)
+      // else: loop and retry immediately (durable delayed retry is Batch's job)
     }
   }
   // Unreachable, but satisfies the type checker.

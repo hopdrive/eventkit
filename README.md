@@ -138,13 +138,13 @@ Pass the options as the second argument.
 
 ```ts
 job(fn, {
-  retries?,            // in-process retry attempts (durable/delayed retries are BatchJobs')
+  retries?,            // in-process retry attempts (durable/delayed retries are Batch')
   timeoutMs?,          // per-job deadline; runtime marks it `timed_out`
   continueOnFailure?,  // per-job override of the run-level default
   name?,               // stable identity for observability (else fn.name, set it to survive minification)
   tags?,               // labels
   input?,              // live data: an object OR a pure (ctx) => object mapper; merges highest
-  metadata?,           // serializable; persisted by BatchJobs, recorded by Observability
+  metadata?,           // serializable; persisted by Batch, recorded by Observability
 });
 ```
 
@@ -187,12 +187,12 @@ Generic and config-driven, registered via `kit.use(plugin, config?)`. I/O plugin
 |---|---|---|
 | `observability` | `/plugins/observability` | `{ sink, strict? }`. Buffers Invocation→Event→Job, flushes once per invocation |
 | `graphqlSink` | `/plugins/observability/graphql-sink` | the built-in observability `sink` (bulk-upsert to Hasura) |
-| `batchJobs` | `/plugins/batchjobs` | `{ store, logFlush? }`. Durability. `requires:['source:hasura']` |
-| `loopPrevention` | `/plugins/loop-prevention` | `{ field?, serviceId?, codec? }`. Inbound provenance into `envelope.meta` |
-| `grafanaLogger` | `/plugins/transports/grafana` | `{ logger }` (bridge to sdk-server-logger) or `{ grafana: { endpoint, auth } }` (direct Loki) |
+| `batch` | `/plugins/batch` | `{ store, logFlush? }`. Durability. `requires:['source:hasura']` |
+| `loopGuard` | `/plugins/loop-guard` | `{ field?, serviceId?, codec? }`. Inbound provenance into `envelope.meta` |
+| `grafana` | `/plugins/transports/grafana` | `{ logger }` (bridge to sdk-server-logger) or `{ grafana: { endpoint, auth } }` (direct Loki) |
 | `sentry` | `/plugins/transports/sentry` | `{ dsn?, send? }`. Forwards `onError` |
 
-> Durability is **emergent from registering `batchJobs`**. There's no `durable` flag, and
+> Durability is **emergent from registering `batch`**. There's no `durable` flag, and
 > the job stays batch-unaware. A built-in `graphqlBatchJobStore` is *planned*. Until then,
 > provide your own `store.update(id, fields)`. These plugins are generic (ADR-024), so
 > there's no separate `@hopdrive/app-eventkit` package. HopDrive just supplies config presets.

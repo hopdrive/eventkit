@@ -1,7 +1,7 @@
 // =============================================================================
-// @hopdrive/eventkit/plugins/loop-prevention
+// @hopdrive/eventkit/plugins/loop-guard
 // =============================================================================
-// Generic loop-prevention (tracking token), config-driven (ADR-024). A pure
+// Generic loop guard (tracking token), config-driven (ADR-024). A pure
 // `source|correlationId|jobExecutionId` codec plus configurable inbound extraction
 // strategies and a service identity — nothing HopDrive-specific.
 //
@@ -26,7 +26,7 @@ export { createTokenCodec } from './codec.js';
 
 type Row = Record<string, unknown>;
 
-export interface LoopPreventionConfig {
+export interface LoopGuardConfig {
   /** Primary write field. Default `'updated_by'` (`'updatedby'` is also checked). */
   field?: string;
   /** This service's identity, used as the token `source` when minting. Default `'eventkit'`. */
@@ -78,7 +78,7 @@ interface Extracted {
   sourceTrackingToken?: string;
 }
 
-export function loopPrevention(config: LoopPreventionConfig = {}): EventKitPlugin {
+export function loopGuard(config: LoopGuardConfig = {}): EventKitPlugin {
   const field = config.field ?? 'updated_by';
   const serviceId = config.serviceId ?? 'eventkit';
   const codec: TokenCodec = createTokenCodec(config.codec);
@@ -167,7 +167,7 @@ export function loopPrevention(config: LoopPreventionConfig = {}): EventKitPlugi
   };
 
   return {
-    name: 'loop-prevention',
+    name: 'loop-guard',
 
     augmentEnvelope(envelope) {
       const { correlationId, sourceJobId, sourceTrackingToken } = extract(envelope);

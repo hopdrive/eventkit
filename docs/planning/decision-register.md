@@ -12,10 +12,10 @@ live prompts. Where a decision has shipped, the code (not a blank line) is the s
 
 **RESOLVED & IMPLEMENTED (folded into the canonical RFC + `design-rationale.md`):**
 - **D1** job data channel → `input` (live) vs `metadata` (persisted). **ADR-011 / CHG-1.**
-- **D2** durable model → durability is *emergent from registering the BatchJobs plugin* (no `durable` flag, no `batchJobs.record()`, no `ctx.batch`; plugin injects the row's `input` and self-correlates). **ADR-015 (revised) + ADR-017 + ADR-020 / CHG-2, CHG-7.**
+- **D2** durable model → durability is *emergent from registering the Batch plugin* (no `durable` flag, no `batch.record()`, no `ctx.batch`; plugin injects the row's `input` and self-correlates). **ADR-015 (revised) + ADR-017 + ADR-020 / CHG-2, CHG-7.**
 - **D3** `run()` defaults → `mode:'parallel'`, `continueOnFailure:true`. **ADR-014.**
 - **D4** per-invocation entry + module-scoped kit (`createEventKit(...).handler()`). **ADR-013.**
-- **D5** tracking-token loop prevention → framework seams + built-in `loopPrevention` plugin. **ADR-016 / ADR-024.**
+- **D5** tracking-token loop prevention → framework seams + built-in `loopGuard` plugin. **ADR-016 / ADR-024.**
 - **D7** compatibility facade → **no facade**; modules are fully declarative (`defineEvent`, no `run()` call), so there is no legacy call shape to wrap. **ADR-025.**
 - **D8** package shape → **single package + subpath exports**, shipped. **ADR-024 / CHG-14.**
 - **D9** Compare/Console → observability + `graphqlSink` shipped; Console/Compare phased behind (Observed Mode first).
@@ -30,7 +30,7 @@ live prompts. Where a decision has shipped, the code (not a blank line) is the s
 - **D21** `netlifyV2Platform` time bucket → built (resolved at impl).
 - **D22** plugin instantiation → lazy (kit-owned). (a) shipped.
 - **D23** `@hopdrive/app-eventkit` package → **no package**; generic plugins are built-in subpath exports. **ADR-024.**
-- **Plus** declarative modules / no conditional jobs (**ADR-025**, supersedes ADR-018); plugins self-correlate (**ADR-017**); `augmentJobContext` (**ADR-020**); platform adapters (**ADR-021**); plugin composition model (**ADR-022**); `webhook`/`hasuraAction` sources + `resolve` request/response (**ADR-026**).
+- **Plus** declarative modules / no conditional jobs (**ADR-025**, supersedes ADR-018); plugins self-correlate (**ADR-017**); `augmentJobContext` (**ADR-020**); platform adapters (**ADR-021**); plugin composition model (**ADR-022**); `webhook`/`hasuraAction` sources + `resolve` request/response (**ADR-026**); result-driven `respond` response (**ADR-029**, amends ADR-026).
 
 **GENUINELY STILL OPEN — these are process/migration calls with no code yet:**
 - **D6** (HIGH) — shadow-mode parity vs straight cutover for money/loop-critical paths.
@@ -67,11 +67,11 @@ conversations in `raw-conversations/`; **CODE** = current EventKit source / lega
 ---
 
 ### D2. Durable execution model: record-backed execution + enqueue-as-side-effect
-**Question:** Adopt `durable: batchJobs.record(...)` (consumer) + `batchJobs.enqueue(...)` (producer), with lifecycle driven by §11 hooks and job code no longer calling `batchJob(...)` (ADR-015 / Amendment E)?
-**Origin:** EVAL LOST-7 (`DurableJobOptions` referenced but undefined in v0.1); CONV decision "job code MUST stop calling `batchJob(...)`"; CODE: `runARBatchV2.js` is `batchJob({run})` reading `options.batchJob.input`; `runARV2.js` enqueues `ar_v2` rows; `@hopdrive/batchjobs` `BatchJobStatus` enum + `batch_jobs` schema.
+**Question:** Adopt `durable: batch.record(...)` (consumer) + `batch.enqueue(...)` (producer), with lifecycle driven by §11 hooks and job code no longer calling `batchJob(...)` (ADR-015 / Amendment E)?
+**Origin:** EVAL LOST-7 (`DurableJobOptions` referenced but undefined in v0.1); CONV decision "job code MUST stop calling `batchJob(...)`"; CODE: `runARBatchV2.js` is `batchJob({run})` reading `options.batchJob.input`; `runARV2.js` enqueues `ar_v2` rows; `@hopdrive/batch` `BatchJobStatus` enum + `batch_jobs` schema.
 **Options:**
 - **(a) Record-backed consumer + side-effect producer**, kept separate (matches the real AR enqueue/consume split). *Recommended.*
-- (b) Keep the `batchJob(...)` wrapper as-is and only wrap it. Leaves two frameworks (EventKit + batchjobs) instead of collapsing them; the wrapper still owns lifecycle, so plugins can't compose.
+- (b) Keep the `batchJob(...)` wrapper as-is and only wrap it. Leaves two frameworks (EventKit + batch) instead of collapsing them; the wrapper still owns lifecycle, so plugins can't compose.
 - (c) Model batch jobs as their own **source adapter**. Explicitly rejected in CONV — detection is still Hasura on `batch_jobs`.
 **Blast radius:** Every durable consumer (AR v2, region pipeline, mature invoices, etc.) and producer. Touches the money path.
 **Recommendation:** (a).
@@ -107,7 +107,7 @@ conversations in `raw-conversations/`; **CODE** = current EventKit source / lega
 ---
 
 ### D5. Tracking-token loop prevention: where the mechanism lives
-**Question:** Is the loop-prevention contract (inbound provenance from `updated_by` → `envelope.meta.sourceTrackingToken`; outbound deterministic `ctx.trackingToken` stamped into writes) part of the **framework spec** (hook points generic, `updated_by`/token-format app-specific), per ADR-016?
+**Question:** Is the loop-guard contract (inbound provenance from `updated_by` → `envelope.meta.sourceTrackingToken`; outbound deterministic `ctx.trackingToken` stamped into writes) part of the **framework spec** (hook points generic, `updated_by`/token-format app-specific), per ADR-016?
 **Origin:** EVAL LOST-2 (v0.1 carried tracking token only as an observability *field*, not a control mechanism); CODE: `TrackingTokenExtractionPlugin` + `TrackingToken.forJob` + `scoped-job.js`; §3.3 says HopDrive helpers move to app packages.
 **Sub-decision:** What is generic vs app-specific?
 - **Generic (in EventKit):** the extraction hook point (`onConfigureInvocation`/`onInvocationStart`), `envelope.meta.sourceTrackingToken`, and the `ctx.trackingToken` surface.
@@ -118,7 +118,7 @@ conversations in `raw-conversations/`; **CODE** = current EventKit source / lega
 - (c) Leave it entirely app-side (v0.1 stance). Then the framework gives no seam to hang it on and re-homing is ad hoc — the highest risk of a production event storm.
 **Blast radius:** Correctness-critical. A mistake here is **event storms in production**, not a failing test.
 **Recommendation:** (a), and shadow-mode test it before cutover (see D6).
-**Blocks until answered:** §13 loop-prevention contract; the tracking-token plugin design; phase 4 of migration.
+**Blocks until answered:** §13 loop-guard contract; the tracking-token plugin design; phase 4 of migration.
 **Decision:** _______
 
 ---
@@ -153,7 +153,7 @@ conversations in `raw-conversations/`; **CODE** = current EventKit source / lega
 ---
 
 ### D8. Package shape: single package + subpath exports vs package family
-**Question:** Ship `@hopdrive/eventkit` with deep subpath exports (`/sources/hasura`, `/plugins/batchjobs`), or the `@hopdrive/eventkit-*` package family CONV settled on?
+**Question:** Ship `@hopdrive/eventkit` with deep subpath exports (`/sources/hasura`, `/plugins/batch`), or the `@hopdrive/eventkit-*` package family CONV settled on?
 **Origin:** v0.1 reversed CONV's package-family decision to subpaths **without recording the trade-off**; REVIEW/EVAL flagged the Netlify esbuild/zisi "works locally, module-not-found at deploy" risk; v0.2 §17 gates it on a CI bundle smoke test.
 **Options:**
 - **(a) Subpaths, gated on a Netlify-bundle smoke test** in CI; family is the fallback if bundling proves unreliable. *Recommended* — defer the bet to evidence.
@@ -277,7 +277,7 @@ Confirm the optional set: `description, tags, owner, flowHints, deprecated, rela
 **Decision:** _______
 
 ### D20. `provides`/`requires` capability granularity
-**Question:** Are capability tokens role-level (`'source'`, `'platform'`) or qualified (`'source:hasura'`)? BatchJobs must depend on **Hasura specifically** (it reads the `batch_jobs` row shape), not "any source."
+**Question:** Are capability tokens role-level (`'source'`, `'platform'`) or qualified (`'source:hasura'`)? Batch must depend on **Hasura specifically** (it reads the `batch_jobs` row shape), not "any source."
 **Origin:** §11.1/§11.4 + §12 (`requires: ['source:hasura']` appears); flagged earlier.
 **Options:**
 - **(a, recommended)** Qualified tokens: role + optional qualifier (`'source'`, `'source:hasura'`, `'platform'`). Uniqueness enforced at the role level; `requires` may pin a qualifier.
@@ -306,12 +306,12 @@ Confirm the optional set: `description, tags, owner, flowHints, deprecated, rela
 ---
 
 ### D23. Does the HopDrive layer warrant a published `@hopdrive/app-eventkit` package? [added v0.3.8]
-**Question:** After ADR-024 moved the generic-by-config plugins (loop-prevention/tracking-token, grafanaLogger, sentry) into core as built-in subpath exports, what remains HopDrive-specific is (a) config presets that pin the shared token format / `updated_by` field / service id so all repos stay mutually intelligible, (b) any genuinely SDK-coupled (`@hopdrive/sdk-*`) enrichment plugin, (c) the app's event modules. Does (a)+(b) justify a separately-published `@hopdrive/app-eventkit` package, or should the presets just live as a shared config object/file in the consumer repos?
+**Question:** After ADR-024 moved the generic-by-config plugins (loop-guard/tracking-token, grafana, sentry) into core as built-in subpath exports, what remains HopDrive-specific is (a) config presets that pin the shared token format / `updated_by` field / service id so all repos stay mutually intelligible, (b) any genuinely SDK-coupled (`@hopdrive/sdk-*`) enrichment plugin, (c) the app's event modules. Does (a)+(b) justify a separately-published `@hopdrive/app-eventkit` package, or should the presets just live as a shared config object/file in the consumer repos?
 **Origin:** ADR-024 (v0.3.8) — the generic-vs-app boundary was redrawn; the package question is the leftover.
 **Options:**
 - **(a, recommended)** No package unless/until a real SDK-coupled plugin exists — ship the config presets as a small shared config object in the consumer repos (or a tiny internal module). Avoids a published package whose only content is a few literals.
 - (b) Publish `@hopdrive/app-eventkit` now, housing the presets so every repo imports one source of truth for the token format / field / service id.
-**Blast radius:** Where consumers import their loop-prevention/transport config from; one more package to version + release if (b).
+**Blast radius:** Where consumers import their loop-guard/transport config from; one more package to version + release if (b).
 **Recommendation:** (a) — defer the package; revisit if a SDK-coupled enrichment plugin materializes. Not a Phase-0/1 gate; only matters at Phase 3 (plugins) / Phase 6 (first migration wiring).
 **Decision:** _______
 
@@ -335,10 +335,37 @@ Confirm the optional set: `description, tags, owner, flowHints, deprecated, rela
 - **Model → one `plugin` concept, three kinds** by capability provided: source (`'source'`, required singleton), platform (`'platform'`, optional singleton), observer/transform (zero-or-more). All declare `name`/`provides`/`requires`.
 - **Type contracts → keep the three interfaces** (`SourceAdapter`/`PlatformAdapter`/`EventKitPlugin`); do **not** collapse into one discriminated union (deferred — more churn than gain now; revisit if they drift).
 - **Registration → unchanged.** Source stays the typed positional arg `createEventKit(hasuraEvent)` (preserves the compile-time exactly-one-source guarantee, D19); platform + others via `kit.use(plugin, config?)`.
-- **Code org → a FLAT `src/plugins/`**: every plugin its own folder **directly** under `plugins/` with **no subcategory folders**. Naming: **`<type>-<name>`, dash-case, type-first, and the folder name === the plugin `name` property exactly** (not just similar). Sources `source-hasura-event`/`-cron`/`-action` (each Hasura adapter split into its own plugin; shared parsing/types in a non-plugin `hasura-shared/`) + `source-webhook`; platforms `platform-lambda`/`-netlify`/`-netlify-v2`/`-netlify-background`; the observer/transform plugins are unprefixed (`observability`, `batchjobs`, `loop-prevention`, `grafana`, `sentry`). Support files: `hasura-shared/`, `platform-shared.ts`, and barrels `source-hasura.ts`/`platforms.ts`. Factory exports stay camelCase (`hasuraEvent`, `netlifyPlatform`). **Public subpaths stay short & unchanged** (`./sources/hasura`, `./platforms`, `./plugins/transports/grafana`) via the `exports` map.
+- **Code org → a FLAT `src/plugins/`**: every plugin its own folder **directly** under `plugins/` with **no subcategory folders**. Naming: **`<type>-<name>`, dash-case, type-first, and the folder name === the plugin `name` property exactly** (not just similar). Sources `source-hasura-event`/`-cron`/`-action` (each Hasura adapter split into its own plugin; shared parsing/types in a non-plugin `hasura-shared/`) + `source-webhook`; platforms `platform-lambda`/`-netlify`/`-netlify-v2`/`-netlify-background`; the observer/transform plugins are unprefixed (`observability`, `batch`, `loop-guard`, `grafana`, `sentry`). Support files: `hasura-shared/`, `platform-shared.ts`, and barrels `source-hasura.ts`/`platforms.ts`. Factory exports stay camelCase (`hasuraEvent`, `netlifyPlatform`). **Public subpaths stay short & unchanged** (`./sources/hasura`, `./platforms`, `./plugins/transports/grafana`) via the `exports` map.
 - **`name` vs recorded source:** the plugin `name` (= folder) is registration identity; the recorded source (`envelope.source` / observability `source_system`) is taken from the normalized envelope (`'hasura'`, `'webhook:stripe'`), so renaming plugins did **not** change observability data. (Casing: dash-case chosen over camelCase — filesystem-safe macOS↔Linux, matches npm/subpath/capability-token conventions.)
 - **Status:** ✅ **implemented & verified** — typecheck + contracts + 106 unit tests pass; build + bundle smoke resolve all 12 subpaths (ESM+CJS); e2e through the live `netlify dev` (:8888) on the consumer proofs (action-ping success/ActionError, db-chaos UPDATE, cron) all green. No consumer import changed.
 **Blast radius:** Internal source tree, the `exports` map + bundle smoke test, internal imports, and the local consumer proofs (their short import paths are unaffected).
+
+---
+
+### D26. Result-driven synchronous response (`respond`) [added 2026-06-30]
+**Question:** A request/response source (`webhook`, `hasuraAction`) can ack via `resolve`, but `resolve` is sibling-ignorant (ADR-026) — it runs concurrently with jobs and never sees their results. Developers want the synchronous response to reflect the *outcome* of the work (run two jobs, then answer based on their combined result) **without ejecting from `kit.handler()` to hand-roll `kit.handle()`**. Should EventKit offer this as a first-class, configurable response timing?
+**Origin:** User request — "make wait-for-all-jobs a configuration, don't force custom code." The eject-to-`handle()` path already works (it returns `InvocationResult` with `events[].jobs`) but is boilerplate and bypasses the declarative model.
+**Decision:** ✅ **RESOLVED 2026-06-30 (ADR-029, amends ADR-026).**
+- **Add a distinct `respond(ctx, { jobs, ok }) => output` seam** rather than a flag on `resolve` or overloading `resolve`'s contract. The choice of *which function you declare* is the configuration (declarative, like ADR-025); the type system carries `result` only where it exists, and the response timing stays statically inspectable. Rejected: (B) `run: { resolveAfterJobs }` flag + sometimes-present `ctx.jobs` (weaker typing); (C) one always-after-jobs seam (removes today's concurrent fast-ack for existing `resolve` users — a behavior change).
+- **Semantics:** the runtime runs the module's `jobs` under its `run` config, awaits them, then calls `respond` with the handler ctx (incl. `prepare` output) + the settled `JobExecution[]` and an `ok` flag (`every job completed|skipped` — same predicate as `InvocationResult.ok`). The return becomes `ResolvedOutcome.output`; a thrown `ClientError`/`ActionError` maps to the wire error — identical downstream plumbing to `resolve`.
+- **Guardrails (register/validate time):** `respond` and `resolve` are **mutually exclusive**; `respond` **requires ≥1 job** (it reads results); and a `respond` module is **rejected under a `deferredResponse` platform** (background/202 — the response is already gone). The platform flag `PlatformAdapter.deferredResponse` is set on `netlifyBackgroundPlatform`.
+- **Fire-and-forget is unchanged & still the default:** declare neither seam → today's behavior. Jobs keep their own retry/durability; `respond` only *reads* outcomes. The known trade (response waits for the slowest job; a 5xx-on-failure makes a status-keyed vendor retry everything) is the developer's explicit, visible choice — documented in the webhook section.
+- **Status:** ✅ **implemented & verified** — typecheck clean; 5 new runtime tests (sequencing-after-jobs, failed-job→error response, mutual-exclusion, requires-jobs, background-platform rejection); full suite 117 green.
+**Blast radius:** `EventModule` (+`respond`), core types (`RespondFunction`/`JobsResult`), `PlatformAdapter.deferredResponse`, the dispatch loop + register/validate checks, and the guide (webhook callout + API reference).
+
+---
+
+### D27. Webhook `rejectUnverified` — one-chokepoint signature rejection [added 2026-06-30]
+**Question:** A webhook's signature is verified once in the source's `verify` (§7.1), but `verify` deliberately **never throws** — it annotates `ctx.signatureVerified` and each detector must guard with `signatureVerified && …`. On an endpoint with several modules that's repeated boilerplate and a footgun (forget it in one module → that event fires on a forged request). Should the source offer a single-chokepoint rejection that doesn't require a per-detector guard, without forcing the developer to eject to a hand-rolled `before`/`kit.handle()`?
+**Origin:** Guide review — clarifying where signature verification belongs (verify vs. detector vs. `before`). `before` is the wrong tool (it runs pre-`normalize` on raw args, can't see `signatureVerified` without redoing the HMAC). The detector guard is the only built-in gate, and it scales per-module.
+**Decision:** ✅ **RESOLVED 2026-06-30 (ADR-030).**
+- **Add `rejectUnverified?: boolean | { status?, message? }` to the webhook source config.** `false`/omitted → today's behavior (annotate, detector decides). `true` → a failed/throwing `verify` is rejected with **401** before detection; the object form customizes status/message (e.g. `403`). **Requires `verify`** to be set (config error otherwise — nothing to verify).
+- **Mechanism (source-agnostic):** when `rejectUnverified` is set and verification fails, the adapter's `normalize` throws a **`ClientError(status, message)`**. The runtime maps a `ClientError` thrown in the **pre-dispatch** phase (duck-typed `.status`, like ADR-026's resolve mapping) to `result.resolved.error` → the platform renders that status + `{ message }`, instead of the generic framework **500**. Detection and dispatch are skipped — **no module runs, no jobs**. This is a general source capability (any source MAY reject a request early by throwing `ClientError` from `normalize`), not webhook-specific runtime code.
+- **Detectors simplify:** with `rejectUnverified: true`, modules on the endpoint no longer need `signatureVerified &&` — every dispatched request is guaranteed verified.
+- **Observability tradeoff (documented, the reason it's opt-in):** a request rejected at `normalize` never became a valid event, so it creates **no Invocation/Event/Job record** — it's surfaced as a framework `warn` log only. If you need the forged attempt recorded as an invocation (security telemetry), keep `rejectUnverified: false` and guard in the detector: the invocation IS recorded and the detector cleanly returns `false`. So the two patterns trade *boilerplate-free hard block* (rejectUnverified) against *observable soft decline* (detector guard); the developer picks per endpoint.
+- **Default stays soft.** `verify`'s non-throwing contract (§7.1) is unchanged; `rejectUnverified` is the opt-in that layers a hard reject on top.
+- **Status:** ✅ **implemented & verified** — webhook source + runtime pre-dispatch `ClientError` mapping; new tests (reject 401, custom status, passes through when verified, config error without verify); full suite green.
+**Blast radius:** `WebhookConfig`/`WebhookSource` types, the webhook `normalize`, the `handle()` catch (pre-dispatch `ClientError` → client response), and the guide webhook section. Reuses ADR-026's `ClientError` → status plumbing; no new platform surface.
 
 ## Decision dependency map (what unblocks what)
 

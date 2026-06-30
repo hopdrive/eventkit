@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createEventKit, defineEvent, job, ActionError, ClientError, type EventKitPlugin, type JobContext } from '../../index.js';
 import { fakeSource, defineFakeEvent } from '../../testing/index.js';
+import { netlifyBackgroundPlatform } from '../../plugins/platforms.js';
 
 // A detector that always fires. Modules are declarative (ADR-025): a static `jobs`
 // array + optional `prepare`/`run`, never a handler that calls run().
@@ -352,5 +353,67 @@ describe('ADR-026: resolve (request/response) is source-agnostic; jobs run along
   it('register-time: a module with neither jobs nor resolve throws', () => {
     const bad = { name: asName('does.nothing'), detector: always } as unknown as ReturnType<typeof defineEvent>;
     expect(() => createEventKit(fakeSource()).registerEvents([bad])).toThrow(/must declare 'jobs' and\/or 'resolve'/);
+  });
+});
+
+describe('ADR-026 amendment: respond (result-driven response) runs after jobs and reads results', () => {
+  it('sequences respond AFTER the jobs settle and hands it their executions + ok', async () => {
+    const order: string[] = [];
+    const mod = defineEvent({
+      name: 'rpc.afterjobs',
+      detector: always,
+      jobs: [
+        job(() => { order.push('a'); return 2; }, { name: 'a' }),
+        job(() => { order.push('b'); return 3; }, { name: 'b' }),
+      ],
+      respond: (_ctx, { jobs, ok }) => {
+        order.push('respond');
+        const sum = jobs.reduce((n, j) => n + ((j.output as number) ?? 0), 0);
+        return { ok, sum, ran: jobs.length };
+      },
+    });
+    const result = await createEventKit(fakeSource()).registerEvents([mod]).handle('go');
+
+    expect(order).toEqual(['a', 'b', 'respond']); // respond runs last, after both jobs
+    expect(result.resolved?.hasResolved).toBe(true);
+    expect(result.resolved?.output).toEqual({ ok: true, sum: 5, ran: 2 }); // composed from job outputs
+    expect(result.ok).toBe(true);
+  });
+
+  it('respond sees a failed job (ok=false) and can map it to an error response', async () => {
+    const mod = defineEvent({
+      name: 'rpc.partialfail',
+      detector: always,
+      run: { continueOnFailure: true },
+      jobs: [
+        job(() => 'ok', { name: 'good' }),
+        job(() => { throw new Error('boom'); }, { name: 'bad' }),
+      ],
+      respond: (_ctx, { jobs, ok }) => {
+        if (!ok) throw new ClientError(502, `failed: ${jobs.filter(j => j.status !== 'completed').map(j => j.jobName).join(',')}`);
+        return { ok: true };
+      },
+    });
+    const result = await createEventKit(fakeSource()).registerEvents([mod]).handle('go');
+
+    expect(result.resolved?.error).toMatchObject({ status: 502 });
+    expect(result.resolved?.error?.message).toContain('bad');
+    expect(result.ok).toBe(false); // a job genuinely failed (job-status-only)
+  });
+
+  it('register-time: declaring both resolve and respond throws (one response timing)', () => {
+    const bad = defineEvent({ name: 'both', detector: always, jobs: [job(() => 1)], resolve: () => 1, respond: () => 2 });
+    expect(() => createEventKit(fakeSource()).registerEvents([bad])).toThrow(/'resolve' OR 'respond'/);
+  });
+
+  it('register-time: respond without jobs throws (it reads job results)', () => {
+    const bad = defineEvent({ name: 'norjobs', detector: always, respond: () => 1 });
+    expect(() => createEventKit(fakeSource()).registerEvents([bad])).toThrow(/'respond' requires at least one job/);
+  });
+
+  it('validate(): respond is rejected under a deferredResponse (background/202) platform', () => {
+    const mod = defineEvent({ name: 'bg', detector: always, jobs: [job(() => 1)], respond: () => 1 });
+    const kit = createEventKit(fakeSource()).use(netlifyBackgroundPlatform).registerEvents([mod]);
+    expect(() => kit.validate()).toThrow(/incompatible with platform/);
   });
 });
