@@ -18,14 +18,14 @@
       "require": "./dist/cjs/core/index.js"
     },
     "./sources/hasura": {
-      "types": "./dist/types/sources/hasura/index.d.ts",
-      "import": "./dist/esm/sources/hasura/index.js",
-      "require": "./dist/cjs/sources/hasura/index.js"
+      "types": "./dist/types/plugins/hasura/index.d.ts",
+      "import": "./dist/esm/plugins/hasura/index.js",
+      "require": "./dist/cjs/plugins/hasura/index.js"
     },
     "./sources/webhook": {
-      "types": "./dist/types/sources/webhook/index.d.ts",
-      "import": "./dist/esm/sources/webhook/index.js",
-      "require": "./dist/cjs/sources/webhook/index.js"
+      "types": "./dist/types/plugins/webhook/index.d.ts",
+      "import": "./dist/esm/plugins/webhook/index.js",
+      "require": "./dist/cjs/plugins/webhook/index.js"
     },
     "./plugins/batchjobs": {
       "types": "./dist/types/plugins/batchjobs/index.d.ts",
@@ -48,19 +48,19 @@
       "require": "./dist/cjs/plugins/loop-prevention/index.js"
     },
     "./plugins/transports/grafana": {
-      "types": "./dist/types/plugins/transports/grafana/index.d.ts",
-      "import": "./dist/esm/plugins/transports/grafana/index.js",
-      "require": "./dist/cjs/plugins/transports/grafana/index.js"
+      "types": "./dist/types/plugins/grafana/index.d.ts",
+      "import": "./dist/esm/plugins/grafana/index.js",
+      "require": "./dist/cjs/plugins/grafana/index.js"
     },
     "./plugins/transports/sentry": {
-      "types": "./dist/types/plugins/transports/sentry/index.d.ts",
-      "import": "./dist/esm/plugins/transports/sentry/index.js",
-      "require": "./dist/cjs/plugins/transports/sentry/index.js"
+      "types": "./dist/types/plugins/sentry/index.d.ts",
+      "import": "./dist/esm/plugins/sentry/index.js",
+      "require": "./dist/cjs/plugins/sentry/index.js"
     },
     "./platforms": {
-      "types": "./dist/types/platforms/index.d.ts",
-      "import": "./dist/esm/platforms/index.js",
-      "require": "./dist/cjs/platforms/index.js"
+      "types": "./dist/types/plugins/platforms.d.ts",
+      "import": "./dist/esm/plugins/platforms.js",
+      "require": "./dist/cjs/plugins/platforms.js"
     },
     "./testing": {
       "types": "./dist/types/testing/index.d.ts",

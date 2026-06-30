@@ -80,7 +80,7 @@ The original delegates to `@hopdrive/sdk-server-logger` (`grafanaLoggerPlugin.js
 
 ## P1 — sentry: make the default sender actually work
 
-`src/plugins/transports/sentry/index.ts` is a clean generic shape, but the default `send` (line 32) POSTs raw JSON to the DSN — that is not Sentry's ingest protocol.
+`src/plugins/sentry/index.ts` is a clean generic shape, but the default `send` (line 32) POSTs raw JSON to the DSN — that is not Sentry's ingest protocol.
 
 - [ ] Either derive the real ingest endpoint + `X-Sentry-Auth` header from the DSN (Sentry store/envelope protocol), or make `send` required and document that production use injects a `send` delegating to `@sentry/node`. Don't ship a default that silently no-ops against real Sentry.
 

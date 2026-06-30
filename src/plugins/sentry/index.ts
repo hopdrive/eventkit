@@ -7,7 +7,7 @@
 // raw JSON no-op). DSN arrives via injected config — never process.env. For
 // production teams that prefer the official SDK, inject `send` delegating to
 // `@sentry/node`; the plugin stays dependency-free.
-import type { EventKitPlugin, ErrorContext } from '../../../core/index.js';
+import type { EventKitPlugin, ErrorContext } from '../../core/index.js';
 
 /** Sentry event payload (the subset we populate), passed to `send`. */
 export interface SentryEvent {

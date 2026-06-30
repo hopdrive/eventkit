@@ -1,14 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { createEventKit, job, asEventName, type EventModule, type JobContext } from '../../index.js';
 import { fakeSource, defineFakeEvent } from '../../testing/index.js';
-import { hasuraEvent } from '../../sources/hasura/index.js';
+import { hasuraEvent } from '../hasura/index.js';
 import { loopPrevention, createTokenCodec } from '../loop-prevention/index.js';
 import { observability, type ObservabilityBatch } from '../observability/index.js';
 import { graphqlSink } from '../observability/graphql-sink.js';
 import { safeSerialize } from '../observability/serialize.js';
 import { batchJobs, type BatchJobUpdate, type DelayedBatchJobSpec } from '../batchjobs/index.js';
-import { grafanaLogger, type LokiPayload, type LoggerLike } from '../transports/grafana/index.js';
-import { sentry, type SentryEvent } from '../transports/sentry/index.js';
+import { grafanaLogger, type LokiPayload, type LoggerLike } from '../grafana/index.js';
+import { sentry, type SentryEvent } from '../sentry/index.js';
 
 const UUID = '11111111-1111-1111-1111-111111111111';
 

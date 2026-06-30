@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createEventKit, defineEvent, job, ActionError, type JobContext } from '../../../index.js';
-import { netlifyPlatform } from '../../../platforms/index.js';
+import { netlifyPlatform } from '../../netlify-platform/index.js';
 import { buildDetectorContextFor, buildHandlerContextFor } from '../../../testing/index.js';
 import { hasuraAction } from '../index.js';
 import type { HasuraActionContext, HasuraActionHandlerContext } from '../types.js';

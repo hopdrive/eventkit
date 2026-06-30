@@ -17,7 +17,7 @@
 //      For non-HopDrive deployments with no server-logger SDK in play.
 //
 // The plugin NEVER reads process.env in either mode — config is always injected.
-import type { EventKitPlugin, ErrorContext, JobContext, LogEntry, LogLevel } from '../../../core/index.js';
+import type { EventKitPlugin, ErrorContext, JobContext, LogEntry, LogLevel } from '../../core/index.js';
 
 /**
  * Minimal logger contract the bridge forwards to. Deliberately matches
