@@ -1827,21 +1827,21 @@ kit.registerEvents(events);
     <div class="sec-head narrow">
       <p class="eyebrow">What the records unlock</p>
       <h2>Expected vs. actual, for the whole platform</h2>
-      <p class="sec-sub">Every source produces the same structured records — database event, webhook, cron tick, reverse integration — so one piece of tooling can reason across all of them. The first piece is <b>shipped</b>: a generated document of the <i>expected</i> flow, derived straight from your modules. The layer that overlays the <i>observed</i> runtime on top is phased behind it.</p>
+      <p class="sec-sub">Every source produces the same structured records, whether it&rsquo;s a database event, a webhook, a cron tick, or a reverse integration. So one tool can reason across all of them. The first piece is <b>shipped</b>. It&rsquo;s a generated document of the <i>expected</i> flow, built straight from your modules. The layer that overlays the <i>observed</i> runtime on top is still phased behind it.</p>
     </div>
     <div class="feats" style="grid-template-columns:repeat(3,1fr)">
       <div class="feat obs">
         <h3><span class="ic">◆</span> Generated flow docs <span class="refbadge shipped">shipped</span></h3>
-        <p>Because a module declares its jobs as a <b>static array</b> — no hidden branches — the whole structure is knowable without running anything. <code>kit.describe()</code> walks the registered kit; <code>@hopdrive/eventkit/flow</code> writes it out as a committed, diff-friendly YAML doc of <b>how events flow through the system</b>. Regenerate it in an npm script; the <code>eventkit-flow check</code> gate keeps it honest in CI.</p>
+        <p>A module declares its jobs as a <b>static array</b> with no hidden branches, so we can read the whole structure without running anything. <code>kit.describe()</code> walks the registered kit. <code>@hopdrive/eventkit/flow</code> writes it out as a committed YAML doc of <b>how events flow through the system</b>. Regenerate it in an npm script, and the <code>eventkit-flow check</code> gate keeps it honest in CI.</p>
         <span class="pico">kit.describe() · toFlowYaml / toFlowGraph · eventkit-flow generate | check</span>
       </div>
       <div class="feat phased">
-        <h3><span class="ic">◆</span> Flow Manifests <span style="color:var(--now);font:600 11px/1 var(--mono)">— phased</span></h3>
-        <p>Declare a business process — its expected events, jobs, and branches — as a source-controlled contract. The manifest owns <b>meaning</b>; the generated graph verifies <b>structure</b> (it emits the same <code>FlowNode</code>/<code>FlowEdge</code> shape, so it diffs against a manifest). Validated in CI.</p>
+        <h3><span class="ic">◆</span> Flow Manifests <span style="color:var(--now);font:600 11px/1 var(--mono)">· phased</span></h3>
+        <p>Declare a business process (its expected events, jobs, and branches) as a source-controlled contract. The manifest owns <b>meaning</b>. The generated graph verifies <b>structure</b>. They line up because the generator emits the same <code>FlowNode</code>/<code>FlowEdge</code> shape, so it diffs cleanly against a manifest. Validated in CI.</p>
       </div>
       <div class="feat phased">
-        <h3><span class="ic">◆</span> Compare Mode <span style="color:var(--now);font:600 11px/1 var(--mono)">— phased</span></h3>
-        <p>Overlay observed runtime onto the expected flow and classify the differences — missing steps, unexpected side effects, retries, timeouts. Proven on <b>one</b> high-value flow before generalizing; never a production gate.</p>
+        <h3><span class="ic">◆</span> Compare Mode <span style="color:var(--now);font:600 11px/1 var(--mono)">· phased</span></h3>
+        <p>Overlay the observed runtime onto the expected flow and classify what&rsquo;s different (missing steps, unexpected side effects, retries, timeouts). We prove it on <b>one</b> high-value flow before generalizing. It&rsquo;s never a production gate.</p>
       </div>
     </div>
 
@@ -1849,7 +1849,7 @@ kit.registerEvents(events);
     <div style="margin-top:32px;display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start">
       <div>
         <p class="eyebrow" style="margin-bottom:12px">The derived graph</p>
-        <p style="font-size:14.5px;color:var(--muted);margin:0 0 16px;line-height:1.55">One <code>source</code> node, an <code>event</code> node per registered event, a <code>job</code> node per declared job, and a <code>sideEffect</code> node for any job that declares one. Node ids come from event/job names — never file paths — so the eventual observed-vs-expected overlay lines up.</p>
+        <p style="font-size:14.5px;color:var(--muted);margin:0 0 16px;line-height:1.55">One <code>source</code> node, an <code>event</code> node per registered event, a <code>job</code> node per declared job, and a <code>sideEffect</code> node for any job that declares one. Node ids come from event and job names, never file paths. That&rsquo;s what makes the observed-vs-expected overlay line up later.</p>
         <div class="lf-steps" style="gap:7px">
           <span class="lf-step biz">source-hasura-event</span>
           <span style="color:var(--faint)">→</span>
@@ -1867,7 +1867,7 @@ kit.registerEvents(events);
         </div>
       </div>
       <div>
-        <p class="eyebrow" style="margin-bottom:12px">The committed doc — <code>db-rideshares.flow.yaml</code></p>
+        <p class="eyebrow" style="margin-bottom:12px">The committed doc: <code>db-rideshares.flow.yaml</code></p>
 <pre style="margin:0"><span class="c"># @generated by @hopdrive/eventkit/flow — DO NOT EDIT BY HAND.
 # CI gate: eventkit-flow check --kit ./src/eventkit.js --out …</span>
 generator: <span class="s">"@hopdrive/eventkit/flow"</span>
@@ -1888,14 +1888,14 @@ events:
     <!-- Usage: wiring it into a repo -->
     <div class="callout" style="margin-top:28px">
       <p class="eyebrow">Produce the artifact in your repo</p>
-      <p style="font-size:14.5px;color:var(--muted);margin:0 0 14px;line-height:1.55">Export your kit from a module (you already build it once at module scope), then wire two npm scripts. <code>generate</code> writes the doc; <code>check</code> regenerates and fails if the committed file is missing or stale — run it in CI so the doc can never drift from the code.</p>
+      <p style="font-size:14.5px;color:var(--muted);margin:0 0 14px;line-height:1.55">Export your kit from a module. You already build it once at module scope, so that part&rsquo;s easy. Then wire up two npm scripts. <code>generate</code> writes the doc. <code>check</code> regenerates and fails if the committed file is missing or out of date. Run <code>check</code> in CI and the doc can&rsquo;t drift from the code.</p>
 <pre style="margin:0"><span class="c">// src/eventkit.js</span>
 <span class="k">export const</span> kit = createEventKit(hasuraEvent).use(netlifyPlatform).registerEvents([ … ]);
 
-<span class="c">// package.json — "scripts"</span>
+<span class="c">// package.json "scripts"</span>
 <span class="s">"flow:gen"</span>:   <span class="s">"eventkit-flow generate --kit ./src/eventkit.js --out architecture/db-rideshares.flow.yaml"</span>,
 <span class="s">"flow:check"</span>: <span class="s">"eventkit-flow check    --kit ./src/eventkit.js --out architecture/db-rideshares.flow.yaml"</span></pre>
-      <p style="font-size:13px;color:var(--faint);margin:12px 0 0">Point <code>--kit</code> at a module that exports an <code>EventKit</code>; pass <code>--export &lt;name&gt;</code> if it isn&rsquo;t the default/<code>kit</code> export. Prefer a programmatic hook? <code>toFlowYaml(kit)</code>, <code>toFlowGraph(kit)</code>, and <code>describeKit(kit)</code> are exported from <code>@hopdrive/eventkit/flow</code>.</p>
+      <p style="font-size:13px;color:var(--faint);margin:12px 0 0">Point <code>--kit</code> at a module that exports an <code>EventKit</code>, and pass <code>--export &lt;name&gt;</code> if it isn&rsquo;t the default or <code>kit</code> export. Want a programmatic hook instead? <code>toFlowYaml(kit)</code>, <code>toFlowGraph(kit)</code>, and <code>describeKit(kit)</code> all come from <code>@hopdrive/eventkit/flow</code>.</p>
     </div>
   </div>
 </section>
@@ -1950,7 +1950,7 @@ kit.registerEvents(modules[] | record): EventKit</div>
       </div>
       <div class="refentry">
         <div class="rsig">kit.describe(): KitDescription <span class="refbadge shipped">shipped</span></div>
-        <p>Read-only structural snapshot — source, platform, plugins, and every registered event with its <b>static</b> job set. Pure: it resolves plugins but runs no detector, <code>prepare</code>, job, or hook. Feeds the flow generator (<code>@hopdrive/eventkit/flow</code>) and the <code>eventkit-flow</code> CLI. See <a href="#reference-flow" style="color:var(--brass)">Flow docs</a> below and the &ldquo;Generated flow docs&rdquo; section above.</p>
+        <p>A read-only snapshot of the structure: source, platform, plugins, and every registered event with its <b>static</b> job set. It&rsquo;s pure. It resolves plugins but runs no detector, no <code>prepare</code>, no job, no hook. This is what feeds the flow generator (<code>@hopdrive/eventkit/flow</code>) and the <code>eventkit-flow</code> CLI. See <a href="#reference-flow" style="color:var(--brass)">Flow docs</a> below and the &ldquo;Generated flow docs&rdquo; section above.</p>
       </div>
     </div>
 
@@ -2090,15 +2090,15 @@ kit.registerEvents(modules[] | record): EventKit</div>
 
     <div class="refgroup" id="reference-flow">
       <h3>Flow docs <span class="refbadge shipped">shipped</span></h3>
-      <p class="ghint">From <code>@hopdrive/eventkit/flow</code>. Turn a built kit into a committed document of how events flow through the system — the &ldquo;generator verifies structure&rdquo; half of Expected/Observed/Compare (ADR-032). Pure: a read-only registry walk, faithful because modules are declarative. Also a bin, <code>eventkit-flow</code>, for npm scripts + CI drift-gating.</p>
+      <p class="ghint">From <code>@hopdrive/eventkit/flow</code>. Turn a built kit into a committed document of how events flow through the system. This is the &ldquo;generator verifies structure&rdquo; half of Expected/Observed/Compare (ADR-032). It&rsquo;s pure, just a read-only registry walk, and it&rsquo;s accurate because modules are declarative. There&rsquo;s also a bin, <code>eventkit-flow</code>, for npm scripts and CI drift-gating.</p>
       <ul class="rfields" style="max-width:84ch">
-        <li><b><code>describeKit(kit): KitDescription</code></b> — the raw structural snapshot (same as <code>kit.describe()</code>): source, platform, plugins, every event + its static job set.</li>
-        <li><b><code>toFlowYaml(kit, { title? }): string</code></b> — the human-readable, diff-friendly committed doc (event-centric, with a <code>@generated</code> banner).</li>
-        <li><b><code>toFlowGraph(kit): { nodes, edges }</code></b> — a <code>FlowNode</code>/<code>FlowEdge</code> graph in the manifest vocabulary (for React&nbsp;Flow rendering or diffing against a hand-authored Flow Manifest). Node ids are name-derived (<code>event:&lt;name&gt;</code>, <code>job:&lt;event&gt;:&lt;job&gt;</code>, …), never path-derived.</li>
-        <li><b><code>eventkit-flow generate --kit &lt;module&gt; --out &lt;file&gt;</code></b> — write the doc. <code>--export &lt;name&gt;</code> if the kit isn&rsquo;t the default/<code>kit</code> export.</li>
-        <li><b><code>eventkit-flow check --kit &lt;module&gt; --out &lt;file&gt;</code></b> — regenerate and exit non-zero if the committed file is missing or stale (the CI drift gate).</li>
+        <li><b><code>describeKit(kit): KitDescription</code></b>. The raw structural snapshot (same as <code>kit.describe()</code>): source, platform, plugins, and every event with its static job set.</li>
+        <li><b><code>toFlowYaml(kit, { title? }): string</code></b>. The human-readable committed doc. Event-centric, with a <code>@generated</code> banner, and stable so it diffs cleanly.</li>
+        <li><b><code>toFlowGraph(kit): { nodes, edges }</code></b>. A <code>FlowNode</code>/<code>FlowEdge</code> graph in the manifest vocabulary, for React&nbsp;Flow rendering or for diffing against a hand-authored Flow Manifest. Node ids come from names (<code>event:&lt;name&gt;</code>, <code>job:&lt;event&gt;:&lt;job&gt;</code>, and so on), never file paths.</li>
+        <li><b><code>eventkit-flow generate --kit &lt;module&gt; --out &lt;file&gt;</code></b>. Writes the doc. Add <code>--export &lt;name&gt;</code> if the kit isn&rsquo;t the default or <code>kit</code> export.</li>
+        <li><b><code>eventkit-flow check --kit &lt;module&gt; --out &lt;file&gt;</code></b>. Regenerates and exits non-zero if the committed file is missing or out of date. This is the CI drift gate.</li>
       </ul>
-      <p class="ghint" style="margin-top:10px">Flow <b>Manifests</b> (hand-authored meaning) and <b>Compare Mode</b> (overlaying the observed runtime) remain phased — see the &ldquo;Expected vs. actual&rdquo; section above and <code>docs/planning/console-expected-flows.md</code>.</p>
+      <p class="ghint" style="margin-top:10px">Flow <b>Manifests</b> (hand-authored meaning) and <b>Compare Mode</b> (overlaying the observed runtime) are still phased. See the &ldquo;Expected vs. actual&rdquo; section above and <code>docs/planning/console-expected-flows.md</code>.</p>
     </div>
 
   </div>

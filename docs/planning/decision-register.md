@@ -18,7 +18,7 @@ live prompts. Where a decision has shipped, the code (not a blank line) is the s
 - **D5** tracking-token loop prevention → framework seams + built-in `loopGuard` plugin. **ADR-016 / ADR-024.**
 - **D7** compatibility facade → **no facade**; modules are fully declarative (`defineEvent`, no `run()` call), so there is no legacy call shape to wrap. **ADR-025.**
 - **D8** package shape → **single package + subpath exports**, shipped. **ADR-024 / CHG-14.**
-- **D9** Compare/Console → observability + `graphqlSink` shipped; **Expected-Flow generator now shipped too** (`kit.describe()` + `@hopdrive/eventkit/flow` + `eventkit-flow` CLI — ADR-032, v0.3.19); Flow Manifests' CI validation, Console/Compare still phased behind (Observed Mode first). Plan: `console-expected-flows.md`.
+- **D9** Compare/Console → observability + `graphqlSink` shipped; **Expected-Flow generator now shipped too** (`kit.describe()` + `@hopdrive/eventkit/flow` + the `eventkit-flow` CLI, ADR-032, v0.3.19). Flow Manifests' CI validation and Console/Compare are still phased behind (Observed Mode first). Plan: `console-expected-flows.md`.
 - **D11** async detectors → allowed-but-discouraged; `boolean | Promise<boolean>`, no detection timeout. (a) shipped.
 - **D12** observability failure mode → best-effort default (graceful degrade in `graphql-sink`). (a) shipped.
 - **D14** one source per kit → **yes**, positional `createEventKit(hasuraEvent)`. **ADR-019 / CHG-5, CHG-10, CHG-11.**
@@ -177,7 +177,7 @@ conversations in `raw-conversations/`; **CODE** = current EventKit source / lega
 **Blast radius:** A large chunk of optional scope and timeline.
 **Recommendation:** (a); Console backend out of v1 except a read API over existing observability storage.
 **Blocks until answered:** Roadmap; how much of §§14–16 is normative now vs aspirational.
-**Decision:** **(a) — partially resolved [v0.3.19, ADR-032].** The **generator/structure half shipped**: `kit.describe()` + `@hopdrive/eventkit/flow` (`toFlowGraph`/`toFlowYaml`) derive the Expected graph from the declarative modules, and the `eventkit-flow` CLI produces + CI-gates a committed artifact in consumer repos. This was low-risk to ship early precisely because ADR-025 makes the structure knowable without execution (it does not depend on the matcher). **Still phased** (unchanged from the recommendation): hand-authored Flow **Manifests** + their CI validation, **Compare Mode** / the matcher (prove on one flow first), and the **Console backend** (host/auth/query layer) — all planned in `console-expected-flows.md`. Observed Mode still ships before Compare.
+**Decision:** **(a), partially resolved [v0.3.19, ADR-032].** The generator/structure half shipped. `kit.describe()` plus `@hopdrive/eventkit/flow` (`toFlowGraph`/`toFlowYaml`) build the Expected graph from the declarative modules, and the `eventkit-flow` CLI produces and CI-gates a committed artifact in consumer repos. This was safe to ship early because ADR-025 makes the structure knowable without running anything, so it doesn't lean on the matcher at all. Still phased (same as the original recommendation): hand-authored Flow **Manifests** and their CI validation, **Compare Mode** and the matcher (prove it on one flow first), and the **Console backend** (host, auth, query layer). All of that is planned in `console-expected-flows.md`. Observed Mode still ships before Compare.
 
 ---
 
