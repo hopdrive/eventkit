@@ -482,7 +482,7 @@
       <div class="shift"><span class="dim">Job signature</span><span class="was"><code>(event, hasuraEvent, options)</code></span><span class="now-val"><code>(ctx)</code> — one typed context, plugin-agnostic</span></div>
       <div class="shift"><span class="dim">Handler shape</span><span class="was">handler body builds &amp; runs jobs (<code>cond &amp;&amp; job(...)</code> — hidden branch)</span><span class="now-val">no handler body — module declares a static <code>jobs</code> array the runtime runs (+ <code>prepare</code> for shared input); conditions move to detection or into the job</span></div>
       <div class="shift"><span class="dim">Entry point</span><span class="was"><code>listenTo()</code> + plugins registered <i>per invocation</i></span><span class="now-val"><code>createEventKit(hasuraEvent)</code> once, then <code>kit.use()</code> / <code>kit.handler({ before })</code></span></div>
-      <div class="shift"><span class="dim">run() default</span><span class="was">parallel + isolated (implicit <code>allSettled</code>)</span><span class="now-val">parallel + continue-on-failure, <i>pinned</i>; series opt-in</span></div>
+      <div class="shift"><span class="dim">run() default</span><span class="was">parallel + isolated (implicit <code>allSettled</code>)</span><span class="now-val">parallel + isolated, <i>fixed</i> (series is a planned future control)</span></div>
       <div class="shift"><span class="dim">Durability</span><span class="was"><code>batchJob()</code> wrapper inside job code</span><span class="now-val">emergent from registering the Batch plugin — no flag; it injects the row&rsquo;s input &amp; persists state, job stays batch-unaware</span></div>
       <div class="shift"><span class="dim">Loop prevention</span><span class="was">tracking token, informal convention</span><span class="now-val">specified inbound/outbound provenance mechanism</span></div>
       <div class="shift"><span class="dim">Observability</span><span class="was">synchronous GraphQL write per job</span><span class="now-val">buffered, flushed once at invocation end</span></div>
@@ -515,7 +515,7 @@
               <span class="lf-step">03 &middot; job set</span>
             </div>
             <div class="lf-sub">detector decides if it fired, prepare runs once for shared input, then the declared <code>jobs[]</code> runs</div>
-            <div class="lf-plug">run controls &middot; run: {} + job(fn, opts)</div>
+            <div class="lf-plug">parallel run &middot; retries/timeouts via run: {} + job(fn, opts)</div>
           </div>
           <div class="lf-arrow"></div>
           <div class="lf-box lf-end lf-jobs"><span class="l">04 &middot; job fn</span>
@@ -657,7 +657,7 @@ module.exports.detector = <span class="k">async</span> (eventName, hasuraEvent) 
     <!-- 3. job set -->
     <div class="cmp-block">
       <div class="cmp-title"><span class="num">03</span><h3>The job set, declared not run</h3><span class="file">events/appointment.ready</span></div>
-      <p class="cmp-note">There isn&rsquo;t a handler function anymore. The module declares its jobs as a static array and the runtime runs them (ADR-025), so there&rsquo;s no <code>run()</code> call and no function body where we branch through the work.<br><br>The shared setup that used to live in the handler, mostly the <code>sdk.apollo.initialize(...)</code> pattern that got threaded into almost every job, now becomes <code>prepare(ctx)</code>: it runs once and its result is merged into each job&rsquo;s <code>ctx.input</code> automatically, and from there a job can layer on its own input as a static object or a pure <code>(ctx) =&gt; ...</code> mapper. Run options like <code>parallel</code> and <code>continueOnFailure</code> move up onto the module too.<br><br>There&rsquo;s no <code>resolve()</code> here, on purpose. Hasura reads the status code, not the body, so the platform adapter answers it for us: a foreground function returns <code>200</code> once the run is accepted, a background one returns <code>202</code> straight away. A failing job doesn&rsquo;t flip that to a non-2xx, because a <code>500</code> would make Hasura replay the whole event and re-fire the siblings that already succeeded. Retrying one job is Batch&rsquo; concern, not Hasura&rsquo;s. <code>resolve</code> only comes out when the caller actually keys on the response, like a vendor webhook.<br><br>The result is a declarative record. An engineer, or the flow tooling, can read it top to bottom and understand what it does without having to mentally execute a handler.</p>
+      <p class="cmp-note">There isn&rsquo;t a handler function anymore. The module declares its jobs as a static array and the runtime runs them (ADR-025), so there&rsquo;s no <code>run()</code> call and no function body where we branch through the work.<br><br>The shared setup that used to live in the handler, mostly the <code>sdk.apollo.initialize(...)</code> pattern that got threaded into almost every job, now becomes <code>prepare(ctx)</code>: it runs once and its result is merged into each job&rsquo;s <code>ctx.input</code> automatically, and from there a job can layer on its own input as a static object or a pure <code>(ctx) =&gt; ...</code> mapper. The jobs always run in parallel with isolated failures &mdash; there&rsquo;s no ordering to configure (sequential <code>run.mode</code> is a planned future control, below).<br><br>There&rsquo;s no <code>resolve()</code> here, on purpose. Hasura reads the status code, not the body, so the platform adapter answers it for us: a foreground function returns <code>200</code> once the run is accepted, a background one returns <code>202</code> straight away. A failing job doesn&rsquo;t flip that to a non-2xx, because a <code>500</code> would make Hasura replay the whole event and re-fire the siblings that already succeeded. Retrying one job is Batch&rsquo; concern, not Hasura&rsquo;s. <code>resolve</code> only comes out when the caller actually keys on the response, like a vendor webhook.<br><br>The result is a declarative record. An engineer, or the flow tooling, can read it top to bottom and understand what it does without having to mentally execute a handler.</p>
       <div class="cmp">
         <div class="pane was">
           <div class="pane-head"><span class="tagdot"></span>Now<span class="sig">handler runs the jobs</span></div>
@@ -698,7 +698,7 @@ module.exports.handler = <span class="k">async</span> (eventName, hasuraEvent) =
     sendOfferSMS,                            <span class="c">// bare fn, inherits { sdk, appointment }</span>
     sendAppointmentOfferedEmailToOrg,
   ],</span>
-  run: { mode: <span class="s">'parallel'</span>, continueOnFailure: <span class="k">true</span> },   <span class="c">// optional — these are the defaults</span>
+  <span class="c">// no run mode to set — jobs always run in parallel, isolated failures (this release)</span>
 });</pre>
         </div>
       </div>
@@ -729,15 +729,14 @@ module.exports.handler = <span class="k">async</span> (eventName, hasuraEvent) =
 
     <!-- run controls reference -->
     <div class="cmp-block">
-      <div class="cmp-title"><span class="num">⚙</span><h3>Controlling how the jobs run</h3><span class="file">module run: {} + job(fn, opts?)</span></div>
-      <p class="cmp-note">Two levels, both declarative. The <b>module</b> sets the batch policy in <code>run: {}</code>. Each <b>job</b> can add or override its own in <code>job(fn, { ... })</code>. The defaults match the old <code>Promise.allSettled</code> fan-out, but now they&rsquo;re a <b>pinned contract</b> (ADR-014), not implicit behavior. <code>mode</code> defaults to <code>parallel</code> and <code>continueOnFailure</code> to <code>true</code>, so a flaky job can never block a sibling on the money path. These only control <i>how</i> jobs run. They can never change <i>which</i> jobs run (ADR-025).</p>
+      <div class="cmp-title"><span class="num">⚙</span><h3>How the jobs run</h3><span class="file">parallel + isolated · fixed this release</span></div>
+      <p class="cmp-note"><b>In this release every module runs its jobs in <span style="color:var(--brass-2)">parallel, with isolated failures</span> — this is fixed, not configurable.</b> All declared jobs launch at once; a failing job never blocks, cancels, or skips a sibling, and the runtime returns a complete <code>JobExecution[]</code> of successes <i>and</i> failures (the money-path guarantee, matching the old <code>Promise.allSettled</code> fan-out — ADR-014). Run options only ever control <i>how</i> jobs run, never <i>which</i> run (ADR-025). The options below are the ones available today.</p>
       <div class="split2">
         <div class="minicard" style="border-top:3px solid var(--brass-2)">
           <h3>Module · <code>run: { … }</code></h3>
           <ul>
-            <li><b><code>mode</code></b> — <code>'parallel'</code> (default) or <code>'series'</code>. Parallel launches all jobs at once; series awaits each before the next.</li>
-            <li><b><code>continueOnFailure</code></b> — default <code>true</code>. A job failure never stops its siblings; <code>run</code> returns a complete <code>JobExecution[]</code> of successes <i>and</i> failures. In <code>series</code> with this <code>false</code>, the first failure stops the rest, which are marked <code>skipped</code>.</li>
             <li><b><code>timeoutMs</code></b> — a batch-level budget across the whole set.</li>
+            <li><b><code>metadata</code></b> — serializable run-level annotations.</li>
           </ul>
         </div>
         <div class="minicard" style="border-top:3px solid var(--teal)">
@@ -745,7 +744,6 @@ module.exports.handler = <span class="k">async</span> (eventName, hasuraEvent) =
           <ul>
             <li><b><code>retries</code></b> — in-process retry attempts core makes (<i>durable, delayed</i> retries are Batch&rsquo; job, not this).</li>
             <li><b><code>timeoutMs</code></b> — per-job deadline; the runtime races the job and marks it <code>timed_out</code>.</li>
-            <li><b><code>continueOnFailure</code></b> — per-job override of the module default.</li>
             <li><b><code>name</code></b> — stable job identity for observability / flow (else <code>fn.name</code>; set it explicitly so a bundler can&rsquo;t mangle it).</li>
             <li><b><code>tags</code></b> — labels for filtering &amp; grouping in the trace.</li>
             <li><b><code>input</code></b> — live request-scoped data (a static object or a pure <code>(ctx) =&gt; …</code> mapper); merges <i>highest</i>, over <code>prepare</code> and plugin baselines.</li>
@@ -753,7 +751,10 @@ module.exports.handler = <span class="k">async</span> (eventName, hasuraEvent) =
           </ul>
         </div>
       </div>
-      <p style="margin:16px 0 0;font-size:13px;color:var(--muted);max-width:84ch">Of these, only <code>retries</code>, <code>timeoutMs</code>, and <code>continueOnFailure</code> govern <i>how</i> a job runs; <code>name</code>/<code>tags</code>/<code>input</code>/<code>metadata</code> are identity and data. <code>RunOptions</code> live on the module&rsquo;s <code>run</code> (ADR-025) rather than a <code>run()</code> call — the runtime applies them when it executes the declared set.</p>
+      <div class="payoff" style="background:var(--now-soft);border-color:#CDD5D4;margin-top:16px">
+        <span class="pk" style="color:var(--now)">Planned · not in this release</span>
+        <div><b>Sequential execution</b> — <code>run: { mode: 'series' }</code> to await each job before the next, with <code>continueOnFailure</code> (module- or per-job) deciding whether the first failure halts the rest (the remainder marked <code>skipped</code>) — is <b>specified but deliberately not enabled yet</b>. Series invites sequential inter-job coupling (one job ordered before, or feeding, another), which quietly reintroduces the handler-style control flow the declarative model removed (ADR-025) and is easy to abuse. Until there is a real, reviewed ordering need, <b>all jobs run in parallel</b>; if it returns it returns behind this same <code>run.mode</code> API, so today&rsquo;s modules stay unaffected.</div>
+      </div>
     </div>
 
     <!-- 4. job fn -->
@@ -1826,17 +1827,75 @@ kit.registerEvents(events);
     <div class="sec-head narrow">
       <p class="eyebrow">What the records unlock</p>
       <h2>Expected vs. actual, for the whole platform</h2>
-      <p class="sec-sub">Every source now produces the same structured records, whether it&rsquo;s a database event, a webhook, a cron tick, or a reverse integration. So one piece of tooling can reason across all of them. This is the strategic endpoint, and it&rsquo;s deliberately phased behind the runtime migration.</p>
+      <p class="sec-sub">Every source produces the same structured records — database event, webhook, cron tick, reverse integration — so one piece of tooling can reason across all of them. The first piece is <b>shipped</b>: a generated document of the <i>expected</i> flow, derived straight from your modules. The layer that overlays the <i>observed</i> runtime on top is phased behind it.</p>
     </div>
-    <div class="feats">
+    <div class="feats" style="grid-template-columns:repeat(3,1fr)">
+      <div class="feat obs">
+        <h3><span class="ic">◆</span> Generated flow docs <span class="refbadge shipped">shipped</span></h3>
+        <p>Because a module declares its jobs as a <b>static array</b> — no hidden branches — the whole structure is knowable without running anything. <code>kit.describe()</code> walks the registered kit; <code>@hopdrive/eventkit/flow</code> writes it out as a committed, diff-friendly YAML doc of <b>how events flow through the system</b>. Regenerate it in an npm script; the <code>eventkit-flow check</code> gate keeps it honest in CI.</p>
+        <span class="pico">kit.describe() · toFlowYaml / toFlowGraph · eventkit-flow generate | check</span>
+      </div>
       <div class="feat phased">
         <h3><span class="ic">◆</span> Flow Manifests <span style="color:var(--now);font:600 11px/1 var(--mono)">— phased</span></h3>
-        <p>Declare a business process — its expected events, jobs, and branches — as a source-controlled contract. The manifest owns <b>meaning</b>; generated metadata verifies <b>structure</b>. Validated in CI.</p>
+        <p>Declare a business process — its expected events, jobs, and branches — as a source-controlled contract. The manifest owns <b>meaning</b>; the generated graph verifies <b>structure</b> (it emits the same <code>FlowNode</code>/<code>FlowEdge</code> shape, so it diffs against a manifest). Validated in CI.</p>
       </div>
       <div class="feat phased">
         <h3><span class="ic">◆</span> Compare Mode <span style="color:var(--now);font:600 11px/1 var(--mono)">— phased</span></h3>
         <p>Overlay observed runtime onto the expected flow and classify the differences — missing steps, unexpected side effects, retries, timeouts. Proven on <b>one</b> high-value flow before generalizing; never a production gate.</p>
       </div>
+    </div>
+
+    <!-- Visual: the generated flow doc -->
+    <div style="margin-top:32px;display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start">
+      <div>
+        <p class="eyebrow" style="margin-bottom:12px">The derived graph</p>
+        <p style="font-size:14.5px;color:var(--muted);margin:0 0 16px;line-height:1.55">One <code>source</code> node, an <code>event</code> node per registered event, a <code>job</code> node per declared job, and a <code>sideEffect</code> node for any job that declares one. Node ids come from event/job names — never file paths — so the eventual observed-vs-expected overlay lines up.</p>
+        <div class="lf-steps" style="gap:7px">
+          <span class="lf-step biz">source-hasura-event</span>
+          <span style="color:var(--faint)">→</span>
+          <span class="lf-step">event: rideshare.requested</span>
+          <span style="color:var(--faint)">→</span>
+          <span class="lf-step">job: callVendorForRide</span>
+          <span style="color:var(--faint)">→</span>
+          <span class="lf-step" style="background:var(--teal-soft);border-color:var(--teal);color:var(--petrol-2)">sideEffect: uber-api</span>
+        </div>
+        <div class="lf-steps" style="gap:7px;margin-top:8px">
+          <span class="lf-step" style="visibility:hidden">source-hasura-event</span>
+          <span style="color:var(--faint);visibility:hidden">→</span>
+          <span style="color:var(--faint)">↳</span>
+          <span class="lf-step">job: notifyDispatcher</span>
+        </div>
+      </div>
+      <div>
+        <p class="eyebrow" style="margin-bottom:12px">The committed doc — <code>db-rideshares.flow.yaml</code></p>
+<pre style="margin:0"><span class="c"># @generated by @hopdrive/eventkit/flow — DO NOT EDIT BY HAND.
+# CI gate: eventkit-flow check --kit ./src/eventkit.js --out …</span>
+generator: <span class="s">"@hopdrive/eventkit/flow"</span>
+kit:
+  source: { name: source-hasura-event, type: database }
+  plugins: [loop-guard, correlation-resolver]
+events:
+  - name: rideshare.requested
+    response: none
+    jobs:
+      - name: callVendorForRide
+        metadata: { sideEffect: uber-api }
+      - name: notifyDispatcher
+        retries: 2</pre>
+      </div>
+    </div>
+
+    <!-- Usage: wiring it into a repo -->
+    <div class="callout" style="margin-top:28px">
+      <p class="eyebrow">Produce the artifact in your repo</p>
+      <p style="font-size:14.5px;color:var(--muted);margin:0 0 14px;line-height:1.55">Export your kit from a module (you already build it once at module scope), then wire two npm scripts. <code>generate</code> writes the doc; <code>check</code> regenerates and fails if the committed file is missing or stale — run it in CI so the doc can never drift from the code.</p>
+<pre style="margin:0"><span class="c">// src/eventkit.js</span>
+<span class="k">export const</span> kit = createEventKit(hasuraEvent).use(netlifyPlatform).registerEvents([ … ]);
+
+<span class="c">// package.json — "scripts"</span>
+<span class="s">"flow:gen"</span>:   <span class="s">"eventkit-flow generate --kit ./src/eventkit.js --out architecture/db-rideshares.flow.yaml"</span>,
+<span class="s">"flow:check"</span>: <span class="s">"eventkit-flow check    --kit ./src/eventkit.js --out architecture/db-rideshares.flow.yaml"</span></pre>
+      <p style="font-size:13px;color:var(--faint);margin:12px 0 0">Point <code>--kit</code> at a module that exports an <code>EventKit</code>; pass <code>--export &lt;name&gt;</code> if it isn&rsquo;t the default/<code>kit</code> export. Prefer a programmatic hook? <code>toFlowYaml(kit)</code>, <code>toFlowGraph(kit)</code>, and <code>describeKit(kit)</code> are exported from <code>@hopdrive/eventkit/flow</code>.</p>
     </div>
   </div>
 </section>
@@ -1857,7 +1916,8 @@ kit.registerEvents(events);
 <span class="k">import</span> { hasuraEvent, hasuraCron, hasuraAction, webhook } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources'</span>;
 <span class="k">import</span> { observability, graphqlSink, batch, loopGuard, grafana, sentry } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins'</span>;
 <span class="k">import</span> { lambdaPlatform, netlifyPlatform, netlifyV2Platform, netlifyBackgroundPlatform } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/platforms'</span>;
-<span class="k">import</span> { fakeSource, defineFakeEvent } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/testing'</span>;</pre>
+<span class="k">import</span> { fakeSource, defineFakeEvent } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/testing'</span>;
+<span class="k">import</span> { describeKit, toFlowYaml, toFlowGraph } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/flow'</span>;   <span class="c">// flow docs (ADR-032)</span></pre>
     </div>
 
     <div class="refgroup">
@@ -1888,6 +1948,10 @@ kit.registerEvents(modules[] | record): EventKit</div>
         <div class="rsig">kit.validate(): void          kit.shutdown(): Promise&lt;void&gt;</div>
         <p><code>validate()</code> runs plugin/capability resolution + module checks (also run on first <code>handle</code>). <code>shutdown()</code> flushes and tears down plugins.</p>
       </div>
+      <div class="refentry">
+        <div class="rsig">kit.describe(): KitDescription <span class="refbadge shipped">shipped</span></div>
+        <p>Read-only structural snapshot — source, platform, plugins, and every registered event with its <b>static</b> job set. Pure: it resolves plugins but runs no detector, <code>prepare</code>, job, or hook. Feeds the flow generator (<code>@hopdrive/eventkit/flow</code>) and the <code>eventkit-flow</code> CLI. See <a href="#reference-flow" style="color:var(--brass)">Flow docs</a> below and the &ldquo;Generated flow docs&rdquo; section above.</p>
+      </div>
     </div>
 
     <div class="refgroup">
@@ -1902,7 +1966,7 @@ kit.registerEvents(modules[] | record): EventKit</div>
           <li><b><code>jobs?</code></b> — <code>JobDefinition[]</code>, a <i>static array literal</i> of <code>job(fn, opts?)</code>. The runtime runs them; no conditional inclusion, no fan-out, no inter-job deps. Optional only when <code>resolve</code> is present — a module must declare <code>jobs</code> and/or <code>resolve</code>.</li>
           <li><b><code>resolve?</code></b> <span class="refbadge shipped">shipped</span> — <code>(ctx) =&gt; output</code>, the <b>request/response seam</b> (ADR-026): computes the invocation&rsquo;s response value for a request/response source (<code>hasuraAction</code>, a status-contract <code>webhook</code>). Source-agnostic; the source&rsquo;s platform adapter maps the return → the wire. It MUST NOT read job results — jobs run alongside as sibling-ignorant side effects.</li>
           <li><b><code>respond?</code></b> <span class="refbadge shipped">shipped</span> — <code>(ctx, { jobs, ok }) =&gt; output</code>, the <b>result-driven response seam</b> (ADR-026 amendment): like <code>resolve</code>, but sequenced <i>after</i> the jobs settle and handed their executions, so the reply can reflect the outcome of the work. <b>Mutually exclusive with <code>resolve</code></b>; requires ≥1 job; rejected at <code>validate()</code> under a background/202 platform. Jobs keep their own retry/durability — <code>respond</code> only reads results; a throw maps to the wire error exactly like <code>resolve</code>.</li>
-          <li><b><code>run?</code></b> — <code>RunOptions</code> for the batch (mode / continueOnFailure / timeoutMs).</li>
+          <li><b><code>run?</code></b> — <code>RunOptions</code> for the batch (<code>timeoutMs</code> / <code>metadata</code>). Jobs always run in parallel this release; <code>mode: 'series'</code> + <code>continueOnFailure</code> are <span class="refbadge planned">planned</span> (see &ldquo;How the jobs run&rdquo;).</li>
           <li><b><code>metadata?</code></b> — registration-time hints for tooling (description, tags, owner, flowHints); nothing depends on it at runtime.</li>
         </ul>
       </div>
@@ -1915,15 +1979,15 @@ kit.registerEvents(modules[] | record): EventKit</div>
         <div class="rsig">job&lt;TInput, TResult&gt;(fn, options?): JobDefinition</div>
         <p>Wrap a job function into a branded definition. Options:</p>
         <ul class="rfields">
-          <li><b><code>retries?</code></b> number · <b><code>timeoutMs?</code></b> number · <b><code>continueOnFailure?</code></b> boolean — execution control (per-job override of the module default).</li>
+          <li><b><code>retries?</code></b> number · <b><code>timeoutMs?</code></b> number — execution control. (<code>continueOnFailure?</code> is <span class="refbadge planned">planned</span> — it only alters series execution, which isn&rsquo;t enabled this release.)</li>
           <li><b><code>name?</code></b> string — stable identity for observability/flow (else <code>fn.name</code>; set explicitly to survive minification).</li>
           <li><b><code>tags?</code></b> string[] · <b><code>metadata?</code></b> Record — labels &amp; serializable annotations (persisted + traced).</li>
           <li><b><code>input?</code></b> <code>TInput | (ctx: JobInputContext) =&gt; TInput</code> — live request-scoped data (object or pure mapper); never persisted; merges highest over <code>prepare</code> + plugin baselines.</li>
         </ul>
       </div>
       <div class="refentry">
-        <div class="rsig">RunOptions = { mode?: 'parallel'|'series', continueOnFailure?, timeoutMs?, metadata? }</div>
-        <p>Pinned defaults (ADR-014): <code>mode:'parallel'</code>, <code>continueOnFailure:true</code>. Supplied on the module&rsquo;s <code>run</code>, not a call.</p>
+        <div class="rsig">RunOptions = { timeoutMs?, metadata? }</div>
+        <p>Supplied on the module&rsquo;s <code>run</code>, not a call. Jobs always run <b>parallel with isolated failures</b> this release (ADR-014); the <code>mode: 'parallel'|'series'</code> switch and <code>continueOnFailure</code> are <span class="refbadge planned">planned</span> and deliberately not enabled (see &ldquo;How the jobs run&rdquo;).</p>
       </div>
     </div>
 
@@ -2022,6 +2086,19 @@ kit.registerEvents(modules[] | record): EventKit</div>
         <li><b><code>serializeError</code> / <code>serializeOutput</code> / <code>replaceCircularReferences</code></b> — the safe-serialization utilities the runtime uses.</li>
         <li><b><code>asEventName</code> / <code>asJobName</code> / <code>asCorrelationId</code> …</b> — branded-id constructors.</li>
       </ul>
+    </div>
+
+    <div class="refgroup" id="reference-flow">
+      <h3>Flow docs <span class="refbadge shipped">shipped</span></h3>
+      <p class="ghint">From <code>@hopdrive/eventkit/flow</code>. Turn a built kit into a committed document of how events flow through the system — the &ldquo;generator verifies structure&rdquo; half of Expected/Observed/Compare (ADR-032). Pure: a read-only registry walk, faithful because modules are declarative. Also a bin, <code>eventkit-flow</code>, for npm scripts + CI drift-gating.</p>
+      <ul class="rfields" style="max-width:84ch">
+        <li><b><code>describeKit(kit): KitDescription</code></b> — the raw structural snapshot (same as <code>kit.describe()</code>): source, platform, plugins, every event + its static job set.</li>
+        <li><b><code>toFlowYaml(kit, { title? }): string</code></b> — the human-readable, diff-friendly committed doc (event-centric, with a <code>@generated</code> banner).</li>
+        <li><b><code>toFlowGraph(kit): { nodes, edges }</code></b> — a <code>FlowNode</code>/<code>FlowEdge</code> graph in the manifest vocabulary (for React&nbsp;Flow rendering or diffing against a hand-authored Flow Manifest). Node ids are name-derived (<code>event:&lt;name&gt;</code>, <code>job:&lt;event&gt;:&lt;job&gt;</code>, …), never path-derived.</li>
+        <li><b><code>eventkit-flow generate --kit &lt;module&gt; --out &lt;file&gt;</code></b> — write the doc. <code>--export &lt;name&gt;</code> if the kit isn&rsquo;t the default/<code>kit</code> export.</li>
+        <li><b><code>eventkit-flow check --kit &lt;module&gt; --out &lt;file&gt;</code></b> — regenerate and exit non-zero if the committed file is missing or stale (the CI drift gate).</li>
+      </ul>
+      <p class="ghint" style="margin-top:10px">Flow <b>Manifests</b> (hand-authored meaning) and <b>Compare Mode</b> (overlaying the observed runtime) remain phased — see the &ldquo;Expected vs. actual&rdquo; section above and <code>docs/planning/console-expected-flows.md</code>.</p>
     </div>
 
   </div>

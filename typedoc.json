@@ -8,10 +8,12 @@
     "src/plugins/observability/graphql-sink.ts",
     "src/plugins/batch/index.ts",
     "src/plugins/loop-guard/index.ts",
+    "src/plugins/correlation-resolver/index.ts",
     "src/plugins/grafana/index.ts",
     "src/plugins/sentry/index.ts",
     "src/plugins/platforms.ts",
-    "src/testing/index.ts"
+    "src/testing/index.ts",
+    "src/flow/index.ts"
   ],
   "out": "docs/api",
   "readme": "none",

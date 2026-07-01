@@ -270,7 +270,8 @@ pass `--export <name>` if it isn't the default/`kit` export.
   `hasura-event-detector`, the plugin model, migration patterns) plus a curated API
   reference. Open it in a browser.
 - **Flow example.** `docs/flow.example.yaml` is a generated flow doc (what `eventkit-flow
-  generate` emits).
+  generate` emits). The Console plan that consumes these docs (Expected/Compare modes) lives
+  in [`docs/planning/console-expected-flows.md`](docs/planning/console-expected-flows.md).
 - **API reference (generated).** Run `npm run docs` to build `docs/api/`, the exhaustive,
   every-symbol reference generated from source, so it can't drift.
 - **Design record.** The architecture decisions, ADRs, kickoff, decision register, and raw

@@ -25,6 +25,12 @@ does today*, the authority is the canonical RFC (below) and the code (`../../REA
   done (banner at top). Kept for provenance, not as a current build guide.
 - **`plugin-parity.md`** — per-plugin parity work vs the legacy package.
   Complete: every P0/P1 item shipped; kept as a verification record.
+- **`external-correlation-chaining.md`** — ADR-028 design: reconnecting an event chain across
+  an external vendor round-trip (the `correlationResolver` plugin + the awaitable envelope seam).
+- **`console-expected-flows.md`** — the plan for the Console's Expected/Compare modes over the
+  **shipped** flow-doc generator (ADR-032) and the Observability records. The generator half
+  (`kit.describe()` / `@hopdrive/eventkit/flow` / `eventkit-flow`) is built; the matcher, the
+  three Console modes, and the backend read API are the remaining phased work.
 - **`raw-conversations/`** — the raw ChatGPT planning conversations the design grew out of (framework
   redesign, event-module naming, expected-vs-actual flows, project-plan consolidation). Primary-source
   provenance, with source URLs.

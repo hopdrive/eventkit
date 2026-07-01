@@ -95,6 +95,8 @@ ADRs 015,016,017,019,020,022,024. *Done:* a durable consumer runs as a plain job
 
 **Phase 9 — Tooling (phased, after runtime proven).** Flow Manifests + Compare Mode on ONE high-value flow; Observed-mode console read API. ADRs 010,021. Don't build speculatively.
 
+> **[v0.3.19 — DONE: the Expected-Flow generator.]** The structural half of this phase shipped (ADR-032): `kit.describe()` + `@hopdrive/eventkit/flow` (`toFlowGraph`/`toFlowYaml`) + the `eventkit-flow` CLI (`generate`/`check`) let a consumer repo emit and CI-gate a committed flow doc. Safe to build ahead of the rest because it derives purely from the declarative modules (ADR-025) — no matcher dependency. **Still pending in this phase:** hand-authored Flow Manifests + their CI validation, Compare Mode / the matcher (prove on one flow first), and the Console backend + modes — planned in `console-expected-flows.md`.
+
 ---
 
 ## 4. Critical correctness guards (do NOT regress — these fail silently)

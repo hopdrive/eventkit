@@ -18,7 +18,7 @@ live prompts. Where a decision has shipped, the code (not a blank line) is the s
 - **D5** tracking-token loop prevention → framework seams + built-in `loopGuard` plugin. **ADR-016 / ADR-024.**
 - **D7** compatibility facade → **no facade**; modules are fully declarative (`defineEvent`, no `run()` call), so there is no legacy call shape to wrap. **ADR-025.**
 - **D8** package shape → **single package + subpath exports**, shipped. **ADR-024 / CHG-14.**
-- **D9** Compare/Console → observability + `graphqlSink` shipped; Console/Compare phased behind (Observed Mode first).
+- **D9** Compare/Console → observability + `graphqlSink` shipped; **Expected-Flow generator now shipped too** (`kit.describe()` + `@hopdrive/eventkit/flow` + `eventkit-flow` CLI — ADR-032, v0.3.19); Flow Manifests' CI validation, Console/Compare still phased behind (Observed Mode first). Plan: `console-expected-flows.md`.
 - **D11** async detectors → allowed-but-discouraged; `boolean | Promise<boolean>`, no detection timeout. (a) shipped.
 - **D12** observability failure mode → best-effort default (graceful degrade in `graphql-sink`). (a) shipped.
 - **D14** one source per kit → **yes**, positional `createEventKit(hasuraEvent)`. **ADR-019 / CHG-5, CHG-10, CHG-11.**
@@ -87,7 +87,7 @@ conversations in `raw-conversations/`; **CODE** = current EventKit source / lega
 - **(a) parallel + continueOnFailure=true** (matches current runtime exactly). *Recommended.*
 - (b) series + stop-on-failure. A flaky `publishGenericWebhook` would block `runAR`/`runARV2` (billing). This is a **silent** regression — no compile error, no test failure unless one exists for that exact ordering.
 **Blast radius:** Every `run()` call site (245). This is the highest-risk *silent* behavior change in the whole migration.
-**Recommendation:** (a), stated normatively, with series available per-`run()` opt-in.
+**Recommendation:** (a), stated normatively, with series available per-`run()` opt-in. *(Update: the series opt-in was later **deferred** — parallel is the only mode at launch. See **D28 / ADR-031**.)*
 **Blocks until answered:** §10 semantics; any handler that fans out money + non-money jobs in one `run()`.
 **Decision:** _______
 
@@ -177,7 +177,7 @@ conversations in `raw-conversations/`; **CODE** = current EventKit source / lega
 **Blast radius:** A large chunk of optional scope and timeline.
 **Recommendation:** (a); Console backend out of v1 except a read API over existing observability storage.
 **Blocks until answered:** Roadmap; how much of §§14–16 is normative now vs aspirational.
-**Decision:** _______
+**Decision:** **(a) — partially resolved [v0.3.19, ADR-032].** The **generator/structure half shipped**: `kit.describe()` + `@hopdrive/eventkit/flow` (`toFlowGraph`/`toFlowYaml`) derive the Expected graph from the declarative modules, and the `eventkit-flow` CLI produces + CI-gates a committed artifact in consumer repos. This was low-risk to ship early precisely because ADR-025 makes the structure knowable without execution (it does not depend on the matcher). **Still phased** (unchanged from the recommendation): hand-authored Flow **Manifests** + their CI validation, **Compare Mode** / the matcher (prove on one flow first), and the **Console backend** (host/auth/query layer) — all planned in `console-expected-flows.md`. Observed Mode still ships before Compare.
 
 ---
 
@@ -366,6 +366,19 @@ Confirm the optional set: `description, tags, owner, flowHints, deprecated, rela
 - **Default stays soft.** `verify`'s non-throwing contract (§7.1) is unchanged; `rejectUnverified` is the opt-in that layers a hard reject on top.
 - **Status:** ✅ **implemented & verified** — webhook source + runtime pre-dispatch `ClientError` mapping; new tests (reject 401, custom status, passes through when verified, config error without verify); full suite green.
 **Blast radius:** `WebhookConfig`/`WebhookSource` types, the webhook `normalize`, the `handle()` catch (pre-dispatch `ClientError` → client response), and the guide webhook section. Reuses ADR-026's `ClientError` → status plumbing; no new platform surface.
+
+---
+
+### D28. Defer configurable job execution mode (series) — parallel-only launch [added 2026-07-01]
+**Question:** `RunOptions` shipped a `mode: 'parallel' | 'series'` switch (plus `continueOnFailure`) so a module could run its jobs sequentially and halt the chain on failure (ADR-014). Should that be enabled in the initial release, or held back?
+**Origin:** Owner call during the guide review — series execution adds more risk of abuse than value at launch: it lets a module order one job before another (or have one feed the next), which is exactly the sequential, handler-style inter-job coupling the declarative model was built to remove (ADR-025, no inter-job deps). No current consumer needs it.
+**Decision:** ✅ **RESOLVED 2026-07-01 (ADR-031, amends ADR-014).**
+- **Parallel is the only execution mode in the initial release.** Every module runs its jobs in **parallel with isolated failures** — a failing job never blocks, cancels, or skips a sibling; the runtime returns a complete `JobExecution[]`. This is fixed, not configurable.
+- **`run.mode` (`'series'`) and `continueOnFailure` (module- and per-job) are removed from the public surface**, not merely defaulted: the exported `RunOptions`/`JobOptions` MUST NOT expose them, so a consumer can't set them. `run: { timeoutMs, metadata }` and per-job `retries`/`timeoutMs`/`name`/`tags`/`input`/`metadata` remain.
+- **Kept as a documented possible future feature.** The guide and RFC describe series as planned; if a real, reviewed ordering need appears it returns behind this same `run.mode` API, so existing modules are unaffected. The `'skipped'` `JobExecutionStatus` stays reserved for it.
+- **Fail loud, don't silently downgrade.** If `mode: 'series'` reaches the runtime anyway (e.g. an untyped JS caller), it should be rejected/warned rather than silently run parallel — so no one builds on a disabled feature.
+- **Docs-only for now (owner scope):** the guide, `architecture.md` (§9.5/§9.4/ADR-014 + change-log 0.3.18), README, and this register are updated; the code change (removing the fields + the `series` branch) is handed to the coding agent.
+**Blast radius:** `RunOptions`/`JobOptions` public types, the `runJobs` executor (drop the `series` branch), and the docs. No change to the parallel behavior every module already gets.
 
 ## Decision dependency map (what unblocks what)
 
