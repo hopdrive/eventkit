@@ -16,8 +16,14 @@ import {
   type EventKit,
   type EventKitPlugin,
   type EventModule,
+  type EventModuleMetadata,
   type EventOutcome,
   type EventSourceType,
+  type FlowResponseKind,
+  type JobDefinition,
+  type KitDescription,
+  type KitEventDescription,
+  type KitJobDescription,
   type HandlerContext,
   type HandlerResult,
   type HandlerShortCircuit,
@@ -531,6 +537,56 @@ class Kit implements EventKit {
   async shutdown(): Promise<void> {
     await this.pm.onFlush();
     await this.pm.onShutdown();
+  }
+
+  // Read-only registry walk (§14–§16). Resolves plugins (idempotent) so source /
+  // platform / plugin names are populated, then reflects the declared structure —
+  // it runs no detector, prepare, job, or lifecycle hook. Faithful precisely
+  // because modules are declarative (ADR-025): the job set is a static array.
+  describe(): KitDescription {
+    this.pm.resolve();
+
+    // The source and platform are singleton capability providers, not observer/
+    // transform plugins — list only the latter under `plugins`.
+    const plugins = this.pm.pluginsInOrder
+      .filter(p => p !== this.pm.source && p !== this.pm.platform)
+      .map(p => p.name);
+
+    const events: KitEventDescription[] = this.modules.map(m => {
+      const response: FlowResponseKind = m.respond ? 'respond' : m.resolve ? 'resolve' : 'none';
+      const jobs: KitJobDescription[] = (m.jobs ?? []).map(entry => {
+        // Jobs are normalized to JobDefinition at register time; stay defensive.
+        const def = isJobDefinition(entry) ? (entry as JobDefinition) : undefined;
+        const opts = def?.options ?? {};
+        const j: KitJobDescription = {
+          name: def ? String(def.name) : (entry as { name?: string }).name ?? 'anonymous',
+        };
+        if (opts.retries !== undefined) j.retries = opts.retries;
+        if (opts.timeoutMs !== undefined) j.timeoutMs = opts.timeoutMs;
+        if (opts.continueOnFailure !== undefined) j.continueOnFailure = opts.continueOnFailure;
+        if (opts.tags && opts.tags.length) j.tags = opts.tags;
+        if (opts.metadata && Object.keys(opts.metadata).length) j.metadata = opts.metadata;
+        return j;
+      });
+
+      const meta = m.metadata as EventModuleMetadata | undefined;
+      const ev: KitEventDescription = { name: String(m.name), response, jobs };
+      if (m.run?.mode) ev.runMode = m.run.mode;
+      if (meta?.description) ev.description = meta.description;
+      if (meta?.owner) ev.owner = meta.owner;
+      if (meta?.tags && meta.tags.length) ev.tags = meta.tags;
+      if (meta?.deprecated) ev.deprecated = true;
+      if (meta?.flowHints) ev.flowHints = meta.flowHints;
+      return ev;
+    });
+
+    const description: KitDescription = {
+      source: { name: this.pm.source.name, type: this.pm.sourceType },
+      plugins,
+      events,
+    };
+    if (this.pm.platform) description.platform = this.pm.platform.name;
+    return description;
   }
 }
 

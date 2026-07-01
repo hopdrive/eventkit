@@ -91,3 +91,16 @@ export type {
 
 // ── Kit / entry point (types only; createEventKit + run are runtime, re-exported from the root) ──
 export type { EventKit, InvocationResult, EventOutcome, ResolvedOutcome, ResolvedError, PluginFactory, HandlerShortCircuit, HttpRequestEvent } from './kit.js';
+
+// ── Flow description + manifest vocabulary (§14–§16) ─────────────────────────
+export type {
+  KitDescription,
+  KitEventDescription,
+  KitJobDescription,
+  FlowResponseKind,
+  FlowManifest,
+  FlowNode,
+  FlowEdge,
+  FlowNodeKind,
+  FlowSourceRef,
+} from './flow.js';

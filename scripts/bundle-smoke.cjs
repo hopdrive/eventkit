@@ -32,6 +32,7 @@ const SUBPATHS = [
   '@hopdrive/eventkit/plugins/transports/sentry',
   '@hopdrive/eventkit/platforms',
   '@hopdrive/eventkit/testing',
+  '@hopdrive/eventkit/flow',
 ];
 
 function assertBuilt() {

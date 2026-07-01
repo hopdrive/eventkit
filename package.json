@@ -82,10 +82,19 @@
       "types": "./dist/types/testing/index.d.ts",
       "import": "./dist/esm/testing/index.js",
       "require": "./dist/cjs/testing/index.js"
+    },
+    "./flow": {
+      "types": "./dist/types/flow/index.d.ts",
+      "import": "./dist/esm/flow/index.js",
+      "require": "./dist/cjs/flow/index.js"
     }
+  },
+  "bin": {
+    "eventkit-flow": "bin/eventkit-flow.mjs"
   },
   "files": [
     "dist",
+    "bin",
     "docs/guide.html",
     "README.md",
     "LICENSE"

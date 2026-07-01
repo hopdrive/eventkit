@@ -8,6 +8,7 @@ import type { EventModule } from './event-module.js';
 import type { JobExecution } from './job.js';
 import type { SerializedError } from './errors.js';
 import type { EventKitPlugin } from './plugin.js';
+import type { KitDescription } from './flow.js';
 
 /** A plugin factory the kit instantiates itself (D22 — lazily). */
 export type PluginFactory = (config?: unknown) => EventKitPlugin;
@@ -134,6 +135,13 @@ export interface EventKit {
   /** Manual entry: forward raw platform args (the adapter extracts payload + budget). */
   handle(rawPayloadOrArgs: unknown, request?: RequestContext | unknown): Promise<InvocationResult>;
   shutdown(): Promise<void>;
+
+  /**
+   * Read-only structural snapshot of the kit: its source, platform, plugins, and
+   * every registered event with its static job set (§14–§16). Pure — resolves
+   * plugins but runs nothing. Feeds the flow generator (`@hopdrive/eventkit/flow`).
+   */
+  describe(): KitDescription;
 }
 
 // `createEventKit()` (the constructor) lives in `../runtime/kit.ts`. The root
