@@ -77,8 +77,15 @@ earlier "handler returns `JobDefinition[]` / calls `run()`" framing — `run()` 
 Leaving the default "to be chosen later" was a non-decision in a normative spec. It is pinned to
 `mode: 'parallel'`, `continueOnFailure: true`, justified as **migration parity and money-path safety**:
 billing jobs (`runAR`/`runARV2`) share an invocation with flaky ones (`publishGenericWebhook`); under a
-series/stop-on-failure default a flaky webhook would block billing. Series/stop-on-failure is opt-in and
-explicitly does *not* preserve current behavior.
+series/stop-on-failure default a flaky webhook would block billing.
+
+**Update (ADR-031, amends ADR-014, v0.3.18): series is deferred. Parallel is the only mode at launch.** The
+`run.mode` (`'series'`) switch and `continueOnFailure` were built, but they're not enabled in the initial
+release, and they're removed from the public `RunOptions`/`JobOptions`. Two reasons. The same money-path/parity
+logic points the other way here. And there's an abuse concern: series lets a module sequence one job before
+another, or feed one into the next. That's exactly the sequential inter-job coupling the declarative model
+forbids (ADR-025, no inter-job deps). More risk than value, and no consumer needs it yet. It stays a documented
+possible future feature behind the same `run.mode` API, and the `'skipped'` status is reserved for it.
 
 ### Loop prevention is a control mechanism, not just an observability field — ADR-016
 **Why:** in early drafts the tracking token survived only as something you *log*. It actually *gates

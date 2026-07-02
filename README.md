@@ -150,10 +150,10 @@ job(fn, {
 });
 ```
 
-**Jobs always run in parallel with isolated failures** — a failing job never blocks,
-cancels, or skips a sibling (ADR-014). This is fixed, not configurable: the `run.mode`
+**Jobs always run in parallel with isolated failures.** A failing job never blocks,
+cancels, or skips a sibling (ADR-014). This is fixed, not configurable. The `run.mode`
 (`'series'`) switch and `continueOnFailure` are a **planned future control, not enabled in
-this release** (ADR-031) — series invites the sequential inter-job coupling the declarative
+this release** (ADR-031). Series invites the sequential inter-job coupling the declarative
 model removes. `run` today carries `timeoutMs` / `metadata`.
 
 > There is **no public `run()`**. The runtime runs the declared `jobs` (ADR-025).

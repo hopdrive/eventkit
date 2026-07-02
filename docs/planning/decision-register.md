@@ -32,10 +32,19 @@ live prompts. Where a decision has shipped, the code (not a blank line) is the s
 - **D23** `@hopdrive/app-eventkit` package → **no package**; generic plugins are built-in subpath exports. **ADR-024.**
 - **Plus** declarative modules / no conditional jobs (**ADR-025**, supersedes ADR-018); plugins self-correlate (**ADR-017**); `augmentJobContext` (**ADR-020**); platform adapters (**ADR-021**); plugin composition model (**ADR-022**); `webhook`/`hasuraAction` sources + `resolve` request/response (**ADR-026**); result-driven `respond` response (**ADR-029**, amends ADR-026).
 
-**GENUINELY STILL OPEN — these are process/migration calls with no code yet:**
-- **D6** (HIGH) — shadow-mode parity vs straight cutover for money/loop-critical paths.
-- **D10** (HIGH) — event-name migration policy (preserve all names vs recorded renames).
-- **D13** (MEDIUM) — `metadata` serializability enforcement strictness (runtime check vs types-only).
+**RATIFIED 2026-07-01 (Fable-5 principal review) — were open, now decided:**
+- **D6** (HIGH) → **(a) shadow-mode parity** for money/loop-critical paths, straight cutover for the rest. The diff MUST include the tracking-token wire format (byte-for-byte `updated_by`), `source_job_id` linkage, `batch_jobs` row transitions (P0-4), and Grafana labels. Unit tests can't catch the three silent failure modes (execution mode, loop tokens, vendor status contracts).
+- **D10** (HIGH) → **(a) preserve every event name verbatim**; any rename is a separate recorded change with alias/backfill. Promote the `eventkit-event-names.test.js` from the migration spike into the standard consumer CI gate.
+- **D13** (MEDIUM) → **(a) runtime fail-fast when Batch is registered** (throw naming the offending key before the first persist), and carry over the legacy `safeSerialize` client-stripping (sdk/Apollo duck-typing) so a misplaced live client degrades gracefully. §9.4 already says SHOULD; make it enforced + tested.
+
+**NEW, from the same review (ADR-backed):**
+- **D29** → **ADR-033** pre-dispatch pipeline hardening (P0-1/P0-2/P0-3).
+- **D30** → **ADR-034** optional loopGuard hop-depth ceiling.
+- **D31** → **ADR-035** `ctx.skip(reason)` / `condition_not_met`.
+- **D32** → typed `prepare`→job-`input` generic on `defineEvent` (DX).
+- **D33** → `verify` receives body+headers+query; ship HopDrive verify presets.
+- **P0-4** → batch retry-status fidelity (code drift vs §12.4; no new decision, a bug fix).
+- **P0-5 / D23** → the shared HopDrive `loopGuard` preset is now *required* during migration (see D23 body).
 
 ---
 
@@ -87,7 +96,7 @@ conversations in `raw-conversations/`; **CODE** = current EventKit source / lega
 - **(a) parallel + continueOnFailure=true** (matches current runtime exactly). *Recommended.*
 - (b) series + stop-on-failure. A flaky `publishGenericWebhook` would block `runAR`/`runARV2` (billing). This is a **silent** regression — no compile error, no test failure unless one exists for that exact ordering.
 **Blast radius:** Every `run()` call site (245). This is the highest-risk *silent* behavior change in the whole migration.
-**Recommendation:** (a), stated normatively, with series available per-`run()` opt-in. *(Update: the series opt-in was later **deferred** — parallel is the only mode at launch. See **D28 / ADR-031**.)*
+**Recommendation:** (a), stated normatively, with series available per-`run()` opt-in. *(Update: the series opt-in was later **deferred**. Parallel is the only mode at launch. See **D28 / ADR-031**.)*
 **Blocks until answered:** §10 semantics; any handler that fans out money + non-money jobs in one `run()`.
 **Decision:** _______
 
@@ -134,7 +143,7 @@ conversations in `raw-conversations/`; **CODE** = current EventKit source / lega
 **Blast radius:** Migration timeline + confidence. Adds engineering to build the shadow harness; buys safety on the only paths where a bug costs money.
 **Recommendation:** (a).
 **Blocks until answered:** Migration plan sign-off; whether to build a shadow harness at all.
-**Decision:** _______
+**Decision:** ✅ **RESOLVED 2026-07-01 — (a) shadow-mode parity** for money/loop-critical paths; straight per-module cutover elsewhere. The shadow diff MUST assert, before any chain-participating function cuts over: (1) the stamped `updated_by` tracking token **byte-for-byte** across both runtimes (this is the detection half of the P0-5 wire-format guard — see D23), (2) `source_job_id` linkage, (3) `batch_jobs` row transitions incl. the retry state (P0-4), and (4) Grafana labels. Rationale reaffirmed by the review: execution mode, loop tokens, and vendor status contracts all fail *silently* — no unit test catches a storm, a blocked-billing fan-out, or a severed chain.
 
 ---
 
@@ -191,7 +200,7 @@ conversations in `raw-conversations/`; **CODE** = current EventKit source / lega
 **Recommendation:** (a).
 **Sub-decision:** For genuinely bad existing names, do we carry the debt indefinitely or schedule a post-migration rename wave with aliasing? (Recommend: carry now, schedule later.)
 **Blocks until answered:** Per-module migration checklist.
-**Decision:** _______
+**Decision:** ✅ **RESOLVED 2026-07-01 — (a) preserve every existing name verbatim** during migration; any rename is a separate, deliberate, recorded change with an alias/backfill. Carry non-ideal names now, schedule a post-migration rename wave with aliasing later. **Enforcement:** promote the `eventkit-event-names.test.js` already in the migration spike into the standard consumer CI gate, so a name drift fails PR checks rather than orphaning observability history downstream.
 
 ---
 
@@ -232,7 +241,7 @@ conversations in `raw-conversations/`; **CODE** = current EventKit source / lega
 - (c) Types only (`Record<string, unknown>` documented as serializable). Cheapest; relies on discipline; the corruption mode survives.
 **Blast radius:** Durable-job authoring ergonomics; how loudly the system fails on a misplaced `sdk` in `metadata`.
 **Recommendation:** (a).
-**Decision:** _______
+**Decision:** ✅ **RESOLVED 2026-07-01 — (a) runtime fail-fast when Batch is registered.** Before the first persist of a durable job, the runtime throws a clear error naming the offending non-serializable key. §9.4 already states this as SHOULD; make it enforced and tested — the corruption mode it guards (a live `sdk`/Apollo client landing in `metadata`) is the founding bug of the rewrite. Additionally, carry over the legacy `safeSerialize` client-stripping behavior (sdk/Apollo duck-typing) so a misplaced live client elsewhere degrades gracefully instead of corrupting the write.
 
 ---
 
@@ -313,7 +322,7 @@ Confirm the optional set: `description, tags, owner, flowHints, deprecated, rela
 - (b) Publish `@hopdrive/app-eventkit` now, housing the presets so every repo imports one source of truth for the token format / field / service id.
 **Blast radius:** Where consumers import their loop-guard/transport config from; one more package to version + release if (b).
 **Recommendation:** (a) — defer the package; revisit if a SDK-coupled enrichment plugin materializes. Not a Phase-0/1 gate; only matters at Phase 3 (plugins) / Phase 6 (first migration wiring).
-**Decision:** _______
+**Decision:** ✅ **RESOLVED 2026-07-01 — (a) no package; ship the presets as a shared config object.** Sharpened by the P0-5 finding: the shared HopDrive `loopGuard` preset (pins `codec.separator: '|'`, `validateCorrelationId`, `field: 'updated_by'`, `serviceId`) is now the **required** registration path for chain-participating functions during the dual-runtime migration, not an optional convenience. The separator is config, so a repo that registers `loopGuard` without the preset silently mints dot-tokens the legacy extractor can't parse — chains sever and echo suppression goes dark with no error. A one-object import makes the correct wire format the path of least resistance. Detection backstop: D6 shadow-mode asserts the stamped token byte-for-byte before cutover. Still no published package — a shared object/module in the consumer repos — until a genuinely SDK-coupled plugin exists.
 
 ---
 
@@ -343,42 +352,74 @@ Confirm the optional set: `description, tags, owner, flowHints, deprecated, rela
 ---
 
 ### D26. Result-driven synchronous response (`respond`) [added 2026-06-30]
-**Question:** A request/response source (`webhook`, `hasuraAction`) can ack via `resolve`, but `resolve` is sibling-ignorant (ADR-026) — it runs concurrently with jobs and never sees their results. Developers want the synchronous response to reflect the *outcome* of the work (run two jobs, then answer based on their combined result) **without ejecting from `kit.handler()` to hand-roll `kit.handle()`**. Should EventKit offer this as a first-class, configurable response timing?
-**Origin:** User request — "make wait-for-all-jobs a configuration, don't force custom code." The eject-to-`handle()` path already works (it returns `InvocationResult` with `events[].jobs`) but is boilerplate and bypasses the declarative model.
+**Question:** A request/response source (`webhook`, `hasuraAction`) can ack via `resolve`, but `resolve` is sibling-ignorant (ADR-026). It runs concurrently with jobs and never sees their results. Sometimes you want the synchronous response to reflect how the work actually went (run two jobs, then answer based on the combined result), and you don't want to eject from `kit.handler()` to hand-roll `kit.handle()`. Should EventKit make this a first-class, configurable response timing?
+**Origin:** User request: "make wait-for-all-jobs a configuration, don't force custom code." The eject-to-`handle()` path already works (it returns `InvocationResult` with `events[].jobs`), but it's boilerplate and it bypasses the declarative model.
 **Decision:** ✅ **RESOLVED 2026-06-30 (ADR-029, amends ADR-026).**
-- **Add a distinct `respond(ctx, { jobs, ok }) => output` seam** rather than a flag on `resolve` or overloading `resolve`'s contract. The choice of *which function you declare* is the configuration (declarative, like ADR-025); the type system carries `result` only where it exists, and the response timing stays statically inspectable. Rejected: (B) `run: { resolveAfterJobs }` flag + sometimes-present `ctx.jobs` (weaker typing); (C) one always-after-jobs seam (removes today's concurrent fast-ack for existing `resolve` users — a behavior change).
-- **Semantics:** the runtime runs the module's `jobs` under its `run` config, awaits them, then calls `respond` with the handler ctx (incl. `prepare` output) + the settled `JobExecution[]` and an `ok` flag (`every job completed|skipped` — same predicate as `InvocationResult.ok`). The return becomes `ResolvedOutcome.output`; a thrown `ClientError`/`ActionError` maps to the wire error — identical downstream plumbing to `resolve`.
-- **Guardrails (register/validate time):** `respond` and `resolve` are **mutually exclusive**; `respond` **requires ≥1 job** (it reads results); and a `respond` module is **rejected under a `deferredResponse` platform** (background/202 — the response is already gone). The platform flag `PlatformAdapter.deferredResponse` is set on `netlifyBackgroundPlatform`.
-- **Fire-and-forget is unchanged & still the default:** declare neither seam → today's behavior. Jobs keep their own retry/durability; `respond` only *reads* outcomes. The known trade (response waits for the slowest job; a 5xx-on-failure makes a status-keyed vendor retry everything) is the developer's explicit, visible choice — documented in the webhook section.
-- **Status:** ✅ **implemented & verified** — typecheck clean; 5 new runtime tests (sequencing-after-jobs, failed-job→error response, mutual-exclusion, requires-jobs, background-platform rejection); full suite 117 green.
-**Blast radius:** `EventModule` (+`respond`), core types (`RespondFunction`/`JobsResult`), `PlatformAdapter.deferredResponse`, the dispatch loop + register/validate checks, and the guide (webhook callout + API reference).
+- **Add a separate `respond(ctx, { jobs, ok }) => output` seam** instead of a flag on `resolve` or overloading `resolve`'s contract. Which function you declare is the config (declarative, like ADR-025). The type system carries `result` only where it exists, and the response timing stays easy to read off the module. Rejected: (B) a `run: { resolveAfterJobs }` flag with a sometimes-present `ctx.jobs` (weaker typing); (C) one always-after-jobs seam, which would remove today's concurrent fast-ack for existing `resolve` users (a behavior change).
+- **Semantics:** the runtime runs the module's `jobs` under its `run` config, waits for them, then calls `respond` with the handler ctx (including `prepare` output), the settled `JobExecution[]`, and an `ok` flag (`every job completed|skipped`, the same rule as `InvocationResult.ok`). The return becomes `ResolvedOutcome.output`, and a thrown `ClientError`/`ActionError` maps to the wire error. Same downstream plumbing as `resolve`.
+- **Guardrails (register/validate time):** `respond` and `resolve` are **mutually exclusive**. `respond` **requires at least one job** (it reads results). And a `respond` module is **rejected under a `deferredResponse` platform** (background/202, where the response is already gone). The platform flag `PlatformAdapter.deferredResponse` is set on `netlifyBackgroundPlatform`.
+- **Fire-and-forget is unchanged and still the default:** declare neither seam and you get today's behavior. Jobs keep their own retry and durability. `respond` only reads outcomes. The known trade (the response waits for the slowest job, and a 5xx-on-failure makes a status-keyed vendor retry everything) is the developer's explicit, visible choice, documented in the webhook section.
+- **Status:** ✅ **implemented and verified.** typecheck clean; 5 new runtime tests (sequencing-after-jobs, failed-job to error response, mutual-exclusion, requires-jobs, background-platform rejection); full suite 117 green.
+**Blast radius:** `EventModule` (adds `respond`), core types (`RespondFunction`/`JobsResult`), `PlatformAdapter.deferredResponse`, the dispatch loop plus register/validate checks, and the guide (webhook callout + API reference).
 
 ---
 
-### D27. Webhook `rejectUnverified` — one-chokepoint signature rejection [added 2026-06-30]
-**Question:** A webhook's signature is verified once in the source's `verify` (§7.1), but `verify` deliberately **never throws** — it annotates `ctx.signatureVerified` and each detector must guard with `signatureVerified && …`. On an endpoint with several modules that's repeated boilerplate and a footgun (forget it in one module → that event fires on a forged request). Should the source offer a single-chokepoint rejection that doesn't require a per-detector guard, without forcing the developer to eject to a hand-rolled `before`/`kit.handle()`?
-**Origin:** Guide review — clarifying where signature verification belongs (verify vs. detector vs. `before`). `before` is the wrong tool (it runs pre-`normalize` on raw args, can't see `signatureVerified` without redoing the HMAC). The detector guard is the only built-in gate, and it scales per-module.
+### D27. Webhook `rejectUnverified`, one-chokepoint signature rejection [added 2026-06-30]
+**Question:** A webhook's signature is verified once in the source's `verify` (§7.1), but `verify` never throws on purpose. It annotates `ctx.signatureVerified` and each detector has to guard with `signatureVerified && …`. On an endpoint with several modules that's repeated boilerplate, and a footgun: forget it in one module and that event fires on a forged request. Should the source offer a single-chokepoint rejection that doesn't need a per-detector guard, without making the developer eject to a hand-rolled `before`/`kit.handle()`?
+**Origin:** Guide review, sorting out where signature verification belongs (verify vs. detector vs. `before`). `before` is the wrong tool. It runs before `normalize` on the raw args, so it can't see `signatureVerified` without redoing the HMAC. The detector guard is the only built-in gate, and it scales per-module.
 **Decision:** ✅ **RESOLVED 2026-06-30 (ADR-030).**
-- **Add `rejectUnverified?: boolean | { status?, message? }` to the webhook source config.** `false`/omitted → today's behavior (annotate, detector decides). `true` → a failed/throwing `verify` is rejected with **401** before detection; the object form customizes status/message (e.g. `403`). **Requires `verify`** to be set (config error otherwise — nothing to verify).
-- **Mechanism (source-agnostic):** when `rejectUnverified` is set and verification fails, the adapter's `normalize` throws a **`ClientError(status, message)`**. The runtime maps a `ClientError` thrown in the **pre-dispatch** phase (duck-typed `.status`, like ADR-026's resolve mapping) to `result.resolved.error` → the platform renders that status + `{ message }`, instead of the generic framework **500**. Detection and dispatch are skipped — **no module runs, no jobs**. This is a general source capability (any source MAY reject a request early by throwing `ClientError` from `normalize`), not webhook-specific runtime code.
-- **Detectors simplify:** with `rejectUnverified: true`, modules on the endpoint no longer need `signatureVerified &&` — every dispatched request is guaranteed verified.
-- **Observability tradeoff (documented, the reason it's opt-in):** a request rejected at `normalize` never became a valid event, so it creates **no Invocation/Event/Job record** — it's surfaced as a framework `warn` log only. If you need the forged attempt recorded as an invocation (security telemetry), keep `rejectUnverified: false` and guard in the detector: the invocation IS recorded and the detector cleanly returns `false`. So the two patterns trade *boilerplate-free hard block* (rejectUnverified) against *observable soft decline* (detector guard); the developer picks per endpoint.
-- **Default stays soft.** `verify`'s non-throwing contract (§7.1) is unchanged; `rejectUnverified` is the opt-in that layers a hard reject on top.
-- **Status:** ✅ **implemented & verified** — webhook source + runtime pre-dispatch `ClientError` mapping; new tests (reject 401, custom status, passes through when verified, config error without verify); full suite green.
-**Blast radius:** `WebhookConfig`/`WebhookSource` types, the webhook `normalize`, the `handle()` catch (pre-dispatch `ClientError` → client response), and the guide webhook section. Reuses ADR-026's `ClientError` → status plumbing; no new platform surface.
+- **Add `rejectUnverified?: boolean | { status?, message? }` to the webhook source config.** `false` or omitted keeps today's behavior (annotate, detector decides). `true` rejects a failed or throwing `verify` with **401** before detection. The object form customizes status/message (say `403`). **Requires `verify`** to be set, otherwise it's a config error (nothing to verify).
+- **Mechanism (source-agnostic):** when `rejectUnverified` is set and verification fails, the adapter's `normalize` throws a `ClientError(status, message)`. The runtime maps a `ClientError` thrown in the pre-dispatch phase (duck-typed `.status`, like ADR-026's resolve mapping) to `result.resolved.error`, and the platform renders that status + `{ message }` instead of the generic framework **500**. Detection and dispatch are skipped: no module runs, no jobs. This is a general source capability (any source can reject a request early by throwing `ClientError` from `normalize`), not webhook-specific runtime code.
+- **Detectors simplify:** with `rejectUnverified: true`, modules on the endpoint no longer need `signatureVerified &&`. Every dispatched request is already verified.
+- **Observability tradeoff (this is why it's opt-in):** a request rejected at `normalize` never became a valid event, so it creates no Invocation/Event/Job record. It shows up as a framework `warn` log only. If you need the forged attempt recorded as an invocation (security telemetry), keep `rejectUnverified: false` and guard in the detector. The invocation gets recorded and the detector cleanly returns `false`. So the two patterns trade a boilerplate-free hard block (rejectUnverified) against an observable soft decline (detector guard). Pick per endpoint.
+- **Default stays soft.** `verify`'s non-throwing contract (§7.1) doesn't change. `rejectUnverified` is the opt-in that layers a hard reject on top.
+- **Status:** ✅ **implemented and verified.** webhook source plus runtime pre-dispatch `ClientError` mapping; new tests (reject 401, custom status, passes through when verified, config error without verify); full suite green.
+**Blast radius:** `WebhookConfig`/`WebhookSource` types, the webhook `normalize`, the `handle()` catch (pre-dispatch `ClientError` to client response), and the guide webhook section. Reuses ADR-026's `ClientError` to status plumbing; no new platform surface.
 
 ---
 
-### D28. Defer configurable job execution mode (series) — parallel-only launch [added 2026-07-01]
-**Question:** `RunOptions` shipped a `mode: 'parallel' | 'series'` switch (plus `continueOnFailure`) so a module could run its jobs sequentially and halt the chain on failure (ADR-014). Should that be enabled in the initial release, or held back?
-**Origin:** Owner call during the guide review — series execution adds more risk of abuse than value at launch: it lets a module order one job before another (or have one feed the next), which is exactly the sequential, handler-style inter-job coupling the declarative model was built to remove (ADR-025, no inter-job deps). No current consumer needs it.
+### D28. Defer configurable job execution mode (series), parallel-only launch [added 2026-07-01]
+**Question:** `RunOptions` shipped a `mode: 'parallel' | 'series'` switch (plus `continueOnFailure`) so a module could run its jobs one after another and stop the chain on failure (ADR-014). Do we turn that on for the first release, or hold it back?
+**Origin:** Owner call during the guide review. Series adds more abuse risk than value right now. It lets a module order one job before another, or feed one into the next. That's the sequential, handler-style coupling the declarative model was built to get rid of (ADR-025, no inter-job deps). No consumer needs it yet.
 **Decision:** ✅ **RESOLVED 2026-07-01 (ADR-031, amends ADR-014).**
-- **Parallel is the only execution mode in the initial release.** Every module runs its jobs in **parallel with isolated failures** — a failing job never blocks, cancels, or skips a sibling; the runtime returns a complete `JobExecution[]`. This is fixed, not configurable.
-- **`run.mode` (`'series'`) and `continueOnFailure` (module- and per-job) are removed from the public surface**, not merely defaulted: the exported `RunOptions`/`JobOptions` MUST NOT expose them, so a consumer can't set them. `run: { timeoutMs, metadata }` and per-job `retries`/`timeoutMs`/`name`/`tags`/`input`/`metadata` remain.
-- **Kept as a documented possible future feature.** The guide and RFC describe series as planned; if a real, reviewed ordering need appears it returns behind this same `run.mode` API, so existing modules are unaffected. The `'skipped'` `JobExecutionStatus` stays reserved for it.
-- **Fail loud, don't silently downgrade.** If `mode: 'series'` reaches the runtime anyway (e.g. an untyped JS caller), it should be rejected/warned rather than silently run parallel — so no one builds on a disabled feature.
-- **Docs-only for now (owner scope):** the guide, `architecture.md` (§9.5/§9.4/ADR-014 + change-log 0.3.18), README, and this register are updated; the code change (removing the fields + the `series` branch) is handed to the coding agent.
-**Blast radius:** `RunOptions`/`JobOptions` public types, the `runJobs` executor (drop the `series` branch), and the docs. No change to the parallel behavior every module already gets.
+- **Parallel is the only mode at launch.** Every module runs its jobs in parallel with isolated failures. A failing job never blocks, cancels, or skips a sibling, and the runtime returns a complete `JobExecution[]`. This is fixed, not configurable.
+- **`run.mode` (`'series'`) and `continueOnFailure` (module- and per-job) come out of the public surface**, not just defaulted off. The exported `RunOptions`/`JobOptions` don't expose them, so a consumer can't set them. `run: { timeoutMs, metadata }` and per-job `retries`/`timeoutMs`/`name`/`tags`/`input`/`metadata` stay.
+- **Kept as a documented possible future feature.** The guide and RFC call series planned. If a real, reviewed ordering need shows up, it comes back behind this same `run.mode` API, so existing modules don't change. The `'skipped'` `JobExecutionStatus` stays reserved for it.
+- **Fail loud, don't silently downgrade.** If `mode: 'series'` reaches the runtime anyway (say an untyped JS caller), reject or warn rather than quietly running parallel. Nobody should build on a disabled feature.
+- **Docs-only for now (owner scope):** the guide, `architecture.md` (§9.5/§9.4/ADR-014 plus change-log 0.3.18), README, and this register are updated. The code change (removing the fields and the `series` branch) goes to the coding agent.
+**Blast radius:** the `RunOptions`/`JobOptions` public types, the `runJobs` executor (drop the `series` branch), and the docs. The parallel behavior every module already gets doesn't change.
+
+---
+
+### D29. Pre-dispatch pipeline hardening [added 2026-07-01]
+**Question:** A throw from a pre-dispatch delta-transform (`configureInvocation`, `augmentEnvelope`) runs in a bare loop with no isolation, lands in `handle()`'s outer catch, which duck-types `.status` on *any* error and returns `{ ok: true, resolved: { error } }` — detection skipped, jobs skipped, no top-level error, no vendor retry. `correlationResolver`'s app-injected DB lookup in `augmentEnvelope` (ADR-028) has no internal catch, so a transient DB blip whose error carries a numeric `.status` silently drops a whole webhook and reports success. Plus `onInvocationEnd`/`onFlush` aren't in `finally` (record never flushes, buffer leaks), and `augmentEnvelope` merges `meta` shallow (the next plugin returning `{ meta: {...} }` wipes `sourceTrackingToken`). What's the policy?
+**Origin:** Fable-5 principal review, P0-1/P0-2/P0-3. Verified in source (`plugin-manager.ts:174-194`, `kit.ts:325-345`, `correlation-resolver/index.ts:82`). Zero tests exercise a throwing pre-dispatch hook.
+**Decision:** ✅ **RESOLVED 2026-07-01 (ADR-033).** Isolate each transform (throw → `onError`, continue with last-good value; best-effort like §11.3). Brand-check the pre-dispatch `ClientError` fast-path (`isClientError`, not bare `.status`) — only an intentional `ClientError` maps to a client response; any other error → framework **500** so the vendor retries, never silent `ok:true`. Move `onInvocationEnd`/`onFlush` into `finally`. Deep-merge `augmentEnvelope` `meta`. A load-bearing transform that must fail loud opts in (a `strict` flag or an intentional `ClientError`), not by accidental throw. New tests required.
+**Blast radius:** `plugin-manager.ts` (isolation + deep merge), `kit.ts` (brand check + finally), `correlation-resolver` (optional strict), tests.
+
+### D30. loopGuard hop-depth ceiling [added 2026-07-01]
+**Question:** loopGuard stamps/reads a provenance token but has no depth counter or cycle-breaker — an A→B→A loop where a detector forgets its guard runs forever; the token only makes it visible afterward. Event storms are the stated catastrophic failure mode (ADR-016). Add a bound?
+**Origin:** Fable-5 review §2. Verified: no depth/hop/cycle logic in `loop-guard/`.
+**Decision:** ✅ **RESOLVED 2026-07-01 (ADR-034).** Optional hop counter in the token/`meta`; config `warnAtDepth` (log + `onError`) and `haltAtDepth` (hard-stop). Off by default (today's behavior). Generic, config-driven (ADR-024); shipped via the shared preset.
+**Blast radius:** `loop-guard` codec + config; the HopDrive preset.
+
+### D31. `ctx.skip(reason)` job self-skip signal [added 2026-07-01]
+**Question:** The Pattern-B short-circuit (`if (!x) return;`) completes normally, so a no-op is indistinguishable from a job that did work. The audit found ~21 conditional sites (not 14), and the hard ones gate on data fetched mid-handler (async) — they can't move to the detector, so they must live in Pattern B. Compare Mode lists `condition_not_met` (§14) with nothing producing its data. Add a first-class no-op signal?
+**Origin:** Fable-5 review §3.
+**Decision:** ✅ **RESOLVED 2026-07-01 (ADR-035).** Add `ctx.skip(reason): never`. Stops the job, records `metadata.conditionNotMet = { reason }`; terminal status stays `'completed'` (not the reserved `'skipped'`, which stays for series). Compare Mode reads it for `condition_not_met`.
+**Blast radius:** `JobContext` type, the job executor (catch `SkipSignal`), the `JobExecution` record, observability/Compare rendering, §19.1 playbook.
+
+### D32. Typed `prepare`→job-`input` generic [added 2026-07-01]
+**Question:** `prepare(ctx)`'s return is merged into every job's `ctx.input` at runtime, but `defineEvent` is generic only over `TPayload`/`TMeta` — `jobs` are `any`-typed on input, so authors hand-type `ctx.input` in each job and keep it in sync. Biggest day-to-day seam across ~245 modules. Thread the generic?
+**Origin:** Fable-5 review §5.1. Verified: no `TPrepared` on `defineEvent`/`EventModule`; `jobs` typed `any` on `TInput`.
+**Decision:** ✅ **RESOLVED 2026-07-01.** Thread `prepare`'s inferred return (`TPrepared`) through `defineEvent` so each job's `ctx.input` is typed as the `prepare` output (plus its own per-job `input`). Pure typing change — the runtime merge is already correct. No new ADR (it's the ADR-025 contract, made type-safe).
+**Blast radius:** `defineEvent`/`EventModule`/`PrepareFunction`/`JobFunction` generics; the `__examples__` template.
+
+### D33. Webhook `verify` inputs + HopDrive verify presets [added 2026-07-01]
+**Question:** `verify` must see everything a real vendor scheme needs — parsed body, headers, and query params (super-dispatch keys its token on a body field; the query-param plumbing is the open item in `external-correlation-chaining.md` §8). And four verification schemes are hand-rolled across repos, with several vendors (Twilio, Dealerware, plateau, both hoprides, inter-repo `hopdrive-event`) doing **no** verification at all. Standardize?
+**Origin:** Fable-5 review §4.
+**Decision:** ✅ **RESOLVED 2026-07-01.** `verify`'s signature MUST expose parsed body + headers + query params. Ship HopDrive verify presets (HMAC `t=`/`v1=`, static-header token, shared-secret, Hasura passphrase). Paired with `rejectUnverified` (ADR-030), this closes a real security gap, not just a consistency one. Documented §7.1.
+**Blast radius:** `WebhookConfig`/`verify` signature, a presets module, §7.1, the external-integration template.
 
 ## Decision dependency map (what unblocks what)
 
