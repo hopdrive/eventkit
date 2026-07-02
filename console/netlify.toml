@@ -1,0 +1,30 @@
+# EventKit Console — Netlify site config
+# Phase C1 note: this file establishes build/deploy shape for parity with
+# local dev (Grafana proxy) but the site itself is not wired up / deployed
+# until Phase C2 (console-ci.yml + auth).
+
+[build]
+  base = "console"
+  publish = "dist"
+  command = "npm run build"
+
+[functions]
+  directory = "netlify/functions"
+
+# Grafana Loki proxy parity with the Vite dev-server proxy (bug B1): a
+# deployed build has no dev-server, so route the same /api/grafana/* path
+# to the Netlify function, which injects basic-auth server-side. This MUST
+# be listed before the SPA catch-all redirect below — Netlify uses the
+# first matching rule.
+[[redirects]]
+  from = "/api/grafana/*"
+  to = "/.netlify/functions/grafana-proxy/:splat"
+  status = 200
+  force = true
+
+# SPA fallback — client-side routing (react-router) needs every other path
+# to resolve to index.html.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

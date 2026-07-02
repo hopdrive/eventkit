@@ -1,0 +1,69 @@
+query OverviewDashboard($timeRange: timestamptz!) {
+  # Chart data: fetch all invocations but only fields needed for chart (created_at, status)
+  invocations_chart: invocations(where: { created_at: { _gte: $timeRange } }, order_by: { created_at: desc }) {
+    created_at
+    status
+  }
+
+  # Table data: fetch only top 10 invocations with all fields needed for table display
+  invocations_table: invocations(
+    where: { created_at: { _gte: $timeRange } }
+    order_by: { created_at: desc }
+    limit: 10
+  ) {
+    id
+    source_function
+    created_at
+    total_duration_ms
+    status
+    events_detected_count
+    total_jobs_run
+    total_jobs_succeeded
+    total_jobs_failed
+    correlation_id
+    source_user_email
+    source_user_role
+  }
+
+  invocations_aggregate(where: { created_at: { _gte: $timeRange } }) {
+    aggregate {
+      count
+      avg {
+        total_duration_ms
+      }
+      sum {
+        total_jobs_run
+        total_jobs_succeeded
+        total_jobs_failed
+      }
+    }
+  }
+
+  event_executions_aggregate(where: { detected: { _eq: true }, created_at: { _gte: $timeRange } }) {
+    aggregate {
+      count
+    }
+    nodes {
+      event_name
+    }
+  }
+}
+
+subscription InvocationsRealtime {
+  invocations(
+    limit: 20
+    order_by: { created_at: desc }
+    where: { status: { _in: ["running", "completed", "failed"] } }
+  ) {
+    id
+    created_at
+    source_function
+    status
+    total_duration_ms
+    events_detected_count
+    total_jobs_run
+    total_jobs_succeeded
+    total_jobs_failed
+    correlation_id
+  }
+}
