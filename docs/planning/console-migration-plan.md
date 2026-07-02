@@ -170,3 +170,28 @@ Still open from the §5 plan: the backend read layer (docs are file-loaded clien
 now), hand-authored manifest support (required/optional edges beyond `continueOnFailure`),
 `condition_not_met` (needs the job no-op signal from the package review), and cross-kit
 chain edges in the aggregated org view.
+
+## 13. Post-C5 UX round (2026-07-02)
+
+Shipped from live design feedback on the flow page:
+
+- **Drawer navigation**: child-node rows in the drawers now pan/zoom the canvas to the
+  clicked node (same drawer-aware centering as canvas clicks), and drawers carry a back
+  button that walks the selection trail (`drawerHistory` in `FlowDiagram`).
+- **Source-type awareness**: the observability plugin persists `source_type`
+  (`ctx.sourceType` — eventkit `EventSourceType`) next to `source_system`; the sink upserts
+  it; `invocations.source_type` added to the schema (⚠ prod Hasura needs the column via a
+  hasura-migrations PR before the updated sink ships). The invocation node and drawer show
+  a source chip (category icon + adapter name), and the drawer renders BY KIND: database
+  sources keep record/operation facts + row-changes diff; webhook/cron/manual render their
+  partner/caller payload inline as the primary content (no nonsensical row diff). Legacy
+  rows with NULL source_type infer 'database' from the Hasura-shaped system/payload.
+- **Breadcrumb trail** (`FlowBreadcrumb`): bottom-center bar showing origin → … → selected,
+  recomputed from the edge graph on every selection change (canvas click, drawer jump,
+  back); crumbs are kind-colored and clickable.
+- **Layout rewrite** (`useFlowPositioning`): replaced the heuristic spacing (which let
+  adjacent event groups' job fan-outs overlap — it reserved room for one group's jobs but
+  not the next's) with a two-pass extent-based tidy tree: every node owns a band of
+  max(node height + 48px gap, sum of child bands), nested through
+  invocation → events → jobs → triggered invocations. Verified programmatically on a
+  113-node / 17-invocation chain: 0 overlapping rects, min vertical gap exactly 48px.
