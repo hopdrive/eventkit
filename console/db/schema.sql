@@ -81,6 +81,7 @@ CREATE TABLE invocations (
     source_table TEXT, -- database table that triggered the event
     source_operation TEXT, -- INSERT, UPDATE, DELETE, MANUAL
     source_system TEXT, -- event source system (hasura, supabase, custom, etc.)
+    source_type TEXT, -- source category: database | webhook | cron | action | application | queue | manual (eventkit EventSourceType)
     source_job_id UUID, -- nullable reference to originating job execution (for job-to-job chains)
 
     -- Source event details

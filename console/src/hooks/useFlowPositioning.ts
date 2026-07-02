@@ -47,6 +47,8 @@ interface EventExecution {
 interface Invocation {
   id: string;
   source_function: string;
+  source_system?: string | null;
+  source_type?: string | null;
   correlation_id: string;
   status: string;
   total_duration_ms: number;
@@ -130,6 +132,8 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
         position: { x: baseX, y: baseY },
         data: {
           sourceFunction: invocation.source_function,
+          sourceSystem: invocation.source_system,
+          sourceType: invocation.source_type,
           correlationId: invocation.correlation_id,
           status: invocation.status,
           duration: invocation.total_duration_ms,

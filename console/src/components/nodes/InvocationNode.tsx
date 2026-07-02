@@ -3,9 +3,12 @@ import { motion } from 'framer-motion';
 import { Handle, Position, NodeProps } from 'reactflow';
 import { formatDuration } from '../../utils/formatDuration';
 import { useRunningDuration } from '../../hooks/useRunningDuration';
+import SourceChip from '../SourceChip';
 
 export interface InvocationNodeData {
   sourceFunction: string;
+  sourceSystem?: string | null;
+  sourceType?: string | null;
   correlationId: string;
   status: string;
   duration: number;
@@ -73,7 +76,10 @@ export const InvocationNode: React.FC<NodeProps<InvocationNodeData>> = ({ data, 
               </span>
             )}
           </span>
-          <div className={`w-2 h-2 rounded-full ${statusDots[data.status as keyof typeof statusDots]}`} />
+          <span className='flex items-center gap-1.5'>
+            <SourceChip sourceType={data.sourceType} sourceSystem={data.sourceSystem} compact />
+            <div className={`w-2 h-2 rounded-full ${statusDots[data.status as keyof typeof statusDots]}`} />
+          </span>
         </div>
 
         <div className='space-y-1'>

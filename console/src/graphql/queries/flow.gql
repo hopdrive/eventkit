@@ -11,6 +11,8 @@ fragment invocationTree on invocations {
   id
   source_event_id
   source_function
+  source_system
+  source_type
   status
   total_duration_ms
   correlation_id

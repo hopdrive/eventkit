@@ -55,6 +55,7 @@ query InvocationDetail($id: uuid!) {
     source_table
     source_operation
     source_system
+    source_type
     source_event_id
     source_event_payload
     source_event_time

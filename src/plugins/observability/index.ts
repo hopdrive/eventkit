@@ -38,6 +38,8 @@ export interface InvocationRecord {
   id: string;
   correlation_id: string;
   source_system: string;
+  /** Source category ('database' | 'webhook' | 'cron' | …) — drives source-appropriate rendering in the console. */
+  source_type?: string;
   source_function?: string;
   source_table?: string;
   source_operation?: string;
@@ -205,6 +207,7 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
         id: ctx.invocationId,
         correlation_id: ctx.correlationId,
         source_system: ctx.source,
+        source_type: ctx.sourceType,
         status: 'running',
         created_at: now,
         updated_at: now,

@@ -72,7 +72,7 @@ class GraphqlResponseError extends Error {
 
 const INVOCATION_COLUMNS = [
   'correlation_id', 'source_function', 'source_table', 'source_operation', 'source_system',
-  'source_event_id', 'source_event_payload', 'source_event_time', 'source_user_email',
+  'source_type', 'source_event_id', 'source_event_payload', 'source_event_time', 'source_user_email',
   'source_user_role', 'source_job_id', 'context_data', 'total_duration_ms', 'events_detected_count',
   'total_jobs_run', 'total_jobs_succeeded', 'total_jobs_failed', 'status', 'error_message',
   'error_stack', 'updated_at',

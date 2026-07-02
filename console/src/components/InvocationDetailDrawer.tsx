@@ -10,6 +10,8 @@ import { useInvocationDetailQuery } from '../types/generated';
 import { DrawerShell, StatusChip, Fact, FactGrid, ErrorPanel, Collapsible, JsonBlock, NodeRow } from './drawer/primitives';
 import { formatDuration } from '../utils/formatDuration';
 import { formatRelativeTime } from '../utils/formatTime';
+import { resolveSourceKind, sourceSystemLabel } from '../utils/sourceKind';
+import SourceChip from './SourceChip';
 
 interface InvocationDetailDrawerProps {
   node: Node | null;
@@ -49,8 +51,14 @@ const InvocationDetailDrawer: React.FC<InvocationDetailDrawerProps> = ({ node, i
 
   const inv = data?.invocations_by_pk;
   const payload: any = inv?.source_event_payload;
-  const oldRow = payload?.event?.data?.old ?? null;
-  const newRow = payload?.event?.data?.new ?? null;
+  // Source-aware rendering: only DATABASE sources have a Hasura-shaped envelope
+  // (old/new rows, table, operation). A webhook/cron/manual source has a partner-
+  // or caller-defined payload — showing a "row diff" for it would be nonsense, so
+  // those sources get their payload front-and-center instead.
+  const sourceKind = resolveSourceKind(inv?.source_type, inv?.source_system, payload);
+  const isDatabase = sourceKind === 'database';
+  const oldRow = isDatabase ? payload?.event?.data?.old ?? null : null;
+  const newRow = isDatabase ? payload?.event?.data?.new ?? null : null;
   const diff = useMemo(() => changedFields(oldRow, newRow), [oldRow, newRow]);
 
   if (!isOpen || !node) return null;
@@ -71,11 +79,14 @@ const InvocationDetailDrawer: React.FC<InvocationDetailDrawerProps> = ({ node, i
       statusChip={<StatusChip status={inv?.status ?? node.data?.status} />}
       factStrip={
         inv && (
-          <span>
-            {formatDuration(inv.total_duration_ms ?? 0)} ·{' '}
-            <span title={new Date(inv.created_at).toLocaleString()}>{formatRelativeTime(inv.created_at)}</span>
-            {inv.source_operation && ` · ${inv.source_operation}`}
-            {table && recordId != null && ` · ${table}:${recordId}`}
+          <span className='inline-flex items-center gap-1.5 flex-wrap'>
+            <SourceChip sourceType={inv.source_type} sourceSystem={inv.source_system} payload={payload} />
+            <span>
+              {formatDuration(inv.total_duration_ms ?? 0)} ·{' '}
+              <span title={new Date(inv.created_at).toLocaleString()}>{formatRelativeTime(inv.created_at)}</span>
+              {inv.source_operation && ` · ${inv.source_operation}`}
+              {table && recordId != null && ` · ${table}:${recordId}`}
+            </span>
           </span>
         )
       }
@@ -91,12 +102,26 @@ const InvocationDetailDrawer: React.FC<InvocationDetailDrawerProps> = ({ node, i
           <ErrorPanel message={inv.error_message} stack={inv.error_stack} />
 
           <FactGrid>
-            <Fact label='Record' mono>
-              {table && recordId != null ? `${table}:${recordId}` : table ?? '—'}
-            </Fact>
-            <Fact label='Operation'>{inv.source_operation ?? '—'}</Fact>
-            <Fact label='User'>{inv.source_user_email ?? '—'}</Fact>
-            <Fact label='Role'>{inv.source_user_role ?? '—'}</Fact>
+            {isDatabase ? (
+              <>
+                <Fact label='Record' mono>
+                  {table && recordId != null ? `${table}:${recordId}` : table ?? '—'}
+                </Fact>
+                <Fact label='Operation'>{inv.source_operation ?? '—'}</Fact>
+              </>
+            ) : (
+              <>
+                <Fact label='Source'>
+                  {sourceSystemLabel(inv.source_system) ?? '—'}
+                  <span className='text-gray-400'> · {sourceKind}</span>
+                </Fact>
+                <Fact label='Received'>
+                  {inv.source_event_time ? new Date(inv.source_event_time).toLocaleString() : '—'}
+                </Fact>
+              </>
+            )}
+            {(isDatabase || inv.source_user_email) && <Fact label='User'>{inv.source_user_email ?? '—'}</Fact>}
+            {(isDatabase || inv.source_user_role) && <Fact label='Role'>{inv.source_user_role ?? '—'}</Fact>}
             <Fact label='Events'>
               {detected.length} detected · {undetectedCount} not
             </Fact>
@@ -120,6 +145,22 @@ const InvocationDetailDrawer: React.FC<InvocationDetailDrawerProps> = ({ node, i
                   onClick={onOpenNodeId ? () => onOpenNodeId(`job-${j.id}`) : undefined}
                 />
               ))}
+            </div>
+          )}
+
+          {!isDatabase && (
+            // Non-database sources: the payload IS the record — the partner/caller-
+            // defined JSON is the primary content, so it renders inline where a
+            // database source would show its row diff.
+            <div>
+              <div className='text-xs font-semibold text-gray-700 dark:text-gray-200 uppercase tracking-wide mb-1.5'>
+                {sourceKind === 'webhook' ? 'Webhook payload' : 'Source payload'}
+              </div>
+              {payload != null ? (
+                <JsonBlock data={payload} />
+              ) : (
+                <div className='text-xs text-gray-400'>No payload captured for this invocation.</div>
+              )}
             </div>
           )}
 
@@ -171,9 +212,11 @@ const InvocationDetailDrawer: React.FC<InvocationDetailDrawerProps> = ({ node, i
             )}
           </div>
 
-          <Collapsible title='Source payload' hint={payload?.event?.op ?? ''}>
-            {() => <JsonBlock data={payload} />}
-          </Collapsible>
+          {isDatabase && (
+            <Collapsible title='Source payload' hint={payload?.event?.op ?? ''}>
+              {() => <JsonBlock data={payload} />}
+            </Collapsible>
+          )}
           {inv.context_data != null && (
             <Collapsible title='Context data'>{() => <JsonBlock data={inv.context_data} />}</Collapsible>
           )}
