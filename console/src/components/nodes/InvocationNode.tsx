@@ -15,6 +15,10 @@ export interface InvocationNodeData {
   undetectedEvents?: any[];
   createdAt?: string;
   updatedAt?: string;
+  /** No source_job_id — the root cause of every downstream node in this chain. */
+  isOrigin?: boolean;
+  /** The invocation the user navigated here with ("you are here"). */
+  isFocus?: boolean;
 }
 
 export const InvocationNode: React.FC<NodeProps<InvocationNodeData>> = ({ data, selected }) => {
@@ -44,7 +48,7 @@ export const InvocationNode: React.FC<NodeProps<InvocationNodeData>> = ({ data, 
       transition={{ duration: 0.3 }}
       className={`
         relative bg-white dark:bg-gray-800 rounded-lg border-2
-        ${selected ? 'border-blue-600 ring-4 ring-blue-500 ring-opacity-75 shadow-2xl' : 'border-blue-500 shadow-lg'}
+        ${selected ? 'border-blue-600 ring-4 ring-blue-500 ring-opacity-75 shadow-2xl' : data.isFocus ? 'border-blue-500 ring-2 ring-blue-400/60 shadow-xl' : 'border-blue-500 shadow-lg'}
         hover:shadow-xl transition-all duration-200 cursor-pointer
         min-w-[240px]
       `}
@@ -56,8 +60,18 @@ export const InvocationNode: React.FC<NodeProps<InvocationNodeData>> = ({ data, 
 
       <div className='p-4 pl-5'>
         <div className='flex items-center justify-between mb-2'>
-          <span className='text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide'>
+          <span className='text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide flex items-center gap-1.5'>
             Invocation
+            {data.isOrigin && (
+              <span className='px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-600 text-white tracking-wider' title='Chain origin — no parent job caused this invocation; everything downstream traces back here.'>
+                ORIGIN
+              </span>
+            )}
+            {data.isFocus && !data.isOrigin && (
+              <span className='px-1.5 py-0.5 rounded text-[9px] font-bold bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 tracking-wider' title='The invocation you navigated here with.'>
+                VIEWING
+              </span>
+            )}
           </span>
           <div className={`w-2 h-2 rounded-full ${statusDots[data.status as keyof typeof statusDots]}`} />
         </div>

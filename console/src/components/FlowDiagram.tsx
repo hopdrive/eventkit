@@ -285,7 +285,15 @@ const FlowDiagramContent = () => {
   // nodes — they never restyle what's already rendered. Off-contract flagging adds
   // an outline ring only (no size/content change).
   const displayData = useMemo(() => {
-    let nodes = flowData.nodes;
+    // Chain orientation: mark the ORIGIN (no source_job_id — the invocation that
+    // caused everything downstream) and the entered/"viewing" invocation, so a user
+    // landing mid-chain can orient instantly. Always on — not a toggle.
+    const originIds = new Set(invocations.filter(i => !i.source_job_id).map(i => i.id));
+    let nodes = flowData.nodes.map(n =>
+      n.type === 'invocation'
+        ? { ...n, data: { ...n.data, isOrigin: originIds.has(n.id), isFocus: n.id === invocationId } }
+        : n
+    );
     let edges = flowData.edges;
     if (!compareResult && !showUndetected) return { nodes, edges };
 
@@ -321,7 +329,7 @@ const FlowDiagramContent = () => {
       // One node per event name, deduped across the two sources of "didn't happen":
       //   ran · not detected      — a detector evaluated false this run (observed record)
       //   expected · not observed — in the flow doc but no detector even ran (drift)
-      const ghosts = new Map<string, { label: string; docId?: string }>();
+      const ghosts = new Map<string, { label: string; docId?: string; warn?: boolean }>();
       if (showUndetected) {
         for (const inv of invocations) {
           for (const ev of inv.event_executions ?? []) {
@@ -339,7 +347,10 @@ const FlowDiagramContent = () => {
           if (existing) {
             existing.docId = gn.id; // deduped: keep the stronger ran·not-detected label
           } else if (compareResult.verdicts[gn.id]?.classification === 'expected_missing') {
-            ghosts.set(name, { label: 'expected · not observed', docId: gn.id });
+            // Drift warning: every registered detector evaluates on every invocation,
+            // so a doc event with NO record means doc/code version skew, the wrong
+            // doc for this function, or a lost observability write — all defects.
+            ghosts.set(name, { label: 'never ran — doc/code drift?', docId: gn.id, warn: true });
           }
         }
       }
@@ -352,7 +363,7 @@ const FlowDiagramContent = () => {
           type: 'event',
           selected: false,
           position: { x: eventX, y },
-          data: { eventName: name, ghost: true, ghostLabel: g.label, detected: false, correlationId: '', status: '', detectionDuration: 0, jobsCount: 0, hasFailedJobs: false },
+          data: { eventName: name, ghost: true, ghostLabel: g.label, ghostTone: g.warn ? 'warning' : 'neutral', detected: false, correlationId: '', status: '', detectionDuration: 0, jobsCount: 0, hasFailedJobs: false },
         }];
         edges = [...edges, { id: `ghost-e-${name}`, source: rootId, target: evNodeId, animated: false, style: ghostEdgeStyle }];
         let jy = y;
@@ -379,6 +390,21 @@ const FlowDiagramContent = () => {
   }, [flowData, compareResult, showExpected, flagOffContract, showUndetected, selectedDoc, invocationId, data]);
 
 
+
+  // Drawer cross-navigation: swap the open drawer to any canvas node by id, and
+  // hand the event drawer its job nodes so its rows are one-click jumps.
+  const handleOpenNodeId = (nodeId: string) => {
+    const target = displayData.nodes.find(n => n.id === nodeId);
+    if (target) {
+      setSelectedNode(target as Node);
+      setDrawerOpen(true);
+    }
+  };
+  const relatedJobsFor = (eventNode: Node | null): Node[] => {
+    if (!eventNode) return [];
+    const targets = new Set(displayData.edges.filter(e => e.source === eventNode.id).map(e => e.target));
+    return displayData.nodes.filter(n => targets.has(n.id) && n.type === 'job') as Node[];
+  };
 
   const observedGate = loading ? (
     <div className='flex items-center justify-center h-full'>
@@ -465,6 +491,19 @@ const FlowDiagramContent = () => {
         )}
       </div>
 
+      {/* Wrong-doc warning: comparing this run against a doc for a different kit */}
+      {(showExpected || flagOffContract) && selectedDoc && data?.invocations_by_pk?.source_function && (() => {
+        const fn = data.invocations_by_pk!.source_function.toLowerCase();
+        const stem = selectedDoc.title.toLowerCase().split(' ')[0];
+        return !fn.includes(stem) && !stem.includes(fn) ? (
+          <div className='absolute top-16 left-4 z-10 max-w-xl px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/30 dark:border-amber-700 text-xs text-amber-800 dark:text-amber-300 shadow-sm'>
+            Flow doc “{selectedDoc.title}” doesn’t look like it belongs to function “
+            {data.invocations_by_pk!.source_function}” — most “never ran” warnings below are probably
+            just the wrong doc. Pick this function’s committed flow doc.
+          </div>
+        ) : null;
+      })()}
+
       {/* Overlay legend + summary (only when a toggle is active) */}
       {(compareResult || showUndetected) && (showExpected || flagOffContract || showUndetected) && (
         <div className='absolute top-4 right-4 z-10 bg-white/90 dark:bg-gray-800/90 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 shadow-sm space-y-1'>
@@ -477,7 +516,7 @@ const FlowDiagramContent = () => {
           )}
           {showExpected && (
             <div className='flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-300'>
-              <span className='w-3 h-3 rounded border-2 border-dashed border-gray-400' /> expected · not observed
+              <span className='w-3 h-3 rounded border-2 border-dashed border-amber-500' /> never ran — doc/code drift?
             </div>
           )}
           {showUndetected && (
@@ -538,13 +577,29 @@ const FlowDiagramContent = () => {
         {drawerOpen && selectedNode && (
           <>
             {selectedNode.type === 'invocation' && (
-              <InvocationDetailDrawer node={selectedNode} isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} />
+              <InvocationDetailDrawer
+                node={selectedNode}
+                isOpen={drawerOpen}
+                onClose={() => setDrawerOpen(false)}
+                onOpenNodeId={handleOpenNodeId}
+              />
             )}
             {selectedNode.type === 'job' && (
-              <JobDetailDrawer node={selectedNode} isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} />
+              <JobDetailDrawer
+                node={selectedNode}
+                isOpen={drawerOpen}
+                onClose={() => setDrawerOpen(false)}
+                onOpenNodeId={handleOpenNodeId}
+              />
             )}
             {selectedNode.type === 'event' && (
-              <EventDetailDrawer node={selectedNode} isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} />
+              <EventDetailDrawer
+                node={selectedNode}
+                isOpen={drawerOpen}
+                onClose={() => setDrawerOpen(false)}
+                relatedJobs={relatedJobsFor(selectedNode)}
+                onOpenNodeId={handleOpenNodeId}
+              />
             )}
           </>
         )}

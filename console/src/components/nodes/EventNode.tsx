@@ -9,9 +9,12 @@ export interface EventNodeData {
   /** Overlay ghost: declared in the flow doc and/or a ran-but-false detector.
    *  Renders the SAME shell/dimensions — only border/label state differs. */
   ghost?: boolean;
-  /** Chip text for the ghost state: 'expected · not observed' (doc, no record) vs
-   *  'ran · not detected' (detector evaluated false this run). */
+  /** Chip text for the ghost state: 'ran · not detected' (detector evaluated false)
+   *  vs the drift warning 'never ran' (in the flow doc, but NO record exists). */
   ghostLabel?: string;
+  /** 'warning' renders the drift state (amber): the contract says this detector
+   *  should have evaluated on every invocation, and there is no record of it. */
+  ghostTone?: 'neutral' | 'warning';
   correlationId: string;
   detected: boolean;
   status: string;
@@ -43,16 +46,48 @@ export const EventNode: React.FC<NodeProps<EventNodeData>> = ({ data, selected }
   }) : undefined;
 
   if (data.ghost) {
+    const warn = data.ghostTone === 'warning';
     return (
-      <div className='relative bg-white dark:bg-gray-800 rounded-lg border-2 border-dashed border-gray-400 opacity-70 shadow-md min-w-[220px]'>
+      <div
+        className={`relative bg-white dark:bg-gray-800 rounded-lg border-2 border-dashed shadow-md min-w-[220px] ${
+          warn ? 'border-amber-500' : 'border-gray-400 opacity-70'
+        }`}
+      >
         <Handle type='target' position={Position.Left} className='w-3 h-3' />
+        {warn && <div className='absolute left-0 top-0 bottom-0 w-1 bg-amber-400 rounded-l-lg' />}
         <div className='p-3 pl-4'>
           <div className='flex items-center justify-between mb-1'>
-            <span className='text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide'>Event</span>
+            <span
+              className={`text-xs font-semibold uppercase tracking-wide ${
+                warn ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'
+              }`}
+            >
+              Event
+            </span>
+            {warn && (
+              <svg className='w-4 h-4 text-amber-500' fill='currentColor' viewBox='0 0 20 20'>
+                <path
+                  fillRule='evenodd'
+                  d='M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z'
+                  clipRule='evenodd'
+                />
+              </svg>
+            )}
           </div>
           <p className='font-medium text-gray-900 dark:text-white text-sm'>{data.eventName}</p>
           <div className='mt-1 flex items-center space-x-2'>
-            <span className='inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'>
+            <span
+              className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                warn
+                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                  : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+              }`}
+              title={
+                warn
+                  ? 'Every registered detector runs on every invocation. No record exists for this event — the deployed code and the flow doc disagree (stale doc, undeployed code, or a lost observability write).'
+                  : undefined
+              }
+            >
               {data.ghostLabel ?? 'expected · not observed'}
             </span>
           </div>
