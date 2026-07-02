@@ -312,6 +312,19 @@ class Kit implements EventKit {
 
     await this.pm.onInvocationStart(invocation);
 
+    // Generic suppress-dispatch seam (ADR-034): a pre-dispatch plugin (e.g. loopGuard at
+    // its hop-depth ceiling) may set `envelope.meta.suppressDispatch` to a reason string
+    // to hard-stop this invocation before any detector runs. We log it, report it as an
+    // onError breadcrumb, and return a clean empty result — the finally still records +
+    // flushes the invocation, so a halted loop is visible in observability.
+    const suppressReason = (envelope.meta as { suppressDispatch?: unknown } | undefined)?.suppressDispatch;
+    if (typeof suppressReason === 'string' && suppressReason.length > 0) {
+      invocation.log.warn('Dispatch suppressed before detection', { reason: suppressReason });
+      await this.pm.reportError(new Error(suppressReason), 'normalize', { invocationId, correlationId });
+      result = { ok: true, invocationId, events: [], durationMs: Date.now() - start };
+      return result;
+    }
+
     const detected = await this.detect(envelope, invocation);
     const { events, resolved } = await this.dispatch(detected, envelope, invocation, runtime);
 

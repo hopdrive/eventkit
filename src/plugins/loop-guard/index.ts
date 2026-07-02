@@ -17,7 +17,7 @@
 //    inbound lineage (same source + correlation, this job's id), else mint from
 //    serviceId. Jobs stamp it into the write field so the next invocation
 //    recognizes the write as system-originated.
-import type { CorrelationId, EventEnvelope, EventKitPlugin, JobContext } from '../../core/index.js';
+import type { CorrelationId, EventEnvelope, EventKitPlugin, HandlerLogger, JobContext, KitContext } from '../../core/index.js';
 import { asCorrelationId } from '../../core/index.js';
 import { createTokenCodec, type TokenCodec, type TokenCodecConfig } from './codec.js';
 
@@ -33,6 +33,21 @@ export interface LoopGuardConfig {
   serviceId?: string;
   /** Codec config (separator + correlation-id validation). HopDrive pins `{ separator: '|', validateCorrelationId: true }`. */
   codec?: TokenCodecConfig;
+
+  // ── Hop-depth ceiling (ADR-034) — off by default (depth unbounded = today's behavior) ──
+  /**
+   * Log a warning (a breadcrumb via the kit logger) once this invocation's hop depth
+   * reaches this value, WITHOUT stopping it. A bounded early signal that a chain is
+   * running deep. Setting either `warnAtDepth` or `haltAtDepth` turns on the hop counter,
+   * which then rides the tracking token as an optional 4th segment.
+   */
+  warnAtDepth?: number;
+  /**
+   * Hard-stop: once this invocation's hop depth reaches this value, suppress dispatch
+   * (no detector runs) and log. Converts an unbounded A→B→A cycle into a bounded blast
+   * radius (ADR-016). The ceiling is a per-repo decision; unset means unbounded.
+   */
+  haltAtDepth?: number;
 
   // ── Extraction strategies (defaults match the legacy plugin — all on) ──────
   extractFromUpdatedBy?: boolean;
@@ -76,12 +91,17 @@ interface Extracted {
   correlationId?: string;
   sourceJobId?: string;
   sourceTrackingToken?: string;
+  /** The inbound token's hop counter (ADR-034), if it carried one. */
+  hopDepth?: number;
 }
 
 export function loopGuard(config: LoopGuardConfig = {}): EventKitPlugin {
   const field = config.field ?? 'updated_by';
   const serviceId = config.serviceId ?? 'eventkit';
   const codec: TokenCodec = createTokenCodec(config.codec);
+  const { warnAtDepth, haltAtDepth } = config;
+  const trackDepth = warnAtDepth !== undefined || haltAtDepth !== undefined;
+  let kitLog: HandlerLogger | undefined;
   const extractFromUpdatedBy = config.extractFromUpdatedBy !== false;
   const extractFromMetadata = config.extractFromMetadata !== false;
   const extractFromSession = config.extractFromSession !== false;
@@ -134,6 +154,7 @@ export function loopGuard(config: LoopGuardConfig = {}): EventKitPlugin {
         if (parsed) {
           out.correlationId = parsed.correlationId;
           if (parsed.jobExecutionId) out.sourceJobId = parsed.jobExecutionId;
+          if (parsed.hopDepth !== undefined) out.hopDepth = parsed.hopDepth;
           out.sourceTrackingToken = updatedBy;
         } else {
           const m = updatedBy.match(updatedByPattern);
@@ -169,25 +190,49 @@ export function loopGuard(config: LoopGuardConfig = {}): EventKitPlugin {
   return {
     name: 'loop-guard',
 
+    onInit(ctx: KitContext) {
+      kitLog = ctx.log;
+    },
+
     augmentEnvelope(envelope) {
-      const { correlationId, sourceJobId, sourceTrackingToken } = extract(envelope);
-      if (!correlationId && !sourceTrackingToken) return undefined;
+      const { correlationId, sourceJobId, sourceTrackingToken, hopDepth } = extract(envelope);
+      // With the hop counter on, this invocation is always one hop deeper than the token
+      // that triggered it (a fresh root is depth 1). Off → nothing here changes.
+      if (!correlationId && !sourceTrackingToken && !trackDepth) return undefined;
+
+      const meta: Record<string, unknown> = { ...envelope.meta };
       const partial: Partial<EventEnvelope> = {};
       // Chaining: the inbound correlation id overrides the source-derived/generated one.
       if (correlationId) partial.correlationId = asCorrelationId(correlationId) as CorrelationId;
-      const meta: Record<string, unknown> = { ...envelope.meta };
       if (sourceTrackingToken) meta['sourceTrackingToken'] = sourceTrackingToken;
       if (sourceJobId) meta['sourceJobId'] = sourceJobId;
+
+      if (trackDepth) {
+        const depth = (hopDepth ?? 0) + 1;
+        meta['hopDepth'] = depth;
+        if (haltAtDepth !== undefined && depth >= haltAtDepth) {
+          // The generic runtime seam (ADR-034): a reason string here hard-stops dispatch.
+          meta['suppressDispatch'] = `loop-guard: hop depth ${depth} reached haltAtDepth ${haltAtDepth} — dispatch suppressed`;
+          kitLog?.warn('loop-guard halted a chain at its hop-depth ceiling', { depth, haltAtDepth, correlationId });
+        } else if (warnAtDepth !== undefined && depth >= warnAtDepth) {
+          kitLog?.warn('loop-guard hop-depth warning', { depth, warnAtDepth, correlationId });
+        }
+      }
+
       partial.meta = meta;
       return partial;
     },
 
     augmentJobContext(ctx: JobContext) {
       const inbound = ctx.envelope.meta?.['sourceTrackingToken'];
+      const md = ctx.envelope.meta as { hopDepth?: unknown } | undefined;
+      // Continue the depth this invocation resolved to (set in augmentEnvelope). Off → undefined,
+      // so the outbound token keeps its plain 3-part shape.
+      const depth = trackDepth && typeof md?.hopDepth === 'number' ? md.hopDepth : undefined;
       const token =
         typeof inbound === 'string' && codec.isValid(inbound)
-          ? codec.withJobExecutionId(inbound, ctx.job.id)
-          : codec.create(serviceId, ctx.correlationId, ctx.job.id);
+          ? codec.withJobExecutionId(inbound, ctx.job.id, depth)
+          : codec.create(serviceId, ctx.correlationId, ctx.job.id, depth);
       return { ambient: { trackingToken: token } };
     },
   };

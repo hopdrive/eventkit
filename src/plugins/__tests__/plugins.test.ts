@@ -88,6 +88,56 @@ describe('loopGuard', () => {
     await kit.handle(hasuraInsert({ id: 1, updated_by: selfToken }));
     expect(suppressed).toBe(true);
   });
+
+  // ── ADR-034: optional hop-depth ceiling ──────────────────────────────────
+  describe('hop-depth ceiling (ADR-034)', () => {
+    const codec = createTokenCodec({ separator: '|', validateCorrelationId: true });
+    const depthCfg = (extra: Record<string, unknown>) => ({ ...cfg, ...extra });
+
+    it('increments the hop counter across hops (and starts a fresh root at depth 1)', async () => {
+      let rootOut = '';
+      let chainedOut = '';
+      const mod = (sink: (t: string) => void) =>
+        ({ name: asEventName('e'), detector: hasuraEvent.detector(() => true), jobs: [job((c: JobContext) => void sink(c.trackingToken))] } as EventModule);
+
+      // trackDepth on (warnAtDepth high so nothing fires) — a root gets depth 1.
+      const rootKit = createEventKit(hasuraEvent).use(loopGuard, depthCfg({ warnAtDepth: 99 })).registerEvents([mod(t => (rootOut = t))]);
+      await rootKit.handle(hasuraInsert({ id: 1 }));
+      expect(codec.getHopDepth(rootOut)).toBe(1);
+
+      // an inbound token already at depth 2 → this invocation is depth 3.
+      const chainKit = createEventKit(hasuraEvent).use(loopGuard, depthCfg({ warnAtDepth: 99 })).registerEvents([mod(t => (chainedOut = t))]);
+      await chainKit.handle(hasuraInsert({ id: 2, updated_by: `origin-svc|${UUID}|origin-job|2` }));
+      expect(codec.getHopDepth(chainedOut)).toBe(3);
+      expect(codec.getCorrelationId(chainedOut)).toBe(UUID); // chaining still holds
+    });
+
+    it('haltAtDepth suppresses dispatch: no detector/job runs, invocation returns cleanly', async () => {
+      let ran = false;
+      const mod = { name: asEventName('e'), detector: hasuraEvent.detector(() => { ran = true; return true; }), jobs: [job(() => { ran = true; })] } as EventModule;
+      const kit = createEventKit(hasuraEvent).use(loopGuard, depthCfg({ haltAtDepth: 3 })).registerEvents([mod]);
+      // inbound depth 2 → this invocation is depth 3 → at the ceiling → suppressed.
+      const res = await kit.handle(hasuraInsert({ id: 1, updated_by: `origin-svc|${UUID}|origin-job|2` }));
+
+      expect(ran).toBe(false);           // neither detector nor job ran
+      expect(res.events).toHaveLength(0);
+      expect(res.ok).toBe(true);         // clean stop, not an error
+    });
+
+    it('warnAtDepth logs a breadcrumb WITHOUT suppressing dispatch', async () => {
+      const logs: Array<{ msg: string }> = [];
+      const logcap = { name: 'logcap', onLog: (e: { message: string }) => void logs.push({ msg: e.message }) };
+      let ran = false;
+      const mod = { name: asEventName('e'), detector: hasuraEvent.detector(() => true), jobs: [job(() => { ran = true; })] } as EventModule;
+      const kit = createEventKit(hasuraEvent).use(logcap).use(loopGuard, depthCfg({ warnAtDepth: 2 })).registerEvents([mod]);
+      // inbound depth 1 → this invocation is depth 2 → warn (not halt).
+      const res = await kit.handle(hasuraInsert({ id: 1, updated_by: `origin-svc|${UUID}|origin-job|1` }));
+
+      expect(ran).toBe(true);            // dispatch proceeded
+      expect(res.events).toHaveLength(1);
+      expect(logs.some(l => /hop-depth warning/.test(l.msg))).toBe(true);
+    });
+  });
 });
 
 describe('observability', () => {
