@@ -20,6 +20,7 @@ import InvocationDetailDrawer from './InvocationDetailDrawer';
 import 'reactflow/dist/style.css';
 import JobDetailDrawer from './JobDetailDrawer';
 import EventDetailDrawer from './EventDetailDrawer';
+import FlowBreadcrumb from './FlowBreadcrumb';
 import { compareFlow } from '../flowdoc/compare';
 import { loadBundledDocs, loadUploadedDocs, saveUploadedDoc } from '../flowdoc/store';
 import type { FlowDoc } from '../flowdoc/types';
@@ -595,6 +596,14 @@ const FlowDiagramContent = () => {
         />
       </ReactFlow>
       )}
+
+      {/* Path breadcrumb: origin → … → selected node, follows every selection change */}
+      <FlowBreadcrumb
+        selectedNode={drawerOpen ? selectedNode : null}
+        nodes={displayData.nodes as Node[]}
+        edges={displayData.edges}
+        onSelect={handleOpenNodeId}
+      />
 
       {/* Detail Drawer - Type-specific modals */}
       <AnimatePresence>
