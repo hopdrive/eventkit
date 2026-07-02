@@ -49,7 +49,9 @@ exports[`published API surface (value exports per subpath) > matches the frozen 
   ],
   "./flow": [
     "describeKit",
+    "flowNodeId",
     "toFlowGraph",
+    "toFlowMermaid",
     "toFlowYaml",
     "toYaml",
   ],
@@ -130,6 +132,7 @@ exports[`published API surface (value exports per subpath) > matches the frozen 
   ],
   "./testing": [
     "assertEventNamesMatchFilenames",
+    "assertObservedWithinFlow",
     "buildDetectorContextFor",
     "buildHandlerContextFor",
     "capturedLogger",
@@ -147,6 +150,7 @@ exports[`published API surface (value exports per subpath) > matches the frozen 
     "isWebhookRequest",
     "memoryBatchStore",
     "memorySink",
+    "observedFlowNodes",
     "recordingPlugin",
     "simulateChain",
     "testInvocation",

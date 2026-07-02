@@ -219,6 +219,8 @@ export {
   capturedLogger,
   simulateChain,
   expectFlow,
+  observedFlowNodes,
+  assertObservedWithinFlow,
   type TestInvocationResult,
   type DetectorContractCases,
   type DetectorContractReport,
@@ -227,6 +229,8 @@ export {
   type CapturedLogEntry,
   type SimulateChainResult,
   type FlowEventAssertion,
+  type FlowAssertion,
+  type ObservedFlowComparison,
 } from './harness.js';
 
 // Event-name ↔ filename validator (ADR-025 convention check).

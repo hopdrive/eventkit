@@ -8,7 +8,7 @@
 // The CLI backend (`./cli`) is deliberately NOT re-exported here: it uses node
 // builtins and is loaded only by the `eventkit-flow` bin, so importing this barrel
 // stays free of `node:fs`.
-export { describeKit, toFlowGraph, toFlowYaml } from './graph.js';
+export { describeKit, toFlowGraph, toFlowYaml, toFlowMermaid, flowNodeId, type FlowOrigin } from './graph.js';
 export { toYaml } from './yaml.js';
 export type {
   KitDescription,
@@ -20,4 +20,5 @@ export type {
   FlowEdge,
   FlowNodeKind,
   FlowSourceRef,
+  JobEffect,
 } from '../core/index.js';

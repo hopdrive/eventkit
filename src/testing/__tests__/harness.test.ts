@@ -19,6 +19,8 @@ import {
   capturedLogger,
   simulateChain,
   expectFlow,
+  assertObservedWithinFlow,
+  observedFlowNodes,
 } from '../index.js';
 
 const hasuraKit = () => {
@@ -184,5 +186,22 @@ describe('expectFlow', () => {
     const mod = defineEvent({ name: 'e', detector: hasuraEvent.detector(() => true), jobs: [job(() => {}, { name: 'a' })] });
     const kit = createEventKit(hasuraEvent).registerEvents([mod]);
     expect(() => expectFlow(kit).event('e').hasJobs('a', 'b')).toThrow(/mismatch/);
+  });
+});
+
+describe('proto-Compare: assertObservedWithinFlow (ADR-037)', () => {
+  it('a real invocation produces only nodes present in the expected flow graph', async () => {
+    const mod = defineEvent({
+      name: 'appt.ready',
+      detector: hasuraEvent.detector<{ status?: string }>(ctx => ctx.newRow?.status === 'ready'),
+      jobs: [job(() => {}, { name: 'notify' })],
+    });
+    const kit = createEventKit(hasuraEvent).registerEvents([mod]);
+    const t = await testInvocation(kit, hasuraInsert('appointments', { status: 'ready' }));
+
+    expect(observedFlowNodes(t)).toEqual(['event:appt.ready', 'job:appt.ready:notify']);
+    const cmp = assertObservedWithinFlow(kit, t);
+    expect(cmp.ok).toBe(true);
+    expect(cmp.unexpected).toEqual([]);
   });
 });

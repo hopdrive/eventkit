@@ -13,6 +13,7 @@ import {
   type DetectedEvent,
   type DetectionResult,
   type DetectorContext,
+  type DryRunResult,
   type EventEnvelope,
   type EventKit,
   type EventKitPlugin,
@@ -399,6 +400,56 @@ class Kit implements EventKit {
         }
       }
     }
+  }
+
+  async dryRun(rawPayloadOrArgs: unknown, request?: RequestContext | unknown): Promise<DryRunResult> {
+    await this.ensureReady();
+    let raw: unknown;
+    let req: RequestContext;
+    if (this.pm.platform) {
+      raw = await this.pm.platform.extractPayload?.(rawPayloadOrArgs, request);
+      req = (this.pm.platform.buildRequest?.(rawPayloadOrArgs, request) as RequestContext) ?? {};
+    } else {
+      raw = rawPayloadOrArgs;
+      req = (request as RequestContext) ?? {};
+    }
+    await this.pm.onBeforeNormalize(raw, req);
+    let envelope: EventEnvelope = this.pm.normalize(raw, req);
+    envelope = await this.pm.augmentEnvelope(envelope);
+    await this.pm.onAfterNormalize(envelope);
+
+    const invocationId = req.invocationId ? asInvocationId(req.invocationId) : newInvocationId();
+    const correlationId = envelope.correlationId ?? newCorrelationId();
+    const invocation: InvocationContext = {
+      invocationId,
+      correlationId,
+      source: envelope.source,
+      sourceType: this.pm.sourceType,
+      envelope,
+      request: req,
+      startedAt: new Date(),
+      signal: new AbortController().signal,
+      log: createHandlerLogger({ invocationId, correlationId, scope: 'dry-run' }, entry => void this.pm.onLog(entry)),
+    };
+
+    // Detection only — no dispatch, so no prepare/job/resolve/respond runs.
+    const detected = await this.detect(envelope, invocation);
+    const jobNamesOf = (module: EventModule): string[] =>
+      (module.jobs ?? []).map(entry => String((entry as { name?: unknown }).name ?? 'anonymous'));
+
+    return {
+      invocationId,
+      correlationId,
+      events: detected.map(d => {
+        const ev: DryRunResult['events'][number] = {
+          name: String(d.module.name),
+          detected: d.event !== null,
+          jobs: d.event !== null ? jobNamesOf(d.module) : [],
+        };
+        if (d.error !== undefined) ev.error = d.error.message;
+        return ev;
+      }),
+    };
   }
 
   /**

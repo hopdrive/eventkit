@@ -92,7 +92,7 @@ export type {
 } from './plugin.js';
 
 // ── Kit / entry point (types only; createEventKit + run are runtime, re-exported from the root) ──
-export type { EventKit, InvocationResult, EventOutcome, ResolvedOutcome, ResolvedError, PluginFactory, HandlerShortCircuit, HttpRequestEvent } from './kit.js';
+export type { EventKit, InvocationResult, EventOutcome, ResolvedOutcome, ResolvedError, PluginFactory, HandlerShortCircuit, HttpRequestEvent, DryRunResult, DryRunEvent } from './kit.js';
 
 // ── Flow description + manifest vocabulary (§14–§16) ─────────────────────────
 export type {
@@ -105,4 +105,5 @@ export type {
   FlowEdge,
   FlowNodeKind,
   FlowSourceRef,
+  JobEffect,
 } from './flow.js';

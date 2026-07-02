@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -79,5 +79,47 @@ describe('eventkit-flow CLI', () => {
     err = [];
     expect(await runCli(['generate'])).toBe(1);
     expect(err.join('')).toContain('Missing --kit');
+  });
+
+  it('coverage passes when every event has a detector-contract test, fails otherwise', async () => {
+    const dir = resolve(tmpdir(), `eventkit-cov-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    const testFile = resolve(dir, 'thing.contract.test.ts');
+    try {
+      // No test yet → the fixture's 'thing.happened' event is uncovered.
+      let code = await runCli(['coverage', '--kit', KIT, '--tests', dir]);
+      expect(code).toBe(1);
+      expect(err.join('')).toContain('thing.happened');
+
+      // Add a detector-contract test naming the event → covered.
+      writeFileSync(testFile, `detectorContract(src, mod, {}); // 'thing.happened'\n`, 'utf8');
+      out = [];
+      err = [];
+      code = await runCli(['coverage', '--kit', KIT, '--tests', dir]);
+      expect(code).toBe(0);
+      expect(out.join('')).toContain('every registered event has a detector-contract test');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('simulate prints the events that would fire for a fixture payload', async () => {
+    const payload = resolve(tmpdir(), `eventkit-sim-${process.pid}.json`);
+    try {
+      writeFileSync(payload, JSON.stringify({ anything: true }), 'utf8');
+      const code = await runCli(['simulate', '--kit', KIT, '--payload', payload]);
+      expect(code).toBe(0);
+      expect(out.join('')).toContain('Would fire');
+      expect(out.join('')).toContain('thing.happened');
+      expect(out.join('')).toContain('doThing');
+    } finally {
+      rmSync(payload, { force: true });
+    }
+  });
+
+  it('simulate errors (exit 1) when the payload fixture is missing', async () => {
+    const code = await runCli(['simulate', '--kit', KIT, '--payload', resolve(tmpdir(), 'nope-does-not-exist.json')]);
+    expect(code).toBe(1);
+    expect(err.join('')).toContain('not found');
   });
 });

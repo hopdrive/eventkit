@@ -16,6 +16,17 @@
 /** How a module produces its synchronous response (ADR-026). */
 export type FlowResponseKind = 'none' | 'resolve' | 'respond';
 
+/**
+ * A declared side effect a job performs, carried in `job(..., { metadata: { effects } })`.
+ * RESERVED SCHEMA (ADR-037): a future org-level aggregator infers cross-kit edges from
+ * these losslessly (a `db-write` to `moves` links to the kit listening on `moves`). The
+ * union is open — an unknown `type` is preserved verbatim.
+ */
+export type JobEffect =
+  | { type: 'db-write'; table: string }
+  | { type: 'api-call'; vendor: string }
+  | { type: string; [key: string]: unknown };
+
 /** One job in a registered event, as seen by introspection (declared options only — never live `input`). */
 export interface KitJobDescription {
   name: string;

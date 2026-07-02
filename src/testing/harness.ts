@@ -23,6 +23,7 @@ import {
 import type { BatchJobStore, BatchJobUpdate, DelayedBatchJobSpec } from '../plugins/batch/index.js';
 import { observability } from '../plugins/observability/index.js';
 import type { InvocationRecord, EventRecord, JobRecord, ObservabilityBatch } from '../plugins/observability/index.js';
+import { toFlowGraph, flowNodeId } from '../flow/index.js';
 import { recordingPlugin } from './instruments.js';
 import { hasuraManualEdit, isWebhookRequest } from './builders.js';
 
@@ -283,6 +284,45 @@ export async function simulateChain(
     childCorrelationId,
     continuous: !!parentCorrelationId && childCorrelationId === parentCorrelationId,
   };
+}
+
+// ── proto-Compare: observed ⊆ expected flow ──────────────────────────────────
+
+export interface ObservedFlowComparison {
+  ok: boolean;
+  /** The flow node ids the invocation actually produced. */
+  observed: string[];
+  /** Observed node ids that are NOT in the kit's expected flow graph. */
+  unexpected: string[];
+}
+
+/** The flow node ids an invocation produced (fired events + their jobs), via the shared builders. */
+export function observedFlowNodes(result: TestInvocationResult): string[] {
+  const ids = new Set<string>();
+  for (const ev of result.result.events) {
+    if (!ev.detected) continue;
+    ids.add(flowNodeId.event(ev.name));
+    for (const j of ev.jobs) ids.add(flowNodeId.job(ev.name, j.jobName));
+  }
+  return [...ids];
+}
+
+/**
+ * Proto-Compare (ADR-037): assert the observed runtime record set is a SUBSET of the kit's
+ * EXPECTED flow graph, using the shared node-id builders — so an invocation can only fire
+ * events/jobs the declared flow already knows about. Validates the Compare-Mode matcher
+ * hypothesis (D9) on one real flow, months before the Console. Throws on any unexpected node.
+ */
+export function assertObservedWithinFlow(kit: EventKit, result: TestInvocationResult): ObservedFlowComparison {
+  const expected = new Set(toFlowGraph(kit).nodes.map((n) => n.id));
+  const observed = observedFlowNodes(result);
+  const unexpected = observed.filter((id) => !expected.has(id));
+  if (unexpected.length) {
+    throw new Error(
+      `assertObservedWithinFlow: observed nodes absent from the expected flow graph:\n${unexpected.map((u) => `  - ${u}`).join('\n')}`,
+    );
+  }
+  return { ok: true, observed, unexpected };
 }
 
 // ── expectFlow ─────────────────────────────────────────────────────────────
