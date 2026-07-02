@@ -6,6 +6,8 @@ import { useRunningDuration } from '../../hooks/useRunningDuration';
 
 export interface JobNodeData {
   jobName: string;
+  /** Expected-overlay ghost — same shell/dimensions, declared-but-not-run state. */
+  ghost?: boolean;
   functionName?: string;
   correlationId: string;
   status: string;
@@ -56,6 +58,25 @@ export const JobNode: React.FC<NodeProps<JobNodeData>> = ({ data, selected }) =>
   const colors = statusColors[status as keyof typeof statusColors] || statusColors.completed;
   const isFailed = status === 'failed';
   const invocationCount = data.triggeredInvocationsCount || 0;
+
+  if (data.ghost) {
+    return (
+      <div className='relative bg-white dark:bg-gray-800 rounded-lg border-2 border-dashed border-gray-400 opacity-70 shadow-md min-w-[200px]'>
+        <Handle type='target' position={Position.Left} className='w-3 h-3' />
+        <div className='p-3 pl-4'>
+          <div className='flex items-center justify-between mb-1'>
+            <span className='text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide'>Job</span>
+          </div>
+          <p className='font-medium text-gray-900 dark:text-white text-sm'>{data.jobName}</p>
+          <div className='mt-1 flex items-center space-x-2'>
+            <span className='inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'>
+              expected · not observed
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
 
   return (

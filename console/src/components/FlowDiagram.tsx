@@ -21,15 +21,16 @@ import 'reactflow/dist/style.css';
 import JobDetailDrawer from './JobDetailDrawer';
 import EventDetailDrawer from './EventDetailDrawer';
 import UndetectedEventsDetailDrawer from './UndetectedEventsDetailDrawer';
-import ExpectedFlowView, { CompareLegend } from './ExpectedFlowView';
 import { compareFlow } from '../flowdoc/compare';
 import { loadBundledDocs, loadUploadedDocs, saveUploadedDoc } from '../flowdoc/store';
 import type { FlowDoc } from '../flowdoc/types';
 
-// Observed / Expected / Compare — console-expected-flows.md §2: three modes on one
-// canvas. Observed = the recorded run (below, unchanged). Expected = the committed
-// flow doc's structure. Compare = Observed overlaid on Expected, classified.
-type FlowMode = 'observed' | 'expected' | 'compare';
+// ONE canvas, overlay toggles (not separate views): the observed run always renders
+// with its normal nodes; toggles only ADD or REMOVE nodes and never change the size
+// or content of anything already on the canvas. "Show expected" grafts the flow
+// doc's not-observed events/jobs in as same-size ghost nodes (rendered by the SAME
+// EventNode/JobNode components); "Flag off-contract" rings observed nodes absent
+// from the doc (outline only).
 
 // Inner component that uses ReactFlow hooks
 const FlowDiagramContent = () => {
@@ -50,12 +51,13 @@ const FlowDiagramContent = () => {
   // URL Parameters
   const invocationId = searchParams.get('invocationId');
   const autoFocus = searchParams.get('autoFocus') === 'true';
-  const mode = (searchParams.get('mode') as FlowMode) || 'observed';
+  const showExpected = searchParams.get('expected') === '1';
+  const flagOffContract = searchParams.get('offcontract') === '1';
 
-  const setMode = (m: FlowMode) => {
+  const setFlag = (key: string, on: boolean) => {
     const next = new URLSearchParams(searchParams);
-    if (m === 'observed') next.delete('mode');
-    else next.set('mode', m);
+    if (on) next.set(key, '1');
+    else next.delete(key);
     setSearchParams(next, { replace: true });
   };
 
@@ -107,10 +109,10 @@ const FlowDiagramContent = () => {
 
   // Compare: overlay this run's observed tree on the selected expected graph.
   const compareResult = useMemo(() => {
-    if (mode !== 'compare' || !selectedDoc || invocations.length === 0) return undefined;
+    if ((!showExpected && !flagOffContract) || !selectedDoc || invocations.length === 0) return undefined;
     return compareFlow(selectedDoc.graph, invocations as Parameters<typeof compareFlow>[1]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, selectedDoc, data]);
+  }, [showExpected, flagOffContract, selectedDoc, data]);
 
 
   // Auto-focus functionality
@@ -278,62 +280,127 @@ const FlowDiagramContent = () => {
     return { nodes: nodesWithSelection, edges: filteredEdges };
   }, [generatedNodes, generatedEdges, searchTerm, selectedNode]);
 
+  // Merge overlay additions into the observed canvas. Ghost nodes reuse the SAME
+  // EventNode/JobNode components (identical shell/size); toggles only add/remove
+  // nodes — they never restyle what's already rendered. Off-contract flagging adds
+  // an outline ring only (no size/content change).
+  const displayData = useMemo(() => {
+    let nodes = flowData.nodes;
+    let edges = flowData.edges;
+    if (!compareResult) return { nodes, edges };
 
-  // Observed/Compare need the invocation query; Expected renders from the doc alone.
-  const observedGate =
-    mode === 'expected' ? null : loading ? (
-      <div className='flex items-center justify-center h-full'>
-        <div className='animate-spin rounded-full h-32 w-32 border-b-2 border-blue-500'></div>
-      </div>
-    ) : error ? (
-      <div className='flex items-center justify-center h-full'>
-        <div className='text-red-500'>Error loading flow diagram: {error.message}</div>
-      </div>
-    ) : !data?.invocations_by_pk ? (
-      <div className='flex items-center justify-center h-full'>
-        <div className='text-gray-500'>
-          {mode === 'compare'
-            ? 'Pick an invocation (from Invocations or search) to compare against the expected flow.'
-            : 'No invocation data found'}
-        </div>
-      </div>
-    ) : null;
+    if (flagOffContract) {
+      const extraEventNames = new Set<string>();
+      const extraJobNames = new Set<string>();
+      for (const key of Object.keys(compareResult.extraVerdicts)) {
+        if (key.startsWith('event:')) extraEventNames.add(key.slice(6));
+        else if (key.startsWith('job:')) extraJobNames.add(key.split(':')[2]);
+      }
+      nodes = nodes.map(n =>
+        (n.type === 'event' && extraEventNames.has(n.data?.eventName)) ||
+        (n.type === 'job' && extraJobNames.has(n.data?.jobName))
+          ? { ...n, className: `${n.className ?? ''} rounded-lg ring-4 ring-amber-400/70` }
+          : n
+      );
+    }
 
-  const centerHint = (msg: string) => (
+    if (showExpected && selectedDoc) {
+      // Ghost columns join the observed layout: reuse the observed x positions.
+      const colX = (t: string, fallback: number) => {
+        const of = nodes.filter(n => n.type === t);
+        return of.length ? Math.max(...of.map(n => n.position.x)) : fallback;
+      };
+      const root = nodes.find(n => n.type === 'invocation');
+      const rootX = root?.position.x ?? 0;
+      const eventX = colX('event', rootX + 530);
+      const jobX = colX('job', rootX + 960);
+      let y = Math.max(0, ...nodes.map(n => n.position.y)) + 180;
+      const rootId = root?.id ?? invocationId ?? '';
+
+      const missing = (id: string) => compareResult.verdicts[id]?.classification === 'expected_missing';
+      const ghostEdgeStyle = { strokeDasharray: '6 4', stroke: '#9ca3af', strokeWidth: 1.5 };
+      for (const gn of selectedDoc.graph.nodes) {
+        if (gn.kind !== 'event' || !missing(gn.id)) continue;
+        nodes = [...nodes, {
+          id: `ghost-${gn.id}`,
+          type: 'event',
+          selected: false,
+          position: { x: eventX, y },
+          data: { eventName: gn.eventName ?? gn.label, ghost: true, detected: false, correlationId: '', status: '', detectionDuration: 0, jobsCount: 0, hasFailedJobs: false },
+        }];
+        edges = [...edges, { id: `ghost-e-${gn.id}`, source: rootId, target: `ghost-${gn.id}`, animated: false, style: ghostEdgeStyle }];
+        let jy = y;
+        for (const je of selectedDoc.graph.edges.filter(e => e.from === gn.id)) {
+          const jn = selectedDoc.graph.nodes.find(n => n.id === je.to && n.kind === 'job');
+          if (!jn || !missing(jn.id)) continue;
+          nodes = [...nodes, {
+            id: `ghost-${jn.id}`,
+            type: 'job',
+            selected: false,
+            position: { x: jobX, y: jy },
+            data: { jobName: jn.jobName ?? jn.label, ghost: true, correlationId: '', status: '', duration: 0 },
+          }];
+          edges = [...edges, { id: `ghost-e-${jn.id}`, source: `ghost-${gn.id}`, target: `ghost-${jn.id}`, animated: false, style: ghostEdgeStyle }];
+          jy += 110;
+        }
+        y = Math.max(y + 140, jy + 30);
+      }
+    }
+    return { nodes, edges };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flowData, compareResult, showExpected, flagOffContract, selectedDoc, invocationId]);
+
+
+
+  const observedGate = loading ? (
     <div className='flex items-center justify-center h-full'>
-      <div className='text-gray-500 text-sm max-w-md text-center'>{msg}</div>
+      <div className='animate-spin rounded-full h-32 w-32 border-b-2 border-blue-500'></div>
     </div>
-  );
-
-  const modeTab = (m: FlowMode, label: string) => (
-    <button
-      key={m}
-      onClick={() => setMode(m)}
-      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-        mode === m
-          ? 'bg-blue-600 text-white'
-          : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
-      }`}
-    >
-      {label}
-    </button>
-  );
+  ) : error ? (
+    <div className='flex items-center justify-center h-full'>
+      <div className='text-red-500'>Error loading flow diagram: {error.message}</div>
+    </div>
+  ) : !data?.invocations_by_pk ? (
+    <div className='flex items-center justify-center h-full'>
+      <div className='text-gray-500'>No invocation data found</div>
+    </div>
+  ) : null;
 
   return (
     <div className="w-full h-full relative" style={{ minHeight: '600px' }}>
-      {/* Toolbar: mode switch (§2 three modes, one canvas) + flow-doc controls */}
-      <div className='absolute top-4 left-4 z-10 flex items-center gap-2'>
-        <div className='flex gap-0.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-0.5 shadow-sm'>
-          {modeTab('observed', 'Observed')}
-          {modeTab('expected', 'Expected')}
-          {modeTab('compare', 'Compare')}
-        </div>
-        {mode !== 'observed' && (
+      {/* Toolbar: search + expected-overlay toggles (one canvas — toggles only add/remove nodes) */}
+      <div className='absolute top-4 left-4 z-10 flex items-center gap-2 flex-wrap'>
+        <input
+          type='text'
+          placeholder='Search nodes...'
+          value={searchTerm}
+          onChange={e => setSearchTerm(e.target.value)}
+          className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm w-56'
+        />
+        <label className='inline-flex items-center gap-1.5 px-2.5 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700'>
+          <input
+            type='checkbox'
+            checked={showExpected}
+            onChange={e => setFlag('expected', e.target.checked)}
+            className='h-3.5 w-3.5 text-blue-600 border-gray-300 rounded'
+          />
+          Show expected
+        </label>
+        <label className='inline-flex items-center gap-1.5 px-2.5 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700'>
+          <input
+            type='checkbox'
+            checked={flagOffContract}
+            onChange={e => setFlag('offcontract', e.target.checked)}
+            className='h-3.5 w-3.5 text-amber-500 border-gray-300 rounded'
+          />
+          Flag off-contract
+        </label>
+        {(showExpected || flagOffContract) && (
           <>
             <select
               value={selectedDocTitle}
               onChange={e => setSelectedDocTitle(e.target.value)}
-              className='px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 max-w-[220px]'
+              className='px-2 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 max-w-[220px]'
             >
               {docs.length === 0 && <option value=''>no flow docs loaded</option>}
               {docs.map(d => (
@@ -343,7 +410,7 @@ const FlowDiagramContent = () => {
                 </option>
               ))}
             </select>
-            <label className='px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700'>
+            <label className='px-2 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700'>
               Load flow doc…
               <input
                 type='file'
@@ -352,46 +419,40 @@ const FlowDiagramContent = () => {
                 onChange={e => e.target.files?.[0] && handleUpload(e.target.files[0])}
               />
             </label>
-            {docError && <span className='text-xs text-red-500 max-w-[280px] truncate' title={docError}>{docError}</span>}
+            {docError && (
+              <span className='text-xs text-red-500 max-w-[280px] truncate' title={docError}>
+                {docError}
+              </span>
+            )}
           </>
-        )}
-        {mode === 'observed' && (
-          <input
-            type='text'
-            placeholder='Search nodes...'
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm w-64'
-          />
         )}
       </div>
 
-      {mode === 'compare' && compareResult && (
-        <div className='absolute top-4 right-4 z-10'>
-          <CompareLegend summary={compareResult.summary} />
+      {/* Overlay legend + summary (only when a toggle is active) */}
+      {compareResult && (showExpected || flagOffContract) && (
+        <div className='absolute top-4 right-4 z-10 bg-white/90 dark:bg-gray-800/90 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 shadow-sm space-y-1'>
+          <div className='text-[11px] text-gray-600 dark:text-gray-300 pb-1 border-b border-gray-100 dark:border-gray-700'>
+            {compareResult.summary.matched}/{compareResult.summary.expectedTotal} matched ·{' '}
+            {compareResult.summary.failed} failed · {compareResult.summary.missing} missing ·{' '}
+            {compareResult.summary.unexpected} off-contract
+          </div>
+          {showExpected && (
+            <div className='flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-300'>
+              <span className='w-3 h-3 rounded border-2 border-dashed border-gray-400' /> expected · not observed
+            </div>
+          )}
+          {flagOffContract && (
+            <div className='flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-300'>
+              <span className='w-3 h-3 rounded ring-2 ring-amber-400/80' /> observed · not in flow doc
+            </div>
+          )}
         </div>
       )}
 
-      {mode === 'expected' ? (
-        selectedDoc ? (
-          <ExpectedFlowView doc={selectedDoc} />
-        ) : (
-          centerHint(
-            'No flow doc loaded. Commit one with `eventkit-flow generate` in a consumer repo and load it here, or pick a bundled sample.'
-          )
-        )
-      ) : mode === 'compare' ? (
-        observedGate ??
-        (selectedDoc ? (
-          <ExpectedFlowView doc={selectedDoc} compare={compareResult} />
-        ) : (
-          centerHint('Pick a flow doc to compare this run against.')
-        ))
-      ) : (
-        observedGate ?? (
+      {observedGate ?? (
       <ReactFlow
-        nodes={flowData.nodes}
-        edges={flowData.edges}
+        nodes={displayData.nodes}
+        edges={displayData.edges}
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
         nodeTypes={nodeTypes}
@@ -426,7 +487,6 @@ const FlowDiagramContent = () => {
           }}
         />
       </ReactFlow>
-        )
       )}
 
       {/* Detail Drawer - Type-specific modals */}
