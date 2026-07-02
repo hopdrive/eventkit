@@ -6,7 +6,7 @@
 // A platform plugin (`provides: ['platform']`, §11.0/§9.8). Imported via
 // `@hopdrive/eventkit/platforms`.
 import type { HandlerShortCircuit, InvocationResult, PlatformAdapter, RequestContext } from '../../core/index.js';
-import { computedDeadline, env, extractHeaders, httpResponse } from '../platform-shared.js';
+import { computedDeadline, env, extractHeaders, httpResponse, queryOf } from '../platform-shared.js';
 
 export function netlifyV2Platform(config: { maxExecutionMs?: number } = {}): PlatformAdapter {
   const maxExecutionMs = config.maxExecutionMs ?? 10_000;
@@ -21,8 +21,8 @@ export function netlifyV2Platform(config: { maxExecutionMs?: number } = {}): Pla
     },
     buildRequest: (request?: unknown): RequestContext => ({
       getRemainingTimeMs: computedDeadline(maxExecutionMs),
-      // v2 can't preserve rawBody (extractPayload consumed it via .json()); headers are fine.
-      meta: { headers: extractHeaders(request) },
+      // v2 can't preserve rawBody (extractPayload consumed it via .json()); headers + query are fine.
+      meta: { headers: extractHeaders(request), query: queryOf(request) },
     }),
     formatResponse: (result: InvocationResult) => {
       const { statusCode, body } = httpResponse(result);

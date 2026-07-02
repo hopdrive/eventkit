@@ -1,7 +1,16 @@
 import { describe, it, expect } from 'vitest';
+import { createHmac } from 'node:crypto';
 import { createEventKit, defineEvent, job, ClientError, type JobContext } from '../../../index.js';
 import { netlifyV2Platform } from '../../platform-netlify-v2/index.js';
-import { webhook, type WebhookDetectorContext, type WebhookHandlerContext } from '../index.js';
+import {
+  webhook,
+  hmacVerify,
+  staticHeaderToken,
+  sharedSecret,
+  hasuraPassphrase,
+  type WebhookDetectorContext,
+  type WebhookHandlerContext,
+} from '../index.js';
 
 // A v2-style Web Request carrying a JSON webhook body + headers.
 const v2Request = (body: unknown, headers: Record<string, string>) => ({
@@ -139,5 +148,90 @@ describe('webhook rejectUnverified (ADR-030): one-chokepoint signature rejection
 
   it('rejectUnverified without verify is a construction error', () => {
     expect(() => webhook({ vendor: 'stripe', rejectUnverified: true })).toThrow(/requires a `verify`/);
+  });
+});
+
+describe('webhook verify inputs + presets (D33)', () => {
+  // Fire with an explicit request.meta so headers/query/rawBody reach `verify`.
+  const fire = (src: ReturnType<typeof webhook>, mods: ReturnType<typeof defineEvent>[], meta: Record<string, unknown>, body: unknown = { id: 1 }) =>
+    createEventKit(src).registerEvents(mods).handle(body, { meta });
+
+  it('verify receives query params (case-preserved), not just headers', async () => {
+    let sawQuery: Record<string, string> | undefined;
+    const src = webhook({
+      vendor: 'superdispatch',
+      verify: args => { sawQuery = args.query; return args.query['Token'] === 'sekret'; },
+    });
+    let verified: boolean | undefined;
+    const mod = defineEvent({
+      name: 'sd.any',
+      detector: src.detector((ctx: WebhookDetectorContext) => { verified = ctx.signatureVerified; return true; }),
+      jobs: [job((c: JobContext) => { void ((c.envelope.meta as Record<string, unknown>)['webhookQuery']); })],
+    });
+    await fire(src, [mod], { headers: {}, query: { Token: 'sekret' } });
+
+    expect(sawQuery).toEqual({ Token: 'sekret' }); // key case preserved (query is case-sensitive)
+    expect(verified).toBe(true);
+  });
+
+  it('hmacVerify (Stripe-style): a valid t=/v1= signature verifies; a tampered body fails', async () => {
+    const secret = 'whsec_test';
+    const rawBody = JSON.stringify({ id: 'evt_1', amount: 100 });
+    const t = 1_700_000_000;
+    const sig = createHmac('sha256', secret).update(`${t}.${rawBody}`).digest('hex');
+
+    const src = webhook({ vendor: 'stripe', verify: hmacVerify({ secret }) });
+    let verified: boolean | undefined;
+    const mod = defineEvent({
+      name: 'stripe.any',
+      detector: src.detector((ctx: WebhookDetectorContext) => { verified = ctx.signatureVerified; return true; }),
+      jobs: [job(() => {})],
+    });
+
+    await fire(src, [mod], { headers: { 'stripe-signature': `t=${t},v1=${sig}` }, rawBody }, JSON.parse(rawBody));
+    expect(verified).toBe(true);
+
+    // same signature, different body bytes → fails
+    await fire(src, [mod], { headers: { 'stripe-signature': `t=${t},v1=${sig}` }, rawBody: rawBody + ' ' }, JSON.parse(rawBody));
+    expect(verified).toBe(false);
+
+    // missing rawBody → can't HMAC → fails safe
+    await fire(src, [mod], { headers: { 'stripe-signature': `t=${t},v1=${sig}` } }, JSON.parse(rawBody));
+    expect(verified).toBe(false);
+  });
+
+  it('staticHeaderToken: matches a fixed token in a named header', async () => {
+    const src = webhook({ vendor: 'acme', verify: staticHeaderToken({ header: 'x-webhook-token', token: 'T0P' }) });
+    let verified: boolean | undefined;
+    const mod = defineEvent({ name: 'acme.any', detector: src.detector((c: WebhookDetectorContext) => { verified = c.signatureVerified; return true; }), jobs: [job(() => {})] });
+
+    await fire(src, [mod], { headers: { 'x-webhook-token': 'T0P' } });
+    expect(verified).toBe(true);
+    await fire(src, [mod], { headers: { 'x-webhook-token': 'wrong' } });
+    expect(verified).toBe(false);
+  });
+
+  it('sharedSecret: accepts the secret from a header OR a query param', async () => {
+    const src = webhook({ vendor: 'acme', verify: sharedSecret({ secret: 's3cret', header: 'x-secret', queryParam: 'key' }) });
+    let verified: boolean | undefined;
+    const mod = defineEvent({ name: 'acme.any', detector: src.detector((c: WebhookDetectorContext) => { verified = c.signatureVerified; return true; }), jobs: [job(() => {})] });
+
+    await fire(src, [mod], { headers: { 'x-secret': 's3cret' } });
+    expect(verified).toBe(true);
+    await fire(src, [mod], { headers: {}, query: { key: 's3cret' } });
+    expect(verified).toBe(true);
+    await fire(src, [mod], { headers: {}, query: { key: 'nope' } });
+    expect(verified).toBe(false);
+  });
+
+  it('hasuraPassphrase: matches the conventional x-hasura-webhook-secret header', async () => {
+    const src = webhook({ vendor: 'hopdrive-event', verify: hasuraPassphrase({ passphrase: 'pp' }) });
+    let verified: boolean | undefined;
+    const mod = defineEvent({ name: 'evt.any', detector: src.detector((c: WebhookDetectorContext) => { verified = c.signatureVerified; return true; }), jobs: [job(() => {})] });
+
+    await fire(src, [mod], { headers: { 'x-hasura-webhook-secret': 'pp' } });
+    expect(verified).toBe(true);
+    await fire(src, [mod], { headers: { 'x-hasura-webhook-secret': 'bad' } });
+    expect(verified).toBe(false);
   });
 });

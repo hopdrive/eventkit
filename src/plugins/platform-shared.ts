@@ -46,9 +46,32 @@ const rawBodyOf = (event: unknown): string | undefined => {
   return typeof b === 'string' ? b : undefined;
 };
 
-/** Stash headers (+ raw body when available) on RequestContext.meta so sources (e.g. webhook) can read them. */
+/**
+ * Query params as a flat string map. Classic/lambda events expose
+ * `queryStringParameters`; a v2 `Request` exposes them via its URL. Some vendor
+ * webhooks key their signature/token on a query param, so `verify` needs these.
+ */
+export const queryOf = (event: unknown): Record<string, string> => {
+  const out: Record<string, string> = {};
+  const qsp = (event as { queryStringParameters?: Record<string, unknown> | null } | undefined)?.queryStringParameters;
+  if (qsp && typeof qsp === 'object') {
+    for (const [k, v] of Object.entries(qsp)) if (v != null) out[k] = String(v);
+    return out;
+  }
+  const url = (event as { url?: unknown } | undefined)?.url;
+  if (typeof url === 'string') {
+    try {
+      new URL(url).searchParams.forEach((v, k) => { out[k] = v; });
+    } catch {
+      // not an absolute URL — leave query empty
+    }
+  }
+  return out;
+};
+
+/** Stash headers, query params (+ raw body when available) on RequestContext.meta so sources (e.g. webhook) can read them. */
 export const requestMeta = (event: unknown): Record<string, unknown> => {
-  const meta: Record<string, unknown> = { headers: extractHeaders(event) };
+  const meta: Record<string, unknown> = { headers: extractHeaders(event), query: queryOf(event) };
   const raw = rawBodyOf(event);
   if (raw !== undefined) meta['rawBody'] = raw;
   return meta;

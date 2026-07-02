@@ -49,6 +49,8 @@ export interface WebhookVerifyArgs {
   eventType: string | undefined;
   body: unknown;
   headers: Record<string, string>;
+  /** Query params (some vendors key their token/signature on a query param, not a header). */
+  query: Record<string, string>;
   /** The unparsed request body, if the platform preserved it (needed for HMAC over exact bytes). */
   rawBody?: string;
 }
@@ -82,6 +84,7 @@ interface WebhookFields<TBody> {
   eventType: string | undefined;
   body: TBody;
   headers: Record<string, string>;
+  query: Record<string, string>;
 }
 
 export interface WebhookDetectorContext<TBody = unknown> extends DetectorContext<TBody>, WebhookFields<TBody> {}
@@ -105,9 +108,22 @@ const fieldsFromMeta = <TBody>(envelope: EventEnvelope<TBody>): WebhookFields<TB
     vendor: String(m['webhookVendor'] ?? ''),
     eventType: typeof m['webhookEventType'] === 'string' ? (m['webhookEventType'] as string) : undefined,
     headers: (m['webhookHeaders'] as Record<string, string>) ?? {},
+    query: (m['webhookQuery'] as Record<string, string>) ?? {},
     body: envelope.payload,
   };
 };
+
+// Generic verify presets (D33) — usable via `webhook({ verify: hmacVerify({...}) })`.
+export {
+  hmacVerify,
+  staticHeaderToken,
+  sharedSecret,
+  hasuraPassphrase,
+  type HmacVerifyConfig,
+  type StaticHeaderTokenConfig,
+  type SharedSecretConfig,
+  type HasuraPassphraseConfig,
+} from './presets.js';
 
 /** Build a per-vendor webhook source adapter (§7.1). */
 export function webhook(config: WebhookConfig): WebhookSource {
@@ -140,14 +156,20 @@ export function webhook(config: WebhookConfig): WebhookSource {
       return fn as unknown as ResolveFunction;
     },
     normalize(raw: unknown, request: RequestContext): EventEnvelope {
-      const reqMeta = (request.meta ?? {}) as { headers?: Record<string, unknown>; rawBody?: string };
+      const reqMeta = (request.meta ?? {}) as { headers?: Record<string, unknown>; query?: Record<string, unknown>; rawBody?: string };
       const headers = lowerKeys(reqMeta.headers ?? {});
+      // Query keys are case-sensitive (unlike headers) — preserve case, stringify values.
+      const query: Record<string, string> = {};
+      for (const k of Object.keys(reqMeta.query ?? {})) {
+        const v = (reqMeta.query as Record<string, unknown>)[k];
+        if (v != null) query[k] = String(v);
+      }
       const eventType = eventTypeHeader ? headers[eventTypeHeader.toLowerCase()] : undefined;
       // Verify BEFORE building the envelope; a bad/throwing verify → not verified,
       // NEVER a thrown error (the detector decides — §7.1).
       let signatureVerified = true;
       if (verify) {
-        const args: WebhookVerifyArgs = { vendor, eventType, body: raw, headers };
+        const args: WebhookVerifyArgs = { vendor, eventType, body: raw, headers, query };
         if (reqMeta.rawBody !== undefined) args.rawBody = reqMeta.rawBody;
         try {
           signatureVerified = verify(args) === true;
@@ -173,6 +195,7 @@ export function webhook(config: WebhookConfig): WebhookSource {
           webhookEventType: eventType,
           webhookSignatureVerified: signatureVerified,
           webhookHeaders: headers,
+          webhookQuery: query,
           sourceFunction: `webhook:${vendor}`,
         },
         raw,
