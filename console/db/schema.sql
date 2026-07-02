@@ -332,3 +332,11 @@ COMMENT ON MATERIALIZED VIEW dashboard_stats IS 'Pre-computed metrics for dashbo
 -- 3. Provides redundancy if foreign key relationships break
 -- 4. Allows fast analytics queries grouped by correlation ID
 -- 5. Enables visualization of complete event chains across multiple invocations
+-- Trigram indexes for the console's infix search (GroupedSearch / table search —
+-- plan §6.2). Event/job names are dot-hierarchical, so mid-string matching
+-- ("pickup", "cancel.succeeded") is a first-class operator lookup.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_event_executions_event_name_trgm ON event_executions USING gin (event_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_job_executions_job_name_trgm ON job_executions USING gin (job_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_invocations_source_function_trgm ON invocations USING gin (source_function gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_invocations_correlation_id_trgm ON invocations USING gin (correlation_id gin_trgm_ops);

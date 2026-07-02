@@ -201,7 +201,8 @@ async function setReactInputValue(page, selector, text) {
   );
 }
 
-const SEARCH_INPUT_SELECTOR = 'input[placeholder^="Search by correlation ID"]';
+// Match the header search regardless of placeholder copy (it changed in C3 round 1).
+const SEARCH_INPUT_SELECTOR = 'header input[placeholder^="Search"], input[placeholder^="Search event"], input[placeholder^="Search by correlation ID"]';
 
 // Under this throttle profile, a fresh page load of the (unbundled, dev-mode,
 // no-code-splitting — see plan finding P9) Vite dev server consistently takes
@@ -323,6 +324,13 @@ const scenarios = {
       await page.type(SEARCH_INPUT_SELECTOR, 'move.pickup', { delay: 50 });
       const lastKeystrokeTs = performance.now();
 
+      // The app debounces 250ms, so the first request lands AFTER the last keystroke —
+      // wait for it (or a 3s grace) before the idle wait, else idle resolves instantly
+      // on an empty window and reports 0 requests.
+      const firstReqDeadline = performance.now() + 3000;
+      while (gqlLog.length === sinceIndex && performance.now() < firstReqDeadline) {
+        await new Promise(r => setTimeout(r, 50));
+      }
       await waitForGraphQLIdle(gqlLog, { idleMs: 500, timeoutMs: 15000, sinceIndex });
       const ms = performance.now() - lastKeystrokeTs;
       const { count, bytes } = countAndSumSince(gqlLog, sinceIndex);
@@ -342,6 +350,10 @@ const scenarios = {
       const sinceIndex = gqlLog.length;
       const t0 = performance.now();
       await setReactInputValue(page, SEARCH_INPUT_SELECTOR, ctx.sampleCorrelationId);
+      const pasteDeadline = performance.now() + 3000;
+      while (gqlLog.length === sinceIndex && performance.now() < pasteDeadline) {
+        await new Promise(r => setTimeout(r, 50));
+      }
       await waitForGraphQLIdle(gqlLog, { idleMs: 400, timeoutMs: 15000, sinceIndex });
       const ms = performance.now() - t0;
       const { count, bytes } = countAndSumSince(gqlLog, sinceIndex);

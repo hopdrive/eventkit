@@ -35,7 +35,8 @@ import {
   startOfMinute,
   eachMinuteOfInterval,
 } from 'date-fns';
-import { NetworkStatus } from '@apollo/client';
+import { NetworkStatus, useQuery } from '@apollo/client';
+import { parse } from 'graphql';
 import DatabaseConnectionStatus from './DatabaseConnectionStatus';
 import { usePolling } from '../contexts/PollingContext';
 import { useSystemStatus } from '../hooks/useSystemStatus';
@@ -149,11 +150,13 @@ const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   const totalJobsFailed = data?.invocations_aggregate?.aggregate?.sum?.total_jobs_failed || 0;
   const successRate = totalJobsRun > 0 ? Math.round((totalJobsSucceeded / totalJobsRun) * 100) : 100;
 
-  // Process hourly metrics for charts from invocations data
-  // Generate all intervals in the selected range, filling in zeros for intervals with no data
-  const hourlyMetrics = useMemo(() => {
-    // Use chart-specific data (all records, minimal fields)
-    const invocations = data?.invocations_chart || [];
+  // Chart buckets (perf fix P4/P8): the legacy query fetched EVERY invocation row in the
+  // time range (created_at + status) on every poll and bucketed client-side — at prod
+  // volume that's a repeating full-range scan shipped to the browser. Instead we compute
+  // the bucket boundaries here and ask Postgres for per-bucket aggregate counts (each an
+  // index-only scan on created_at). bucketSpec recomputes when the main query polls, so
+  // the window keeps sliding.
+  const bucketSpec = useMemo(() => {
     const now = new Date();
     let startDate: Date;
     let intervals: Date[];
@@ -217,37 +220,45 @@ const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         getIntervalStart = startOfHour;
     }
 
-    // Initialize all intervals with zero values
-    const intervalMap = new Map<string, { hour: string; total: number; successful: number; failed: number }>();
-    intervals.forEach(intervalDate => {
-      const intervalKey = formatKey(intervalDate);
-      intervalMap.set(intervalKey, { hour: intervalKey, total: 0, successful: 0, failed: 0 });
-    });
+    // getIntervalStart is no longer needed — Postgres does the bucketing.
+    void getIntervalStart;
 
-    // Fill in actual data
-    invocations.forEach(inv => {
-      const invDate = new Date(inv.created_at);
-      const intervalStart = getIntervalStart(invDate);
-      const intervalKey = formatKey(intervalStart);
-      if (intervalMap.has(intervalKey)) {
-        const entry = intervalMap.get(intervalKey)!;
-        entry.total += 1;
-        if (inv.status === 'completed') entry.successful += 1;
-        if (inv.status === 'failed') entry.failed += 1;
-      }
-    });
+    return intervals.map((d, i) => ({
+      key: formatKey(d),
+      startIso: d.toISOString(),
+      endIso: (intervals[i + 1] ?? new Date(now.getTime() + 60 * 60 * 1000)).toISOString(),
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeRangeOption, data]);
 
-    return Array.from(intervalMap.values()).sort((a, b) => {
-      // For date strings like "MMM d", we need to parse them, but for "HH:mm" we can compare directly
-      if (timeRangeOption === '7d') {
-        // Parse dates for proper sorting
-        const dateA = new Date(a.hour);
-        const dateB = new Date(b.hour);
-        return dateA.getTime() - dateB.getTime();
-      }
-      return a.hour.localeCompare(b.hour);
-    });
-  }, [data?.invocations_chart, timeRangeOption]);
+  // One aliased aggregate pair per bucket (total + failed + completed), built at runtime
+  // because the bucket count varies by range (12–24). Each predicate hits the
+  // (created_at) index; the whole document is one round-trip.
+  const bucketDoc = useMemo(() => {
+    const parts = bucketSpec.map(
+      (b, i) => `
+      t${i}: invocations_aggregate(where: { created_at: { _gte: "${b.startIso}", _lt: "${b.endIso}" } }) { aggregate { count } }
+      s${i}: invocations_aggregate(where: { created_at: { _gte: "${b.startIso}", _lt: "${b.endIso}" }, status: { _eq: "completed" } }) { aggregate { count } }
+      f${i}: invocations_aggregate(where: { created_at: { _gte: "${b.startIso}", _lt: "${b.endIso}" }, status: { _eq: "failed" } }) { aggregate { count } }`
+    );
+    // graphql.parse() (not the gql tag/call) so graphql-codegen's document plucker
+    // doesn't try to statically parse this runtime-built document.
+    return parse(`query ChartBuckets { ${parts.join('\n')} }`);
+  }, [bucketSpec]);
+
+  const { data: bucketData } = useQuery(bucketDoc, {
+    fetchPolicy: 'cache-and-network',
+    errorPolicy: 'all',
+  });
+
+  const hourlyMetrics = useMemo(() => {
+    return bucketSpec.map((b, i) => ({
+      hour: b.key,
+      total: (bucketData as any)?.[`t${i}`]?.aggregate?.count ?? 0,
+      successful: (bucketData as any)?.[`s${i}`]?.aggregate?.count ?? 0,
+      failed: (bucketData as any)?.[`f${i}`]?.aggregate?.count ?? 0,
+    }));
+  }, [bucketSpec, bucketData]);
 
   // Get recent invocations for table (limited to 10 records)
   const recentInvocations = data?.invocations_table || [];

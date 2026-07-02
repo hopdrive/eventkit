@@ -1,7 +1,7 @@
 import React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useInvocationTreeFlowQuery } from '../types/generated';
-import { calculateFlowSummary } from './FlowDiagram';
+import { calculateFlowSummary } from '../utils/flowSummary';
 import { useFlowPositioning } from '../hooks/useFlowPositioning';
 import FlowSummary from './FlowSummary';
 

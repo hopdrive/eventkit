@@ -32,6 +32,12 @@ query InvocationsList(
     }
   }
 
+}
+
+# Count split from the rows query (perf round 3): an exact COUNT over a broad search
+# match (e.g. 45k rows) costs seconds, while the LIMIT-50 rows return in <1s. The
+# table renders rows immediately and the count streams in when this resolves.
+query InvocationsCount($where: invocations_bool_exp = {}) {
   invocations_aggregate(where: $where) {
     aggregate {
       count

@@ -24,7 +24,7 @@ import {
   CircleStackIcon,
 } from '@heroicons/react/24/outline';
 import InvocationDetailDrawer from './InvocationDetailDrawer';
-import { useInvocationsListQuery } from '../types/generated';
+import { useInvocationsListQuery, useInvocationsCountQuery } from '../types/generated';
 import { Node } from 'reactflow';
 import { formatRelativeTime } from '../utils/formatTime';
 
@@ -137,9 +137,20 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
     notifyOnNetworkStatusChange: false,
   });
 
+  // Count runs as its own query (perf round 3): exact counts over broad matches cost
+  // seconds while the LIMIT-50 rows return sub-second — rows render first, count
+  // streams in.
+  const { data: countData, previousData: prevCountData } = useInvocationsCountQuery({
+    variables: { where: where as any },
+    fetchPolicy: 'cache-and-network',
+    errorPolicy: 'all',
+  });
+
   // Keep the previous page rendered while the next loads (no spinner flash between pages).
   const activeData = queryData ?? previousData;
-  const totalCount = activeData?.invocations_aggregate?.aggregate?.count ?? 0;
+  const activeCount = (countData ?? prevCountData)?.invocations_aggregate?.aggregate?.count;
+  const totalCount = activeCount ?? 0;
+  const countKnown = activeCount !== undefined;
 
   const invocationsData = useMemo(() => {
     const invocations = activeData?.invocations || [];
@@ -415,7 +426,13 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
-    pageCount: Math.max(1, Math.ceil(totalCount / pagination.pageSize)),
+    // Until the count resolves, assume at least one more page whenever the current
+    // page came back full, so Next stays usable.
+    pageCount: countKnown
+      ? Math.max(1, Math.ceil(totalCount / pagination.pageSize))
+      : invocationsData.length === pagination.pageSize
+        ? pagination.pageIndex + 2
+        : pagination.pageIndex + 1,
     getCoreRowModel: getCoreRowModel(),
     debugTable: false,
   });
@@ -462,7 +479,7 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
           <div>
             <h2 className='text-xl font-semibold text-gray-900 dark:text-white'>Invocations</h2>
             <p className='mt-1 text-sm text-gray-600 dark:text-gray-400'>
-              {totalCount.toLocaleString()} invocations{loading ? ' · refreshing…' : ''}
+              {countKnown ? `${totalCount.toLocaleString()} invocations` : 'Counting…'}{loading ? ' · refreshing…' : ''}
             </p>
           </div>
 
@@ -613,7 +630,7 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
             <span className='font-medium'>
               {Math.min((pagination.pageIndex + 1) * pagination.pageSize, totalCount)}
             </span>{' '}
-            of <span className='font-medium'>{totalCount.toLocaleString()}</span> results
+            of <span className='font-medium'>{countKnown ? totalCount.toLocaleString() : '…'}</span> results
           </div>
           <div className='flex items-center space-x-2'>
             <select

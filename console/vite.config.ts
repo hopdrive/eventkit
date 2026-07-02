@@ -45,6 +45,16 @@ export default defineConfig(({ mode }) => {
         input: {
           main: path.resolve(__dirname, 'index.html'),
         },
+        output: {
+          // Perf fix P9: split the heavyweights so the initial route doesn't pay for
+          // reactflow/recharts, and vendor code caches independently of app code.
+          manualChunks: {
+            reactflow: ['reactflow'],
+            recharts: ['recharts'],
+            apollo: ['@apollo/client', 'graphql'],
+            react: ['react', 'react-dom', 'react-router-dom'],
+          },
+        },
       },
     },
     define: {

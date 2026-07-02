@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, useSearchParams } from 'react-router-dom';
 import { ApolloClient, InMemoryCache, ApolloProvider, createHttpLink } from '@apollo/client';
 import {
@@ -12,8 +12,9 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import OverviewDashboard from './components/OverviewDashboard';
 import InvocationsTable from './components/InvocationsTable';
-import FlowDiagram, { calculateFlowSummary } from './components/FlowDiagram';
 import Analytics from './components/Analytics';
+// Code-split the reactflow-heavy flow page (perf fix P9): it only loads when visited.
+const FlowDiagram = React.lazy(() => import('./components/FlowDiagram'));
 import Settings from './components/Settings';
 import CorrelationSearch from './components/CorrelationSearch';
 import FlowHeader from './components/FlowHeader';
@@ -316,7 +317,14 @@ function App() {
                 element={<OverviewDashboard correlationSearch={correlationSearch} timeRange={timeRange} />}
               />
               <Route path='/invocations' element={<InvocationsTable correlationSearch={correlationSearch} />} />
-              <Route path='/flow' element={<FlowDiagram />} />
+              <Route
+                path='/flow'
+                element={
+                  <Suspense fallback={<div className='h-full flex items-center justify-center text-gray-500'>Loading flow…</div>}>
+                    <FlowDiagram />
+                  </Suspense>
+                }
+              />
               <Route path='/analytics' element={<Analytics />} />
               <Route path='/settings' element={<Settings />} />
             </Routes>
