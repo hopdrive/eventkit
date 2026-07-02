@@ -53,13 +53,28 @@ function namedImports(clause) {
     .filter(Boolean);
 }
 
+// guide.html wraps code in syntax-highlight <span> tags, so strip tags + decode the
+// entities that appear inside import statements before scanning, or every guide import
+// would be silently skipped.
+function stripHtml(html) {
+  return html
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&rsquo;/g, "'");
+}
+
 const failures = [];
 let checked = 0;
 
 for (const file of DOC_FILES) {
   const full = path.join(ROOT, file);
   if (!fs.existsSync(full)) continue;
-  const text = fs.readFileSync(full, 'utf8');
+  let text = fs.readFileSync(full, 'utf8');
+  if (file.endsWith('.html')) text = stripHtml(text);
   for (const { clause, specifier } of importStatements(text)) {
     const entry = entryFor(specifier);
     if (!entry) {
