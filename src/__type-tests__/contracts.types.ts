@@ -99,3 +99,28 @@ const deadContext: EventKitPlugin = {
   augmentJobContext: () => ({ context: { foo: 1 } }),
 };
 void deadContext;
+
+// ── D32: `prepare`'s inferred return type flows into `resolve`/`respond`'s ctx.prepared ──
+// The inferred TPrepared is threaded through defineEvent, so these seams read prepared
+// data with NO cast and NO restatement. A missing/misspelled prepared key is a compile error.
+void defineEvent({
+  name: 'ok.typed.prepare.resolve',
+  detector,
+  prepare: () => ({ base: 10, label: 'x' }),
+  // ctx.prepared is typed as { base: number; label: string } — arithmetic + string ops type-check
+  resolve: ctx => ({ total: ctx.prepared.base + 5, upper: ctx.prepared.label.toUpperCase() }),
+});
+
+void defineEvent({
+  name: 'ok.typed.prepare.respond',
+  detector,
+  prepare: async () => ({ threshold: 3 }),
+  jobs: [job(work)],
+  respond: (ctx, { ok }) => ({ ok, over: ctx.prepared.threshold > 0 }),
+});
+
+// @ts-expect-error `missing` is not a key of the inferred prepared type { base: number }
+void defineEvent({ name: 'bad.prepared.key', detector, prepare: () => ({ base: 1 }), resolve: ctx => ctx.prepared.missing });
+
+// @ts-expect-error prepared.base is a number — `.toUpperCase()` is not a number method
+void defineEvent({ name: 'bad.prepared.type', detector, prepare: () => ({ base: 1 }), resolve: ctx => ctx.prepared.base.toUpperCase() });

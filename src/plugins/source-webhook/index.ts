@@ -95,7 +95,7 @@ export interface WebhookSource extends EventKitPlugin {
   detector<TBody = unknown>(fn: (ctx: WebhookDetectorContext<TBody>) => boolean | Promise<boolean>): DetectorFunction<TBody>;
   prepare<TBody = unknown, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
     fn: (ctx: WebhookHandlerContext<TBody>) => TPrepared | Promise<TPrepared>,
-  ): PrepareFunction<TBody>;
+  ): PrepareFunction<TBody, Record<string, unknown>, TPrepared>;
   resolve<TBody = unknown, TOutput = unknown>(
     fn: (ctx: JobInputContext<TBody> & WebhookFields<TBody>) => TOutput | Promise<TOutput>,
   ): ResolveFunction<TBody>;
@@ -149,8 +149,11 @@ export function webhook(config: WebhookConfig): WebhookSource {
     detector(fn) {
       return fn as unknown as DetectorFunction;
     },
-    prepare(fn) {
-      return fn as unknown as PrepareFunction;
+    // Generic identity wrapper preserving the inferred TPrepared into PrepareFunction (D32).
+    prepare<TBody = unknown, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
+      fn: (ctx: WebhookHandlerContext<TBody>) => TPrepared | Promise<TPrepared>,
+    ): PrepareFunction<TBody, Record<string, unknown>, TPrepared> {
+      return fn as unknown as PrepareFunction<TBody, Record<string, unknown>, TPrepared>;
     },
     resolve(fn) {
       return fn as unknown as ResolveFunction;

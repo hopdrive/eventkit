@@ -109,11 +109,16 @@ export interface EventModuleMetadata {
 export interface EventModule<
   TPayload = unknown,
   TMeta extends Record<string, unknown> = Record<string, unknown>,
+  TPrepared extends Record<string, unknown> = Record<string, unknown>,
 > {
   name: EventName;
   detector: DetectorFunction<TPayload, TMeta>;
-  /** Optional once-per-event data preparation merged into every job's input. */
-  prepare?: PrepareFunction<TPayload, TMeta>;
+  /**
+   * Optional once-per-event data preparation merged into every job's input. Its inferred
+   * return type `TPrepared` flows into `resolve`/`respond`'s `ctx.prepared` (D32), so those
+   * seams read prepared data with no restatement.
+   */
+  prepare?: PrepareFunction<TPayload, TMeta, TPrepared>;
   /**
    * Static array of fire-and-forget jobs the runtime runs when the event is detected.
    * Each entry is a `job(fn, opts)` OR a bare job function — a bare function is sugar for
@@ -132,7 +137,7 @@ export interface EventModule<
    * run alongside as sibling-ignorant side effects — `resolve` never reads their results.
    * Mutually exclusive with `respond`.
    */
-  resolve?: ResolveFunction<TPayload, TMeta>;
+  resolve?: ResolveFunction<TPayload, TMeta, TPrepared>;
   /**
    * Result-driven response seam (ADR-026 amendment): like `resolve`, but sequenced AFTER
    * the jobs settle and handed their `JobsResult` (`{ jobs, ok }`) so the synchronous reply
@@ -140,7 +145,7 @@ export interface EventModule<
    * least one job. The fire-and-forget guarantee is unchanged — jobs keep their own retry
    * and durability; `respond` only reads their executions to shape the reply.
    */
-  respond?: RespondFunction<TPayload, TMeta>;
+  respond?: RespondFunction<TPayload, TMeta, TPrepared>;
   /** Run options for this module's job set (defaults pinned: parallel + continue). */
   run?: RunOptions;
   metadata?: EventModuleMetadata;
@@ -155,6 +160,11 @@ export interface EventModule<
 export function defineEvent<
   TPayload = unknown,
   TMeta extends Record<string, unknown> = Record<string, unknown>,
->(module: Omit<EventModule<TPayload, TMeta>, 'name'> & { name: string }): EventModule<TPayload, TMeta> {
+  TPrepared extends Record<string, unknown> = Record<string, unknown>,
+>(
+  module: Omit<EventModule<TPayload, TMeta, TPrepared>, 'name'> & { name: string },
+): EventModule<TPayload, TMeta, TPrepared> {
+  // TPrepared is inferred from `prepare`'s return type (D32) and threaded into
+  // `resolve`/`respond`'s `ctx.prepared`, so those seams are typed without restatement.
   return { ...module, name: asEventName(module.name) };
 }

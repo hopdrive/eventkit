@@ -139,7 +139,7 @@ describe('appointment.ready detector (insert/update/delete/manual/malformed)', (
 });
 
 describe('appointment.ready end to end through a Hasura kit', () => {
-  it('detects an UPDATE→ready and runs both jobs with row data', async () => {
+  it('detects an UPDATE→ready and runs the jobs with row data', async () => {
     const kit = createEventKit(hasuraEvent).registerEvents([appointmentReady]);
     const appt: AppointmentRow = { id: 42, status: 'ready', customer_id: 9 };
     const result = await kit.handle(payload('UPDATE', { id: 42, status: 'pending' }, appt));
@@ -147,9 +147,21 @@ describe('appointment.ready end to end through a Hasura kit', () => {
     expect(result.events).toHaveLength(1);
     expect(result.events[0]!.detected).toBe(true);
     const jobs = result.events[0]!.jobs;
-    expect(jobs.map(j => j.jobName).sort()).toEqual(['sendAppointmentOfferedEmailToOrg', 'sendOfferSMS']);
+    expect(jobs.map(j => j.jobName).sort()).toEqual(['notifyCustomer', 'sendAppointmentOfferedEmailToOrg', 'sendOfferSMS']);
     expect(jobs.every(j => j.status === 'completed')).toBe(true);
     expect(jobs.find(j => j.jobName === 'sendOfferSMS')!.output).toEqual({ sent: 'sms', appointmentId: 42 });
+    // customer_id present → notifyCustomer did work (no ctx.skip / conditionNotMet)
+    expect(jobs.find(j => j.jobName === 'notifyCustomer')!.metadata['conditionNotMet']).toBeUndefined();
+    expect(result.ok).toBe(true);
+  });
+
+  it('a ready appointment with no customer → notifyCustomer records ctx.skip (condition_not_met), still completed', async () => {
+    const kit = createEventKit(hasuraEvent).registerEvents([appointmentReady]);
+    const result = await kit.handle(payload('UPDATE', { id: 7, status: 'pending' }, { id: 7, status: 'ready', customer_id: null }));
+
+    const notify = result.events[0]!.jobs.find(j => j.jobName === 'notifyCustomer')!;
+    expect(notify.status).toBe('completed');
+    expect(notify.metadata['conditionNotMet']).toEqual({ reason: 'no customer on this appointment' });
     expect(result.ok).toBe(true);
   });
 

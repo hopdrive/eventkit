@@ -77,13 +77,29 @@ const sendAppointmentOfferedEmailToOrg = (ctx: JobContext<OfferInput>) => {
   return { sent: 'email', appointmentId: appointment?.id ?? null };
 };
 
+// Pattern-B job (ADR-035): unconditional in the array, short-circuits with ctx.skip when
+// it has no work. The skip records `condition_not_met` with a reason so the no-op is
+// visible in observability — not a silent `return`.
+const notifyCustomer = (ctx: JobContext<OfferInput>) => {
+  const { input, log } = ctx;
+  const customerId = input.appointment?.customer_id;
+  if (!customerId) return ctx.skip('no customer on this appointment');
+  log.info('Notifying customer', { customerId });
+  input.sdk.notify('sms', customerId);
+};
+
 // The module is a declarative record: detector + prepare + a STATIC jobs array.
 // No conditional inclusion is possible — there is no handler body to branch in.
+//
+// D32: `prepare`'s inferred return type is threaded through `defineEvent` into
+// `resolve`/`respond`'s `ctx.prepared` — no cast, no restatement. See the compile-checked
+// fixtures in `src/__type-tests__/contracts.types.ts` (`ok.typed.prepare.resolve` /
+// `ok.typed.prepare.respond`) for that guarantee under test.
 export const appointmentReady = defineEvent({
   name: 'appointment.ready',
   detector,
   prepare,
   // Bare job functions — auto-wrapped to job(fn); the job name comes from fn.name.
   // Wrap in job(fn, {…}) only when a job needs options (retries, timeoutMs, input, …).
-  jobs: [sendOfferSMS, sendAppointmentOfferedEmailToOrg],
+  jobs: [sendOfferSMS, sendAppointmentOfferedEmailToOrg, notifyCustomer],
 });

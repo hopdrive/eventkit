@@ -48,7 +48,7 @@ export interface FakeSource extends EventKitPlugin {
   ): DetectorFunction<TPayload>;
   prepare<TPayload = unknown, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
     fn: (ctx: FakeHandlerContext<TPayload>) => TPrepared | Promise<TPrepared>,
-  ): PrepareFunction<TPayload>;
+  ): PrepareFunction<TPayload, Record<string, unknown>, TPrepared>;
 }
 
 /**
@@ -82,8 +82,11 @@ export function fakeSource(opts?: { correlationId?: string }): FakeSource {
     detector(fn) {
       return fn as unknown as DetectorFunction;
     },
-    prepare(fn) {
-      return fn as unknown as PrepareFunction;
+    // Generic identity wrapper preserving the inferred TPrepared into PrepareFunction (D32).
+    prepare<TPayload = unknown, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
+      fn: (ctx: FakeHandlerContext<TPayload>) => TPrepared | Promise<TPrepared>,
+    ): PrepareFunction<TPayload, Record<string, unknown>, TPrepared> {
+      return fn as unknown as PrepareFunction<TPayload, Record<string, unknown>, TPrepared>;
     },
   };
 }

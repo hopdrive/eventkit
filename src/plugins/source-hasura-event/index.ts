@@ -28,7 +28,7 @@ export interface HasuraEventSource extends EventKitPlugin {
   ): DetectorFunction<HasuraEventPayload<TNewRow, TOldRow>>;
   prepare<TNewRow = Record<string, unknown>, TOldRow = TNewRow, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
     fn: (ctx: HasuraHandlerContext<TNewRow, TOldRow>) => TPrepared | Promise<TPrepared>,
-  ): PrepareFunction<HasuraEventPayload<TNewRow, TOldRow>>;
+  ): PrepareFunction<HasuraEventPayload<TNewRow, TOldRow>, Record<string, unknown>, TPrepared>;
 }
 
 export const hasuraEvent: HasuraEventSource = {
@@ -39,8 +39,12 @@ export const hasuraEvent: HasuraEventSource = {
   detector(fn) {
     return fn as unknown as DetectorFunction;
   },
-  prepare(fn) {
-    return fn as unknown as PrepareFunction;
+  // Generic identity wrapper: repeats the signature so the inferred `TPrepared` is
+  // preserved into `PrepareFunction`'s 3rd slot (D32) rather than erased to the default.
+  prepare<TNewRow = Record<string, unknown>, TOldRow = TNewRow, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
+    fn: (ctx: HasuraHandlerContext<TNewRow, TOldRow>) => TPrepared | Promise<TPrepared>,
+  ): PrepareFunction<HasuraEventPayload<TNewRow, TOldRow>, Record<string, unknown>, TPrepared> {
+    return fn as unknown as PrepareFunction<HasuraEventPayload<TNewRow, TOldRow>, Record<string, unknown>, TPrepared>;
   },
   // Shape-3 capabilities.
   normalize(raw: unknown, request: RequestContext): EventEnvelope {
