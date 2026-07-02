@@ -24,7 +24,7 @@
 // `batch_jobs` row via `store.enqueueDelayed` (delay_ms + delay_key dedup), exactly
 // like the legacy `createDelayedBatchJob`. Off by default (no behavior change).
 import type { EventKitPlugin, JobContext, JobExecution, LogEntry } from '../../core/index.js';
-import { replaceCircularReferences } from '../../core/index.js';
+import { assertSerializableMetadata, stripNonSerializable } from '../../core/index.js';
 import { getNewRow, getOldRow } from '../hasura-shared/payload.js';
 
 /** Lifecycle states of a `batch_jobs` row (§12.1). */
@@ -122,7 +122,10 @@ export function batch(config: BatchConfig): EventKitPlugin {
     }
   };
 
-  const scrub = (v: unknown): unknown => replaceCircularReferences(v);
+  // Strip live infrastructure clients (sdk/Apollo/graphql-request) + circular refs before
+  // persisting, so a job that returns something holding a live client degrades gracefully
+  // instead of corrupting the write (D13).
+  const scrub = (v: unknown): unknown => stripNonSerializable(v);
 
   /** Build the `output` jsonb: the job's result + accumulated logs + error, folded into one object. */
   const composeOutput = (id: RowId, result?: unknown, error?: unknown): unknown => {
@@ -187,6 +190,10 @@ export function batch(config: BatchConfig): EventKitPlugin {
     async onJobStart(ctx: JobContext) {
       const row = rowFor(ctx);
       if (!row) return;
+      // Fail-fast BEFORE the first persist (D13): job metadata MUST be JSON-serializable.
+      // A non-serializable value (a live client, a closure) throws NAMING the key — routed
+      // to onError as a loud breadcrumb rather than silently mangled at write time.
+      assertSerializableMetadata(ctx.job.metadata, `job('${String(ctx.job.name)}').metadata`);
       buffers.set(row.id, []);
       if (intervalMs && intervalMs > 0) {
         const timer = setInterval(() => void flushLogs(row.id), intervalMs);

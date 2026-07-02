@@ -37,6 +37,7 @@ export type { LogLevel, LogEntry, DetectorLogger, HandlerLogger, JobLogger } fro
 // ── Errors + serialization ──────────────────────────────────────────────────
 export type { SerializedError, ErrorContext, ErrorPhase } from './errors.js';
 export { serializeError, serializeOutput, replaceCircularReferences, ClientError, ActionError, isClientError } from './errors.js';
+export { getNonSerializableLabel, stripNonSerializable, assertSerializableMetadata, NonSerializableMetadataError } from './serialize.js';
 
 // ── Envelope + detected event ────────────────────────────────────────────────
 export type { EventSourceType, EventEnvelope, DetectedEvent } from './envelope.js';

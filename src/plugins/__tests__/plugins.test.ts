@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createEventKit, job, asEventName, type EventModule, type JobContext } from '../../index.js';
+import { createEventKit, job, asEventName, assertSerializableMetadata, type EventModule, type JobContext } from '../../index.js';
 import { fakeSource, defineFakeEvent } from '../../testing/index.js';
 import { hasuraEvent } from '../source-hasura.js';
 import { loopGuard, createTokenCodec } from '../loop-guard/index.js';
@@ -573,6 +573,47 @@ describe('batch', () => {
       .use(batch, { store: { update: () => {} } })
       .registerEvents([{ name: asEventName('e'), detector, jobs: [] } as unknown as EventModule]);
     expect(() => kit.validate()).toThrow(/source:hasura/);
+  });
+
+  // ── D13: metadata serializability fail-fast + client-stripping ─────────────
+  it('assertSerializableMetadata throws NAMING the offending key (live client, function)', () => {
+    const sdkLike = { apollo: { cache: {} } };
+    expect(() => assertSerializableMetadata({ ok: 1, deps: { sdk: sdkLike } }, 'meta'))
+      .toThrow(/meta\.deps\.sdk.*live sdk/);
+    expect(() => assertSerializableMetadata({ handler: () => 1 }, 'meta'))
+      .toThrow(/meta\.handler.*function/);
+    expect(() => assertSerializableMetadata({ ok: 1, nested: { fine: 'yes' } })).not.toThrow();
+  });
+
+  it('non-serializable job metadata + Batch registered → fails loud via onError, naming the key', async () => {
+    const errors: string[] = [];
+    const errspy = { name: 'errspy', onError: (c: { error: { message: string } }) => void errors.push(c.error.message) };
+    const detector = hasuraEvent.detector(ctx => ctx.operation === 'INSERT');
+    const kit = createEventKit(hasuraEvent)
+      .use(errspy)
+      .use(batch, { store: { update: () => {} } })
+      .registerEvents([
+        // a live sdk-like client wrongly placed in the serializable metadata channel
+        { name: asEventName('batch.created'), detector, jobs: [job(() => 'ok', { name: 'proc', metadata: { client: { apollo: {} } } })] } as EventModule,
+      ]);
+    await kit.handle(hasuraInsert({ id: 'row-x', input: {} }));
+
+    expect(errors.some(m => /metadata.*client.*live sdk/i.test(m))).toBe(true);
+  });
+
+  it('a live client in a job result is stripped from the persisted batch output, not corrupting the write', async () => {
+    const updates: Array<{ id: string | number; fields: BatchJobUpdate }> = [];
+    const detector = hasuraEvent.detector(ctx => ctx.operation === 'INSERT');
+    const sdkLike = { apollo: { cache: {} } };
+    const kit = createEventKit(hasuraEvent)
+      .use(batch, { store: { update: (id, fields) => void updates.push({ id, fields }) } })
+      .registerEvents([
+        { name: asEventName('batch.created'), detector, jobs: [job(() => ({ sdk: sdkLike, ok: 'value' }), { name: 'proc' })] } as EventModule,
+      ]);
+    await kit.handle(hasuraInsert({ id: 'row-z', input: {} }));
+
+    const done = updates.find(u => u.fields.status === 'done')!;
+    expect((done.fields.output as { result: Record<string, unknown> }).result).toEqual({ sdk: '[sdk excluded]', ok: 'value' });
   });
 });
 

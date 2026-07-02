@@ -4,29 +4,8 @@
 // duck-typed and excluded immediately; everything else is walked to a depth limit
 // (a safety net for unknown circular structures) and over-large payloads are
 // summarized. This guards `source_event_payload`, job `result`, and job metadata.
-
-const getNonSerializableLabel = (value: Record<string, unknown>): string | null => {
-  const v = value as Record<string, unknown> & {
-    apollo?: unknown;
-    config?: { apollo_client?: unknown };
-    gql?: { query?: unknown; mutation?: unknown };
-    queryManager?: unknown;
-    cache?: unknown;
-    link?: unknown;
-    url?: unknown;
-    request?: unknown;
-    rawRequest?: unknown;
-  };
-  // SDK wrapping an Apollo client (e.g. @hopdrive/sdk) — check before Apollo itself.
-  if (v.apollo && typeof v.apollo === 'object') return 'sdk';
-  if (v.config?.apollo_client) return 'sdk';
-  if (v.gql && typeof v.gql.query === 'function' && typeof v.gql.mutation === 'function') return 'sdk';
-  // Apollo Client instance.
-  if (v.queryManager && v.cache && v.link) return 'Apollo Client';
-  // graphql-request-style client.
-  if (v.url && typeof v.request === 'function' && typeof v.rawRequest === 'function') return 'GraphQL client';
-  return null;
-};
+// The live-client duck-typing is shared with Batch via core (D13).
+import { getNonSerializableLabel } from '../../core/index.js';
 
 const walk = (value: unknown, depth: number, maxDepth: number, seen: WeakSet<object>): unknown => {
   if (value === null || value === undefined) return value;
