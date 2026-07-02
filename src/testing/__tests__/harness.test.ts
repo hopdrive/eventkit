@@ -187,6 +187,18 @@ describe('expectFlow', () => {
     const kit = createEventKit(hasuraEvent).registerEvents([mod]);
     expect(() => expectFlow(kit).event('e').hasJobs('a', 'b')).toThrow(/mismatch/);
   });
+
+  it('throws on unknown event, event-set mismatch, missing job, and wrong response kind', () => {
+    const mod = defineEvent({ name: 'e', detector: hasuraEvent.detector(() => true), jobs: [job(() => {}, { name: 'a' })] });
+    const kit = createEventKit(hasuraEvent).registerEvents([mod]);
+    expect(() => expectFlow(kit).event('nope').exists()).toThrow(/no such event/);
+    expect(() => expectFlow(kit).hasEvents('e', 'other')).toThrow(/events mismatch/);
+    expect(() => expectFlow(kit).event('e').hasJob('missing')).toThrow(/not found/);
+    expect(() => expectFlow(kit).event('e').respondsWith('resolve')).toThrow(/response is 'none'/);
+    // happy accessors
+    expect(expectFlow(kit).eventNames()).toEqual(['e']);
+    expect(expectFlow(kit).event('e').jobNames()).toEqual(['a']);
+  });
 });
 
 describe('proto-Compare: assertObservedWithinFlow (ADR-037)', () => {

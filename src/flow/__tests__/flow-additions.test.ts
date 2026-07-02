@@ -38,6 +38,19 @@ describe('toFlowGraph: effects schema (ADR-037) + repo/function origin', () => {
     const source = nodes.find(n => n.kind === 'source');
     expect(source?.metadata).toEqual({ repo: 'db-moves', function: 'moves-event' });
   });
+
+  it('labels an unknown effect type by its bare type', () => {
+    const kit = createEventKit(hasuraEvent).registerEvents([
+      defineEvent({
+        name: 'e',
+        detector: hasuraEvent.detector(() => true),
+        jobs: [job(() => {}, { name: 'j', metadata: { effects: [{ type: 'queue-publish' }] } })],
+      }),
+    ]);
+    const { nodes } = toFlowGraph(kit);
+    expect(nodes.some(n => n.kind === 'sideEffect' && n.id.includes('queue-publish'))).toBe(true);
+    expect(toFlowMermaid(kit)).toContain('queue-publish');
+  });
 });
 
 describe('toFlowYaml: repo/function reservation', () => {

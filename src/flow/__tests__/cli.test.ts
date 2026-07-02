@@ -122,4 +122,48 @@ describe('eventkit-flow CLI', () => {
     expect(code).toBe(1);
     expect(err.join('')).toContain('not found');
   });
+
+  it('simulate errors (exit 1) when --payload is omitted', async () => {
+    const code = await runCli(['simulate', '--kit', KIT]);
+    expect(code).toBe(1);
+    expect(err.join('')).toContain('requires --payload');
+  });
+
+  it('simulate errors (exit 1) on malformed JSON', async () => {
+    const payload = resolve(tmpdir(), `eventkit-sim-bad-${process.pid}.json`);
+    try {
+      writeFileSync(payload, '{ not: valid json', 'utf8');
+      const code = await runCli(['simulate', '--kit', KIT, '--payload', payload]);
+      expect(code).toBe(1);
+      expect(err.join('')).toContain('could not parse');
+    } finally {
+      rmSync(payload, { force: true });
+    }
+  });
+
+  it('simulate reports when no events would fire', async () => {
+    const kitNoFire = resolve(here, 'fixtures/kit-nofire.ts');
+    const payload = resolve(tmpdir(), `eventkit-sim-none-${process.pid}.json`);
+    try {
+      writeFileSync(payload, JSON.stringify({ x: 1 }), 'utf8');
+      const code = await runCli(['simulate', '--kit', kitNoFire, '--payload', payload]);
+      expect(code).toBe(0);
+      expect(out.join('')).toContain('No events would fire');
+    } finally {
+      rmSync(payload, { force: true });
+    }
+  });
+
+  it('simulate surfaces a detector crash on stderr (still exit 0)', async () => {
+    const kitCrash = resolve(here, 'fixtures/kit-crash.ts');
+    const payload = resolve(tmpdir(), `eventkit-sim-crash-${process.pid}.json`);
+    try {
+      writeFileSync(payload, JSON.stringify({ x: 1 }), 'utf8');
+      const code = await runCli(['simulate', '--kit', kitCrash, '--payload', payload]);
+      expect(code).toBe(0);
+      expect(err.join('')).toContain('detector threw');
+    } finally {
+      rmSync(payload, { force: true });
+    }
+  });
 });
