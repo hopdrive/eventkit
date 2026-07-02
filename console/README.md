@@ -70,7 +70,21 @@ In production (Netlify), log requests go to `/api/grafana/*`, which is redirecte
 
 ## Local database & seed data
 
-See `db/local-setup.mjs` (one-time local wiring: creates the `event_detector_observability` database, applies `db/schema.sql`, and points the local Hasura `events` source at it) and `db/seed/seed.mjs` (deterministic seeder for realistic local data). Both are documented in `docs/planning/console-migration-plan.md` §8.
+See `db/local-setup.mjs` (one-time local wiring: creates the `event_detector_observability` database, applies `db/schema.sql`, and points the local Hasura `events` source at it) and `db/seed/seed.mjs` (deterministic seeder for realistic local data, defaults to 5,000 invocations; `npm run seed -- --invocations 200000` for the perf-scale dataset). Both are documented in `docs/planning/console-migration-plan.md` §8.
+
+If Hasura reports the `events` source as inconsistent (e.g. after a container restart) and queries against `invocations`/`event_executions`/`job_executions` fail, re-run `npm run db:setup` — it re-points the source's connection string and reloads metadata; it's idempotent and safe to run any time.
+
+## Perf baseline harness
+
+`perf/measure.mjs` drives the app with headless Chromium (CPU 4x throttle + Fast-3G-ish network) and measures cold loads, search, facets, pagination, the drawer, the flow diagram, and hidden-tab polling — see `docs/planning/console-migration-plan.md` §8 for the full scenario list and targets. Run it against a seeded local dataset and a running dev server:
+
+```
+npm run dev        # in one terminal
+npm run seed -- --invocations 200000
+npm run perf        # writes perf/baseline.json + appends console/PERF.md
+```
+
+Note: at 200k rows under this throttle profile, a *fresh* page load of the dev server (unbundled ES modules, no code-splitting — see plan finding P9) itself takes on the order of a minute before any GraphQL query fires; this dwarfs query-level latency in the `cold-load-*` numbers today. Re-baseline against a production build (`vite build` + `vite preview`) once Phase C3's bundle diet lands to separate the two.
 
 ## Requirements
 
