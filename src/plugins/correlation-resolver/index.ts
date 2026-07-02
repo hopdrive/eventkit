@@ -19,7 +19,7 @@
 // exactly like a `sink`/`store`. Registered AFTER loop-guard, it stands down when the
 // echo-back path (loop-guard) already recovered the lineage (`skipIfResolved`).
 import type { CorrelationId, EventEnvelope, EventKitPlugin } from '../../core/index.js';
-import { asCorrelationId } from '../../core/index.js';
+import { asCorrelationId, ClientError } from '../../core/index.js';
 import { createTokenCodec, type TokenCodec, type TokenCodecConfig } from '../loop-guard/codec.js';
 
 /** What an injected `lookup` returns: the recovered lineage for a vendor key. */
@@ -57,6 +57,15 @@ export interface CorrelationResolverConfig<K = unknown> {
    * hook for logging the orphan (the invocation proceeds as a clean new chain root).
    */
   onMiss?: (envelope: EventEnvelope, key: K | null | undefined) => void;
+  /**
+   * What to do when `lookup` THROWS (a DB blip, not a miss). Default `'ignore'`:
+   * best-effort — the throw propagates and the pre-dispatch pipeline isolates it
+   * (ADR-033), so the event proceeds as an un-correlated new chain root and the error
+   * is logged via `onError`. Set `'reject'` when the correlation is load-bearing and a
+   * transient failure must NOT silently drop the chain: the lookup throw is rethrown as
+   * a branded `ClientError(503)`, which surfaces as a 5xx so the vendor retries.
+   */
+  onLookupError?: 'ignore' | 'reject';
 }
 
 export function correlationResolver<K = unknown>(config: CorrelationResolverConfig<K>): EventKitPlugin {
@@ -64,6 +73,7 @@ export function correlationResolver<K = unknown>(config: CorrelationResolverConf
     throw new Error('correlationResolver() requires `extractKey` and `lookup` functions.');
   }
   const skipIfResolved = config.skipIfResolved !== false;
+  const onLookupError = config.onLookupError ?? 'ignore';
   const codec: TokenCodec = createTokenCodec(config.codec);
 
   return {
@@ -79,7 +89,21 @@ export function correlationResolver<K = unknown>(config: CorrelationResolverConf
         return undefined;
       }
 
-      const resolved = await config.lookup(key);
+      let resolved: ResolvedCorrelation | null | undefined;
+      if (onLookupError === 'reject') {
+        // Load-bearing: a lookup failure must fail the request loudly so the vendor
+        // retries, not degrade to an un-correlated root. Rethrow as a branded ClientError
+        // (5xx) — the pipeline re-throws branded ClientErrors instead of isolating them.
+        try {
+          resolved = await config.lookup(key);
+        } catch (err) {
+          throw new ClientError(503, `correlation-resolver lookup failed; rejecting so the source retries (${String((err as { message?: unknown })?.message ?? err)})`);
+        }
+      } else {
+        // Best-effort (default): let a throw propagate — the pre-dispatch pipeline
+        // isolates it (ADR-033) and the event proceeds as a fresh chain root.
+        resolved = await config.lookup(key);
+      }
       if (!resolved || !resolved.correlationId) {
         config.onMiss?.(envelope, key);
         return undefined;

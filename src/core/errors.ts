@@ -140,6 +140,12 @@ function safeStringify(value: unknown): string {
 // surfaces these onto `InvocationResult.resolved.error`; the source's platform
 // adapter maps them to the wire (HTTP status / Hasura `{message,extensions}`).
 
+// A registry Symbol so the brand survives across bundled module copies (instanceof
+// is unreliable there — same reason ADR-026 duck-types `.status`). `Symbol.for`
+// returns the identical symbol from every copy, and symbols are skipped by
+// JSON.stringify / object spread, so the brand never leaks into a serialized record.
+const CLIENT_ERROR_BRAND = Symbol.for('@hopdrive/eventkit/ClientError');
+
 /**
  * Map the outcome to a specific HTTP status. For status-contract webhook vendors
  * (e.g. Stripe), throwing `ClientError(400, …)` makes the platform respond 400.
@@ -150,7 +156,24 @@ export class ClientError extends Error {
   constructor(status: number, message: string) {
     super(message);
     this.status = status;
+    (this as unknown as Record<symbol, unknown>)[CLIENT_ERROR_BRAND] = true;
   }
+}
+
+/**
+ * True ONLY for an intentional, branded `ClientError` (ADR-033) — even across bundled
+ * module copies. The pre-dispatch fast-path uses this instead of a bare `.status`
+ * duck-type, so a framework error that merely happens to carry a numeric `.status`
+ * (e.g. a DB error from a `correlationResolver` lookup) is NOT mistaken for a
+ * deliberate client response.
+ */
+export function isClientError(err: unknown): err is ClientError {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as Record<symbol, unknown>)[CLIENT_ERROR_BRAND] === true &&
+    typeof (err as { status?: unknown }).status === 'number'
+  );
 }
 
 /**

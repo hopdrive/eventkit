@@ -159,4 +159,38 @@ describe('correlationResolver (ADR-028 Mechanism B — DB lookup)', () => {
     // @ts-expect-error — missing required config
     expect(() => correlationResolver({})).toThrow(/extractKey.*lookup/);
   });
+
+  it('default (best-effort): a lookup throw is isolated — the event proceeds as a fresh root, ok stays true', async () => {
+    // ADR-033: with the pipeline isolating pre-dispatch throws, a transient lookup
+    // failure no longer drops the webhook — it proceeds un-correlated.
+    let corr = '';
+    const kit = createEventKit(acme())
+      .use(correlationResolver, {
+        extractKey: (env: { payload?: { ride_id?: string } }) => ({ externalId: env.payload?.ride_id }),
+        lookup: async () => { throw Object.assign(new Error('db blip'), { status: 500 }); },
+      })
+      .registerEvents([driverAssigned(c => void (corr = c.correlationId))]);
+
+    const res = await fire(kit, { event: 'ride.driver_assigned', ride_id: 'V123' });
+
+    expect(res.ok).toBe(true);            // isolated, not a false success-with-error
+    expect(res.events[0]!.detected).toBe(true);
+    expect(corr).not.toBe(ORIGIN_CORR);   // stayed a fresh chain root
+  });
+
+  it("onLookupError:'reject' rethrows a lookup failure as a 5xx ClientError so the source retries", async () => {
+    const kit = createEventKit(acme())
+      .use(correlationResolver, {
+        extractKey: (env: { payload?: { ride_id?: string } }) => ({ externalId: env.payload?.ride_id }),
+        lookup: async () => { throw new Error('db down'); },
+        onLookupError: 'reject',
+      })
+      .registerEvents([driverAssigned(() => {})]);
+
+    const res = await fire(kit, { event: 'ride.driver_assigned', ride_id: 'V123' });
+
+    expect(res.resolved?.error?.status).toBe(503); // maps to the wire → vendor retries
+    expect(res.resolved?.error?.message).toMatch(/lookup failed/);
+    expect(res.events).toHaveLength(0);            // rejected before dispatch
+  });
 });

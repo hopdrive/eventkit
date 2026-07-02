@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createEventKit, defineEvent, job, ActionError, ClientError, type EventKitPlugin, type JobContext } from '../../index.js';
+import { createEventKit, defineEvent, job, ActionError, ClientError, type EventKitPlugin, type EventEnvelope, type JobContext } from '../../index.js';
 import { fakeSource, defineFakeEvent } from '../../testing/index.js';
 import { netlifyBackgroundPlatform } from '../../plugins/platforms.js';
 
@@ -413,5 +413,90 @@ describe('ADR-026 amendment: respond (result-driven response) runs after jobs an
     const mod = defineEvent({ name: 'bg', detector: always, jobs: [job(() => 1)], respond: () => 1 });
     const kit = createEventKit(fakeSource()).use(netlifyBackgroundPlatform).registerEvents([mod]);
     expect(() => kit.validate()).toThrow(/incompatible with platform/);
+  });
+});
+
+describe('ADR-033: pre-dispatch pipeline hardening', () => {
+  // A spy plugin that records onError fan-outs and counts the always-runs flush hooks.
+  function spy() {
+    const s = { errors: [] as unknown[], flushed: 0, ended: 0 };
+    const plugin: EventKitPlugin = {
+      name: 'spy',
+      onError: ctx => { s.errors.push(ctx); },
+      onFlush: () => { s.flushed++; },
+      onInvocationEnd: () => { s.ended++; },
+    };
+    return { s, plugin };
+  }
+
+  it('isolates a throwing configureInvocation: onError fires, the event still dispatches, flush + end still run', async () => {
+    let jobRan = false;
+    const mod = defineFakeEvent('e', always, [job(() => void (jobRan = true), { name: 'j' })]);
+    const { s, plugin } = spy();
+    const thrower: EventKitPlugin = { name: 'thrower', configureInvocation: () => { throw new Error('config boom'); } };
+    const result = await createEventKit(fakeSource()).use(plugin).use(thrower).registerEvents([mod]).handle('go');
+
+    expect(jobRan).toBe(true);            // one plugin throwing did NOT sink the pipeline
+    expect(result.ok).toBe(true);
+    expect(result.events).toHaveLength(1);
+    expect(s.errors.length).toBeGreaterThanOrEqual(1); // routed to onError
+    expect(s.flushed).toBe(1);            // onFlush ran (finally)
+    expect(s.ended).toBe(1);              // onInvocationEnd ran (finally)
+  });
+
+  it('isolates a throwing augmentEnvelope: onError fires, the event still dispatches, flush runs', async () => {
+    let jobRan = false;
+    const mod = defineFakeEvent('e', always, [job(() => void (jobRan = true), { name: 'j' })]);
+    const { s, plugin } = spy();
+    const thrower: EventKitPlugin = { name: 'thrower', augmentEnvelope: () => { throw new Error('augment boom'); } };
+    const result = await createEventKit(fakeSource()).use(plugin).use(thrower).registerEvents([mod]).handle('go');
+
+    expect(jobRan).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.events).toHaveLength(1);
+    expect(s.errors.length).toBeGreaterThanOrEqual(1);
+    expect(s.flushed).toBe(1);
+  });
+
+  it('a non-ClientError with a numeric .status thrown pre-dispatch → framework 500 (ok:false), never a false ok:true', async () => {
+    // The exact P0-2 hazard: a DB blip whose error carries a numeric `.status`. The old
+    // bare `.status` duck-type would have returned ok:true with the error swallowed.
+    const badSource = {
+      name: 'bad-source',
+      provides: ['source', 'source:bad'],
+      sourceType: 'application',
+      normalize: () => { throw Object.assign(new Error('db blip'), { status: 500 }); },
+    } as unknown as EventKitPlugin;
+    const { s, plugin } = spy();
+    const mod = defineFakeEvent('e', always, [job(() => {})]);
+    const result = await createEventKit(badSource).use(plugin).registerEvents([mod]).handle('go');
+
+    expect(result.ok).toBe(false);              // framework 500 → the vendor retries
+    expect(result.error?.message).toBe('db blip');
+    expect(result.resolved).toBeUndefined();    // NOT the swallowed-into-success path
+    expect(s.flushed).toBe(1);                  // flush still ran on the error path
+  });
+
+  it('a branded ClientError thrown pre-dispatch maps to its wire status (ok:true, resolved.error)', async () => {
+    // rejectUnverified-style: an intentional, branded ClientError is re-thrown by the
+    // isolated pipeline and maps to the wire status — never isolated as a bug.
+    const rejecter: EventKitPlugin = { name: 'rejecter', augmentEnvelope: () => { throw new ClientError(401, 'forged'); } };
+    const mod = defineFakeEvent('e', always, [job(() => {})]);
+    const result = await createEventKit(fakeSource()).use(rejecter).registerEvents([mod]).handle('go');
+
+    expect(result.ok).toBe(true);
+    expect(result.resolved?.error).toMatchObject({ status: 401, message: 'forged' });
+    expect(result.events).toHaveLength(0);       // never dispatched
+    expect(result.error).toBeUndefined();        // not a framework 500
+  });
+
+  it('deep-merges augmentEnvelope meta: a later plugin adding a key preserves an earlier plugin\'s meta', async () => {
+    const first: EventKitPlugin = { name: 'first', augmentEnvelope: (): Partial<EventEnvelope> => ({ meta: { sourceTrackingToken: 'tok-123' } }) };
+    const second: EventKitPlugin = { name: 'second', augmentEnvelope: (): Partial<EventEnvelope> => ({ meta: { otherKey: 'x' } }) };
+    let seen: Record<string, unknown> | undefined;
+    const mod = defineFakeEvent('e', always, [job(ctx => { seen = ctx.envelope.meta as Record<string, unknown>; }, { name: 'peek' })]);
+    await createEventKit(fakeSource()).use(first).use(second).registerEvents([mod]).handle('go');
+
+    expect(seen).toMatchObject({ sourceTrackingToken: 'tok-123', otherKey: 'x' }); // second did NOT wipe first
   });
 });

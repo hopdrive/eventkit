@@ -7,6 +7,7 @@
 import {
   asEventName,
   asInvocationId,
+  isClientError,
   job,
   serializeError,
   type DetectedEvent,
@@ -235,6 +236,11 @@ class Kit implements EventKit {
     const start = Date.now();
     const fallbackId = newInvocationId();
     let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+    // Declared out here so the `finally` can flush regardless of which path we exit by
+    // (ADR-033): a pre-dispatch throw must still flush the observability buffer.
+    let invocation: InvocationContext | undefined;
+    let result: InvocationResult | undefined;
+    let flushed = false;
 
     // A framework-level failure (normalize/extractPayload/etc.) produces a fatal
     // InvocationResult with a top-level `error` → 500 → the platform/Hasura MAY
@@ -261,7 +267,7 @@ class Kit implements EventKit {
     await this.pm.onAfterNormalize(envelope);
 
     // 3. Per-request config refinement (delta), then resolve ids.
-    req = this.pm.configureInvocation(req, envelope);
+    req = await this.pm.configureInvocation(req, envelope);
     const invocationId = req.invocationId ? asInvocationId(req.invocationId) : newInvocationId();
     // Single correlationId lever, by precedence: a plugin's augmentEnvelope (e.g.
     // loop-guard lifting the inbound token's correlation — chaining beats a
@@ -286,7 +292,7 @@ class Kit implements EventKit {
       }
     }
 
-    const invocation: InvocationContext = {
+    invocation = {
       invocationId,
       correlationId,
       // The recorded source is the NORMALIZED envelope's source (the meaningful
@@ -309,7 +315,7 @@ class Kit implements EventKit {
     const detected = await this.detect(envelope, invocation);
     const { events, resolved } = await this.dispatch(detected, envelope, invocation, runtime);
 
-    const result: InvocationResult = {
+    result = {
       ok: events.every(e => e.jobs.every(j => j.status === 'completed' || j.status === 'skipped')),
       invocationId,
       events,
@@ -318,33 +324,47 @@ class Kit implements EventKit {
     if (timedOut) result.timedOut = true;
     if (resolved) result.resolved = resolved;
 
-    await this.pm.onInvocationEnd(invocation, result);
-    await this.pm.onFlush();
-
     return result;
     } catch (err) {
       // A source may reject a request in the PRE-DISPATCH phase with a client error —
       // e.g. webhook `rejectUnverified` throws ClientError(401) from normalize (ADR-030).
-      // Duck-type `.status` (instanceof is unreliable across bundled copies, like ADR-026)
-      // and map it to that wire status via resolved.error — NOT the framework-500 path —
-      // and skip the run entirely. No Invocation record: it never became a valid event.
-      if (typeof (err as { status?: unknown })?.status === 'number') {
+      // Brand-check (ADR-033): ONLY an intentional, branded ClientError maps to that wire
+      // status via resolved.error — NOT the framework-500 path — and skips the run. Any
+      // OTHER pre-dispatch error (even one that happens to carry a numeric `.status`, e.g.
+      // a resolver DB blip) falls through to the framework 500 so the vendor retries,
+      // never a silent `{ ok: true }`. No Invocation record: it never became a valid event.
+      if (isClientError(err)) {
         this.kitLogger().warn('Request rejected before dispatch (client error)', {
-          status: (err as { status: number }).status,
+          status: err.status,
           message: String((err as { message?: unknown }).message ?? ''),
         });
-        return {
+        result = {
           ok: true,
           invocationId: fallbackId,
           events: [],
           durationMs: Date.now() - start,
           resolved: { hasResolved: true, error: toResolvedError(err) },
         };
+        return result;
       }
       await this.pm.reportError(err, 'normalize', { invocationId: fallbackId });
-      return { ok: false, invocationId: fallbackId, events: [], durationMs: Date.now() - start, error: serializeError(err) };
+      result = { ok: false, invocationId: fallbackId, events: [], durationMs: Date.now() - start, error: serializeError(err) };
+      return result;
     } finally {
       if (budgetTimer) clearTimeout(budgetTimer);
+      // ALWAYS flush (ADR-033): record the invocation (only when one was built — a
+      // pre-dispatch reject has none) and flush the observability buffer exactly once,
+      // so a warm-lambda buffer never leaks. Best-effort: never mask the real outcome.
+      if (!flushed) {
+        flushed = true;
+        try {
+          if (invocation && result) await this.pm.onInvocationEnd(invocation, result);
+          await this.pm.onFlush();
+        } catch {
+          // onInvocationEnd/onFlush are best-effort fan-outs (they already swallow
+          // per-plugin throws); this guard covers anything unexpected.
+        }
+      }
     }
   }
 

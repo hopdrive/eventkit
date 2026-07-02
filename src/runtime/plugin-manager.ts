@@ -32,7 +32,7 @@ import type {
   PluginFactory,
   RequestContext,
 } from '../core/index.js';
-import { serializeError } from '../core/index.js';
+import { serializeError, isClientError } from '../core/index.js';
 
 interface Registration {
   pluginOrFactory: EventKitPlugin | PluginFactory;
@@ -171,11 +171,21 @@ export class PluginManager {
   }
 
   // ── Delta transforms (merge base + each plugin partial, registration order) ──
-  configureInvocation(request: RequestContext, envelope: EventEnvelope): RequestContext {
+  // Each plugin call is ISOLATED (ADR-033): a throw is routed to `onError` and the
+  // pipeline continues with the last-good merged value — one plugin's bug must not
+  // sink the whole invocation (same best-effort philosophy as the notification
+  // fan-out). A plugin that must fail the request loudly throws a branded
+  // `ClientError` instead, which we re-throw so it reaches the pre-dispatch fast-path.
+  async configureInvocation(request: RequestContext, envelope: EventEnvelope): Promise<RequestContext> {
     let merged = request;
     for (const p of this.plugins) {
-      const partial = p.configureInvocation?.(merged, envelope);
-      if (partial) merged = { ...merged, ...partial };
+      try {
+        const partial = p.configureInvocation?.(merged, envelope);
+        if (partial) merged = { ...merged, ...partial };
+      } catch (err) {
+        if (isClientError(err)) throw err;
+        await this.dispatchError(err, 'normalize');
+      }
     }
     return merged;
   }
@@ -184,11 +194,22 @@ export class PluginManager {
   // (correlation-resolver's DB lookup) alike. Registration-order folding is preserved
   // — a later plugin sees the merged result of every earlier one, so loop-guard's
   // echo-back extraction runs before the resolver's lookup fallback can fire.
+  // `meta` is DEEP-merged one level (ADR-033): a plugin returning `{ meta: { myKey } }`
+  // refines meta without wiping a sibling's `sourceTrackingToken`/`sourceJobId`.
   async augmentEnvelope(envelope: EventEnvelope): Promise<EventEnvelope> {
     let merged = envelope;
     for (const p of this.plugins) {
-      const partial = await p.augmentEnvelope?.(merged);
-      if (partial) merged = { ...merged, ...partial };
+      try {
+        const partial = await p.augmentEnvelope?.(merged);
+        if (partial) {
+          merged = partial.meta
+            ? { ...merged, ...partial, meta: { ...merged.meta, ...partial.meta } }
+            : { ...merged, ...partial };
+        }
+      } catch (err) {
+        if (isClientError(err)) throw err;
+        await this.dispatchError(err, 'normalize');
+      }
     }
     return merged;
   }
