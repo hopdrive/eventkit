@@ -9,6 +9,7 @@
 //    buildHandlerContext; platform extractPayload / buildRequest / formatResponse)
 import type {
   Capability,
+  CrashPolicy,
   DetectionResult,
   DetectorContext,
   ErrorContext,
@@ -152,6 +153,15 @@ export class PluginManager {
 
   get sourceType(): EventSourceType {
     return (this.source as EventKitPlugin & { sourceType?: EventSourceType }).sourceType ?? 'application';
+  }
+
+  /**
+   * The source's crash policy (ADR-038). Framework default `'ack'` (a processing crash
+   * stays a 200, no retry); a source that wants at-least-once retry (webhook) declares
+   * `'signalRetry'`. Read off the resolved source plugin, like `sourceType`.
+   */
+  get crashPolicy(): CrashPolicy {
+    return (this.source as EventKitPlugin & { crashPolicy?: CrashPolicy }).crashPolicy ?? 'ack';
   }
 
   // ── Singleton capabilities ─────────────────────────────────────────────────

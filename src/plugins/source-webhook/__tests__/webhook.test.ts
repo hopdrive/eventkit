@@ -235,3 +235,36 @@ describe('webhook verify inputs + presets (D33)', () => {
     expect(verified).toBe(false);
   });
 });
+
+describe('webhook crashPolicy (ADR-038): a processing crash returns 500 so the vendor retries', () => {
+  const crashModule = (opts: { detectorCrash?: boolean }) =>
+    defineEvent({
+      name: 'vendor.event',
+      detector: opts.detectorCrash
+        ? () => { throw new Error('detector boom'); }
+        : () => true,
+      prepare: opts.detectorCrash ? undefined : () => { throw new Error('prepare boom'); },
+      jobs: [job(() => 'x', { name: 'work' })],
+    });
+
+  it('defaults to signalRetry — a prepare crash → 500 (paired with netlifyV2Platform)', async () => {
+    const src = webhook({ vendor: 'acme' });
+    const handler = createEventKit(src).use(netlifyV2Platform).registerEvents([crashModule({})]).handler();
+    const res = (await handler(v2Request({ id: 1 }, {}))) as Response;
+    expect(res.status).toBe(500); // vendor's at-least-once delivery retries
+  });
+
+  it('defaults to signalRetry — a detector crash → 500', async () => {
+    const src = webhook({ vendor: 'acme' });
+    const handler = createEventKit(src).use(netlifyV2Platform).registerEvents([crashModule({ detectorCrash: true })]).handler();
+    const res = (await handler(v2Request({ id: 1 }, {}))) as Response;
+    expect(res.status).toBe(500);
+  });
+
+  it("crashPolicy:'ack' opts out — the same crash returns 200 (no retry)", async () => {
+    const src = webhook({ vendor: 'acme', crashPolicy: 'ack' });
+    const handler = createEventKit(src).use(netlifyV2Platform).registerEvents([crashModule({})]).handler();
+    const res = (await handler(v2Request({ id: 1 }, {}))) as Response;
+    expect(res.status).toBe(200);
+  });
+});

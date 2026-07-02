@@ -337,6 +337,26 @@ class Kit implements EventKit {
     if (timedOut) result.timedOut = true;
     if (resolved) result.resolved = resolved;
 
+    // ADR-038: under crashPolicy 'signalRetry' (the webhook source's default), an
+    // UNHANDLED processing crash — a detector or prepare throw, surfaced as
+    // events[].error — is escalated to a top-level framework error → 500 → an
+    // at-least-once sender retries. A deliberate resolve/respond reply (`resolved`)
+    // wins: that response is intentional, not a crash. Emit a loud error log too, so a
+    // crash this severe is visible in Grafana (the obs sink) on top of the onError
+    // route (Sentry) that reportError already fired during detect/dispatch.
+    if (this.pm.crashPolicy === 'signalRetry' && !resolved) {
+      const crashed = events.find(e => e.error !== undefined);
+      if (crashed?.error) {
+        invocation.log.error('Processing crash escalated to a retryable 500 (crashPolicy=signalRetry)', {
+          event: crashed.name,
+          detected: crashed.detected,
+          error: crashed.error.message,
+        });
+        result.error = crashed.error;
+        result.ok = false;
+      }
+    }
+
     return result;
     } catch (err) {
       // A source may reject a request in the PRE-DISPATCH phase with a client error —

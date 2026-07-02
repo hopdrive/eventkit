@@ -45,6 +45,7 @@ live prompts. Where a decision has shipped, the code (not a blank line) is the s
 - **D33** → `verify` receives body+headers+query; ship HopDrive verify presets.
 - **P0-4** → batch retry-status fidelity (code drift vs §12.4; no new decision, a bug fix).
 - **P0-5 / D23** → the shared HopDrive `loopGuard` preset is now *required* during migration (see D23 body).
+- **D36** → **ADR-038** configurable crash policy (`'ack'`/`'signalRetry'`); webhook defaults to 500-and-retry on a processing crash. From the test-coverage follow-up (D34).
 
 ---
 
@@ -432,6 +433,12 @@ Confirm the optional set: `description, tags, owner, flowHints, deprecated, rela
 **Origin:** Fable-5 test-coverage review, Part 3.
 **Decision:** ✅ **RESOLVED 2026-07-01 (ADR-037).** Add `toFlowMermaid`, `eventkit-flow coverage` (every event has a detector test → CI gate), and `eventkit-flow simulate --payload`. **Reserve now** the `repo`/`function` fields + a job `metadata.effects` convention (`{type:'db-write',table}` / `{type:'api-call',vendor}`) so a future org-level aggregator can infer cross-kit edges losslessly. **Defer** building the aggregator and Compare Mode (D9) — but add a proto-Compare CI helper (observed ⊆ expected via shared node-ids) to validate the matcher on one flow early. Full HTML emitter out of scope (guide exists).
 **Blast radius:** `./flow` emitters + two CLI subcommands; the YAML schema (`repo`/`function`/`effects`).
+
+### D36. Configurable crash policy — a processing crash's retry contract [added 2026-07-02]
+**Question:** The error-path matrix (D34/ADR-036) surfaced that a **detector** crash and a **prepare** crash both leave `result.ok:true` — the crash lands in `events[].error` with no top-level `result.error`, so `httpResponse` returns **200** and an at-least-once sender never retries. Intentional for Hasura (a poison row must not retry forever — legacy hasura-event-detector semantics), but wrong for the reverse-integration **webhooks**: a transient crash silently drops a vendor event that would have been redelivered. One default can't serve both transports.
+**Origin:** Fable-5 error-path matrix finding, raised to the architect; Rob confirmed webhooks must 500-and-retry with loud Grafana/Sentry visibility.
+**Decision:** ✅ **RESOLVED 2026-07-02 (ADR-038).** Add `crashPolicy: 'ack' | 'signalRetry'` declared by the **source** (read off the resolved source like `sourceType`; framework default `'ack'`). `'signalRetry'` escalates an unhandled detector/`prepare` crash to a top-level `result.error` → **500** → the sender retries, AND emits a prominent `invocation.log.error` (Grafana) on top of the `onError` route (Sentry) that already fired. A deliberate `resolve`/`respond` reply is **not** a crash — it still maps to its client status and is never escalated; a job failure is not a processing crash either (it keeps its own durable retry, stays 200). The **webhook source defaults to `'signalRetry'`** (overridable via `webhook({ crashPolicy })`); Hasura and application sources stay `'ack'`.
+**Blast radius:** `EventKitPlugin.crashPolicy` type + `PluginManager` getter; `kit.ts` result-assembly escalation + loud log; `WebhookConfig`; the error-path matrix (both policies now pinned).
 
 ## Decision dependency map (what unblocks what)
 

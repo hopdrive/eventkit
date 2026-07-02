@@ -84,6 +84,7 @@ export type {
   EventKitPlugin,
   SourceAdapter,
   PlatformAdapter,
+  CrashPolicy,
   DetectionResult,
   HandlerResult,
   NormalizeFn,
