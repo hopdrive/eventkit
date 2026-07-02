@@ -1,0 +1,84 @@
+# EventKit Console — CI/CD (Phase C2 of docs/planning/console-migration-plan.md §7)
+#
+# Path-filtered to console/** so the library CI (ci.yml) is completely
+# independent. Verifies every PR touching the console and deploys:
+#   - PR        → Netlify preview deploy (alias pr-<number>), URL in the job log
+#   - main push → Netlify production deploy
+#
+# One-time setup (repo settings → secrets): NETLIFY_AUTH_TOKEN, NETLIFY_SITE_ID.
+# Until those exist, the deploy steps skip cleanly and CI is verify-only.
+# NOTE (S1): the deployed site must NOT receive VITE_HASURA_ADMIN_SECRET —
+# auth is the observability_viewer role / proxy per plan §5 (D-CON-1).
+
+name: Console CI
+
+on:
+  pull_request:
+    paths: ['console/**', '.github/workflows/console-ci.yml']
+  push:
+    branches: [main]
+    paths: ['console/**', '.github/workflows/console-ci.yml']
+
+concurrency:
+  group: console-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: console
+
+jobs:
+  verify-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # 186 pre-existing type errors ported from the legacy app (missing
+      # vite/client types + legacy looseness). Non-blocking until the Phase C3
+      # burn-down; the count is reported so regressions are visible in the log.
+      - name: Typecheck (non-blocking, pre-existing debt)
+        continue-on-error: true
+        run: npx tsc --noEmit 2>&1 | tail -1
+
+      - name: Build
+        run: npm run build
+
+      - name: Check Netlify secrets
+        id: netlify
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          if [ -n "$NETLIFY_AUTH_TOKEN" ] && [ -n "$NETLIFY_SITE_ID" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Netlify secrets not set — skipping deploy (verify-only)."
+          fi
+
+      - name: Deploy preview (PR)
+        if: github.event_name == 'pull_request' && steps.netlify.outputs.configured == 'true'
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          npx netlify-cli@17 deploy --dir dist --alias "pr-${{ github.event.number }}" \
+            --message "PR #${{ github.event.number }} @ ${{ github.sha }}"
+
+      - name: Deploy production (main)
+        if: github.event_name == 'push' && steps.netlify.outputs.configured == 'true'
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          npx netlify-cli@17 deploy --dir dist --prod \
+            --message "main @ ${{ github.sha }}"
