@@ -500,3 +500,34 @@ describe('ADR-033: pre-dispatch pipeline hardening', () => {
     expect(seen).toMatchObject({ sourceTrackingToken: 'tok-123', otherKey: 'x' }); // second did NOT wipe first
   });
 });
+
+describe('ADR-035: ctx.skip(reason) — a job self-skip that records condition_not_met', () => {
+  it('a job that calls ctx.skip completes with status=completed and metadata.conditionNotMet', async () => {
+    const mod = defineFakeEvent('outcome.resolving', always, [
+      job((ctx: JobContext) => { const { input } = ctx; if (!(input as { driverId?: string }).driverId) return ctx.skip('no driver on this outcome'); return { notified: true }; }, { name: 'notifyDriver' }),
+    ]);
+    const result = await createEventKit(fakeSource()).registerEvents([mod]).handle('go');
+
+    const j = result.events[0]!.jobs[0]!;
+    expect(j.status).toBe('completed');                 // it ran; it chose to do nothing
+    expect(j.status).not.toBe('skipped');               // NOT the reserved series status
+    expect(j.metadata['conditionNotMet']).toEqual({ reason: 'no driver on this outcome' });
+    expect(j.output).toBeUndefined();
+    expect(result.ok).toBe(true);
+  });
+
+  it('a normal completion carries no conditionNotMet, and skip does not retry', async () => {
+    let attempts = 0;
+    const mod = defineFakeEvent('e', always, [
+      job(() => { return { ok: true }; }, { name: 'didWork' }),
+      job((ctx: JobContext) => { attempts++; return ctx.skip('nothing to do'); }, { name: 'skipper', retries: 3 }),
+    ]);
+    const result = await createEventKit(fakeSource()).registerEvents([mod]).handle('go');
+
+    const didWork = result.events[0]!.jobs.find(j => j.jobName === 'didWork')!;
+    const skipper = result.events[0]!.jobs.find(j => j.jobName === 'skipper')!;
+    expect(didWork.metadata['conditionNotMet']).toBeUndefined();
+    expect(skipper.metadata['conditionNotMet']).toEqual({ reason: 'nothing to do' });
+    expect(attempts).toBe(1); // a skip is not a failure — it never retries despite retries:3
+  });
+});

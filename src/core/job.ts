@@ -115,6 +115,15 @@ export interface JobContext<
   log: JobLogger;
   progress(value: number, metadata?: Record<string, unknown>): Promise<void>;
   checkpoint(name: string, metadata?: Record<string, unknown>): Promise<void>;
+  /**
+   * Declare "this job had no work to do" (ADR-035). Stops the job immediately and
+   * records the branch-not-taken as structured metadata (`metadata.conditionNotMet =
+   * { reason }`) so Observability and Compare Mode can render it distinctly. The job
+   * still ends terminal status `'completed'` — it ran, it chose to do nothing. Use it
+   * in a Pattern-B short-circuit (`if (!driverId) return ctx.skip('no driver')`) so a
+   * no-op is not indistinguishable from a job that did real work.
+   */
+  skip(reason: string): never;
   signal?: AbortSignal;
 }
 

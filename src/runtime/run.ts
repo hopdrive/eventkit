@@ -122,6 +122,19 @@ class JobTimeoutError extends Error {
   override readonly name = 'JobTimeoutError';
 }
 
+/**
+ * Thrown by `ctx.skip(reason)` (ADR-035) and caught by the executor below. It is a
+ * control-flow signal, not a failure: the job ends `'completed'` with the reason
+ * recorded as `metadata.conditionNotMet`. Defined and caught in this same module, so
+ * `instanceof` is reliable (no cross-bundle copy concern).
+ */
+class SkipSignal extends Error {
+  override readonly name = 'SkipSignal';
+  constructor(readonly reason: string) {
+    super(reason);
+  }
+}
+
 async function runOne<TResult>(
   event: DetectedEvent,
   def: JobDefinition,
@@ -181,6 +194,15 @@ async function runOne<TResult>(
       await pluginManager.onJobEnd(ctx, exec);
       return exec;
     } catch (err) {
+      // ctx.skip(reason) (ADR-035): a branch-not-taken, not a failure. The job ran and
+      // chose to do nothing → terminal status stays 'completed', with the reason recorded
+      // as structured metadata. No retry, no reportError.
+      if (err instanceof SkipSignal) {
+        const exec = finish(base, 'completed', { attempt, startedAt, start });
+        exec.metadata = { ...exec.metadata, conditionNotMet: { reason: err.reason } };
+        await pluginManager.onJobEnd(ctx, exec);
+        return exec;
+      }
       const status: JobExecutionStatus =
         err instanceof JobTimeoutError ? 'timed_out' : signal.aborted ? 'cancelled' : 'failed';
       const isLastAttempt = attempt >= maxAttempts;
@@ -239,6 +261,7 @@ function buildJobContext(
     log,
     progress: (value, md) => pluginManager.onJobProgress(ctx, md ? { value, at: new Date(), metadata: md } : { value, at: new Date() }),
     checkpoint: (name, md) => pluginManager.onJobCheckpoint(ctx, md ? { name, at: new Date(), metadata: md } : { name, at: new Date() }),
+    skip: (reason: string) => { throw new SkipSignal(reason); },
     signal,
   };
   return ctx;
