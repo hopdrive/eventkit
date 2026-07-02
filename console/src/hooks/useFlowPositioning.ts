@@ -185,48 +185,9 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
         });
       }
 
-      // Create undetected events group node only if there are undetected events
-      if (undetectedEvents.length > 0) {
-        const groupedEventsNode: PositionedNode = {
-          id: `grouped-${invocation.id}`,
-          type: 'groupedEvents',
-          position: {
-            x: baseX,
-            y: baseY + verticalSpacing * 1.5,
-          },
-          data: {
-            totalCount: events.length,
-            detectedCount: detectedEvents.length,
-            undetectedCount: undetectedEvents.length,
-            events: undetectedEvents.map(event => ({
-              name: event.event_name,
-              detected: event.detected,
-              duration: event.detection_duration_ms || 0
-            })),
-            invocationId: invocation.id,
-          },
-        };
-        nodes.push(groupedEventsNode);
-      }
-
-      // Edge from invocation to grouped events (only if there are undetected events)
-      if (undetectedEvents.length > 0) {
-        edges.push({
-          id: `${invocation.id}-to-grouped-${invocation.id}`,
-          source: invocation.id,
-          sourceHandle: 'bottom',
-          target: `grouped-${invocation.id}`,
-          targetHandle: 'top',
-          type: 'default',
-          animated: true,
-          style: { stroke: '#6b7280', strokeWidth: 2, strokeDasharray: '5,5' }, // Gray color for grouped events
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            width: 20,
-            height: 20,
-          },
-        });
-      }
+      // Undetected events no longer render as a grouped box + modal — they are the
+      // "Show undetected" overlay in FlowDiagram, drawn as same-size ghost EventNodes
+      // (one rendering grammar for every event state on the canvas).
 
       // Position detected events
       if (detectedEvents.length > 0) {

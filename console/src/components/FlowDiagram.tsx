@@ -20,7 +20,6 @@ import InvocationDetailDrawer from './InvocationDetailDrawer';
 import 'reactflow/dist/style.css';
 import JobDetailDrawer from './JobDetailDrawer';
 import EventDetailDrawer from './EventDetailDrawer';
-import UndetectedEventsDetailDrawer from './UndetectedEventsDetailDrawer';
 import { compareFlow } from '../flowdoc/compare';
 import { loadBundledDocs, loadUploadedDocs, saveUploadedDoc } from '../flowdoc/store';
 import type { FlowDoc } from '../flowdoc/types';
@@ -53,6 +52,7 @@ const FlowDiagramContent = () => {
   const autoFocus = searchParams.get('autoFocus') === 'true';
   const showExpected = searchParams.get('expected') === '1';
   const flagOffContract = searchParams.get('offcontract') === '1';
+  const showUndetected = searchParams.get('undetected') === '1';
 
   const setFlag = (key: string, on: boolean) => {
     const next = new URLSearchParams(searchParams);
@@ -287,9 +287,9 @@ const FlowDiagramContent = () => {
   const displayData = useMemo(() => {
     let nodes = flowData.nodes;
     let edges = flowData.edges;
-    if (!compareResult) return { nodes, edges };
+    if (!compareResult && !showUndetected) return { nodes, edges };
 
-    if (flagOffContract) {
+    if (flagOffContract && compareResult) {
       const extraEventNames = new Set<string>();
       const extraJobNames = new Set<string>();
       for (const key of Object.keys(compareResult.extraVerdicts)) {
@@ -304,7 +304,7 @@ const FlowDiagramContent = () => {
       );
     }
 
-    if (showExpected && selectedDoc) {
+    if (showExpected || showUndetected) {
       // Ghost columns join the observed layout: reuse the observed x positions.
       const colX = (t: string, fallback: number) => {
         const of = nodes.filter(n => n.type === t);
@@ -316,39 +316,67 @@ const FlowDiagramContent = () => {
       const jobX = colX('job', rootX + 960);
       let y = Math.max(0, ...nodes.map(n => n.position.y)) + 180;
       const rootId = root?.id ?? invocationId ?? '';
-
-      const missing = (id: string) => compareResult.verdicts[id]?.classification === 'expected_missing';
       const ghostEdgeStyle = { strokeDasharray: '6 4', stroke: '#9ca3af', strokeWidth: 1.5 };
-      for (const gn of selectedDoc.graph.nodes) {
-        if (gn.kind !== 'event' || !missing(gn.id)) continue;
+
+      // One node per event name, deduped across the two sources of "didn't happen":
+      //   ran · not detected      — a detector evaluated false this run (observed record)
+      //   expected · not observed — in the flow doc but no detector even ran (drift)
+      const ghosts = new Map<string, { label: string; docId?: string }>();
+      if (showUndetected) {
+        for (const inv of invocations) {
+          for (const ev of inv.event_executions ?? []) {
+            if (!ev.detected && !ghosts.has(ev.event_name)) {
+              ghosts.set(ev.event_name, { label: 'ran · not detected' });
+            }
+          }
+        }
+      }
+      if (showExpected && selectedDoc && compareResult) {
+        for (const gn of selectedDoc.graph.nodes) {
+          if (gn.kind !== 'event') continue;
+          const name = gn.eventName ?? gn.label;
+          const existing = ghosts.get(name);
+          if (existing) {
+            existing.docId = gn.id; // deduped: keep the stronger ran·not-detected label
+          } else if (compareResult.verdicts[gn.id]?.classification === 'expected_missing') {
+            ghosts.set(name, { label: 'expected · not observed', docId: gn.id });
+          }
+        }
+      }
+
+      const missing = (id: string) => compareResult?.verdicts[id]?.classification === 'expected_missing';
+      for (const [name, g] of ghosts) {
+        const evNodeId = `ghost-event:${name}`;
         nodes = [...nodes, {
-          id: `ghost-${gn.id}`,
+          id: evNodeId,
           type: 'event',
           selected: false,
           position: { x: eventX, y },
-          data: { eventName: gn.eventName ?? gn.label, ghost: true, detected: false, correlationId: '', status: '', detectionDuration: 0, jobsCount: 0, hasFailedJobs: false },
+          data: { eventName: name, ghost: true, ghostLabel: g.label, detected: false, correlationId: '', status: '', detectionDuration: 0, jobsCount: 0, hasFailedJobs: false },
         }];
-        edges = [...edges, { id: `ghost-e-${gn.id}`, source: rootId, target: `ghost-${gn.id}`, animated: false, style: ghostEdgeStyle }];
+        edges = [...edges, { id: `ghost-e-${name}`, source: rootId, target: evNodeId, animated: false, style: ghostEdgeStyle }];
         let jy = y;
-        for (const je of selectedDoc.graph.edges.filter(e => e.from === gn.id)) {
-          const jn = selectedDoc.graph.nodes.find(n => n.id === je.to && n.kind === 'job');
-          if (!jn || !missing(jn.id)) continue;
-          nodes = [...nodes, {
-            id: `ghost-${jn.id}`,
-            type: 'job',
-            selected: false,
-            position: { x: jobX, y: jy },
-            data: { jobName: jn.jobName ?? jn.label, ghost: true, correlationId: '', status: '', duration: 0 },
-          }];
-          edges = [...edges, { id: `ghost-e-${jn.id}`, source: `ghost-${gn.id}`, target: `ghost-${jn.id}`, animated: false, style: ghostEdgeStyle }];
-          jy += 110;
+        if (g.docId && selectedDoc && showExpected) {
+          for (const je of selectedDoc.graph.edges.filter(e => e.from === g.docId)) {
+            const jn = selectedDoc.graph.nodes.find(n => n.id === je.to && n.kind === 'job');
+            if (!jn || !missing(jn.id)) continue;
+            nodes = [...nodes, {
+              id: `ghost-${jn.id}`,
+              type: 'job',
+              selected: false,
+              position: { x: jobX, y: jy },
+              data: { jobName: jn.jobName ?? jn.label, ghost: true, correlationId: '', status: '', duration: 0 },
+            }];
+            edges = [...edges, { id: `ghost-e-${jn.id}`, source: evNodeId, target: `ghost-${jn.id}`, animated: false, style: ghostEdgeStyle }];
+            jy += 110;
+          }
         }
         y = Math.max(y + 140, jy + 30);
       }
     }
     return { nodes, edges };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flowData, compareResult, showExpected, flagOffContract, selectedDoc, invocationId]);
+  }, [flowData, compareResult, showExpected, flagOffContract, showUndetected, selectedDoc, invocationId, data]);
 
 
 
@@ -395,6 +423,15 @@ const FlowDiagramContent = () => {
           />
           Flag off-contract
         </label>
+        <label className='inline-flex items-center gap-1.5 px-2.5 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700'>
+          <input
+            type='checkbox'
+            checked={showUndetected}
+            onChange={e => setFlag('undetected', e.target.checked)}
+            className='h-3.5 w-3.5 text-gray-500 border-gray-300 rounded'
+          />
+          Show undetected
+        </label>
         {(showExpected || flagOffContract) && (
           <>
             <select
@@ -429,16 +466,23 @@ const FlowDiagramContent = () => {
       </div>
 
       {/* Overlay legend + summary (only when a toggle is active) */}
-      {compareResult && (showExpected || flagOffContract) && (
+      {(compareResult || showUndetected) && (showExpected || flagOffContract || showUndetected) && (
         <div className='absolute top-4 right-4 z-10 bg-white/90 dark:bg-gray-800/90 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 shadow-sm space-y-1'>
-          <div className='text-[11px] text-gray-600 dark:text-gray-300 pb-1 border-b border-gray-100 dark:border-gray-700'>
-            {compareResult.summary.matched}/{compareResult.summary.expectedTotal} matched ·{' '}
-            {compareResult.summary.failed} failed · {compareResult.summary.missing} missing ·{' '}
-            {compareResult.summary.unexpected} off-contract
-          </div>
+          {compareResult && (
+            <div className='text-[11px] text-gray-600 dark:text-gray-300 pb-1 border-b border-gray-100 dark:border-gray-700'>
+              {compareResult.summary.matched}/{compareResult.summary.expectedTotal} matched ·{' '}
+              {compareResult.summary.failed} failed · {compareResult.summary.missing} missing ·{' '}
+              {compareResult.summary.unexpected} off-contract
+            </div>
+          )}
           {showExpected && (
             <div className='flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-300'>
               <span className='w-3 h-3 rounded border-2 border-dashed border-gray-400' /> expected · not observed
+            </div>
+          )}
+          {showUndetected && (
+            <div className='flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-300'>
+              <span className='w-3 h-3 rounded border-2 border-dashed border-gray-400' /> ran · not detected
             </div>
           )}
           {flagOffContract && (
@@ -501,9 +545,6 @@ const FlowDiagramContent = () => {
             )}
             {selectedNode.type === 'event' && (
               <EventDetailDrawer node={selectedNode} isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} />
-            )}
-            {selectedNode.type === 'groupedEvents' && (
-              <UndetectedEventsDetailDrawer node={selectedNode} isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} />
             )}
           </>
         )}
