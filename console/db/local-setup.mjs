@@ -40,6 +40,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DB_NAME, POSTGRES_CONTAINER, METADATA_URL, GRAPHQL_URL, getLocalCredentials } from './lib/db-creds.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -67,61 +68,10 @@ if (!process.env.NODE_EXTRA_CA_CERTS && !process.env.__LOCAL_SETUP_REEXEC) {
     // metadata/graphql fetch calls below will surface a clear TLS error.
   }
 }
-const DB_NAME = 'event_detector_observability';
-const POSTGRES_CONTAINER = process.env.POSTGRES_CONTAINER || 'hopdrive-postgres';
-const METADATA_URL = process.env.HASURA_METADATA_URL || 'https://gql.local.hopdrive.io/v1/metadata';
-const GRAPHQL_URL = process.env.HASURA_GRAPHQL_URL || 'https://gql.local.hopdrive.io/v1/graphql';
 const SCHEMA_PATH = path.join(__dirname, 'schema.sql');
 
 function log(...args) {
   console.log('[local-setup]', ...args);
-}
-
-/** Find hasura-migrations/docker-compose.yml by checking common sibling-checkout layouts. */
-function findDockerComposePath() {
-  if (process.env.HASURA_MIGRATIONS_DIR) {
-    const p = path.join(process.env.HASURA_MIGRATIONS_DIR, 'docker-compose.yml');
-    if (existsSync(p)) return p;
-    throw new Error(`HASURA_MIGRATIONS_DIR set but ${p} does not exist`);
-  }
-  const candidates = [
-    path.join(__dirname, '../../../hasura-migrations/docker-compose.yml'), // eventkit sibling checkout
-    path.join(process.env.HOME || '', 'Github/hasura-migrations/docker-compose.yml'),
-    path.join(process.env.HOME || '', 'github/hasura-migrations/docker-compose.yml'),
-  ];
-  for (const c of candidates) {
-    if (existsSync(c)) return c;
-  }
-  throw new Error(
-    `Could not find hasura-migrations/docker-compose.yml. Checked: ${candidates.join(', ')}. ` +
-      `Set HASURA_MIGRATIONS_DIR to override.`
-  );
-}
-
-/**
- * Minimal, targeted extraction — not a general YAML parser. Pulls specific
- * `KEY: value` lines out of the compose file's `environment:` blocks. Good
- * enough for this one well-known file; do not reuse elsewhere.
- */
-function extractComposeCredentials(composePath) {
-  const content = readFileSync(composePath, 'utf8');
-
-  const pgPasswordMatch = content.match(/POSTGRES_PASSWORD:\s*"?([^"\s#]+)"?/);
-  const pgUserMatch = content.match(/POSTGRES_USER:\s*"?([^"\s#]+)"?/);
-  const adminSecretMatch = content.match(/HASURA_GRAPHQL_ADMIN_SECRET:\s*"?([^"\s#]+)"?/);
-
-  if (!pgPasswordMatch) {
-    throw new Error(`Could not find POSTGRES_PASSWORD in ${composePath}`);
-  }
-  if (!adminSecretMatch) {
-    throw new Error(`Could not find HASURA_GRAPHQL_ADMIN_SECRET in ${composePath}`);
-  }
-
-  return {
-    pgUser: pgUserMatch ? pgUserMatch[1] : 'postgres', // postgis/postgis default superuser
-    pgPassword: pgPasswordMatch[1],
-    adminSecret: adminSecretMatch[1],
-  };
 }
 
 function psql(pgUser, args, { input } = {}) {
@@ -186,10 +136,8 @@ async function graphqlQuery(adminSecret, query, variables) {
 }
 
 async function main() {
-  const composePath = findDockerComposePath();
+  const { composePath, pgUser, pgPassword, adminSecret } = getLocalCredentials(__dirname);
   log(`Using docker-compose.yml at ${composePath}`);
-
-  const { pgUser, pgPassword, adminSecret } = extractComposeCredentials(composePath);
   log(`Extracted postgres user "${pgUser}" and Hasura admin secret (not printed) from compose file.`);
 
   // 1. Create database if needed
