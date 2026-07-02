@@ -475,7 +475,34 @@ describe('batch', () => {
     expect(delayed[0]!.uniqueKey).toBe('ap-7'); // dedup via delay_key
     expect(delayed[0]!.delayMs).toBe(5000);
     expect((delayed[0]!.input as Record<string, unknown>)['__retryAttempt']).toBe(1);
-    expect(updates.find(u => u.fields.status === 'error')).toBeTruthy(); // this row terminates
+    // P0-4 / §12.4: a row with a LIVE retry reads as a non-terminal retry state, NOT
+    // terminal 'error' — an operator must be able to tell "retrying" from "dead."
+    const lastStatus = updates.filter(u => u.fields.status).at(-1)!.fields.status;
+    expect(lastStatus).toBe('delaying');
+    expect(updates.find(u => u.fields.status === 'error')).toBeFalsy();
+  });
+
+  it("terminates as 'error' once durable retries are exhausted (no follow-up scheduled)", async () => {
+    const updates: Array<{ id: string | number; fields: BatchJobUpdate }> = [];
+    const delayed: DelayedBatchJobSpec[] = [];
+    const detector = hasuraEvent.detector(ctx => ctx.operation === 'INSERT');
+    const kit = createEventKit(hasuraEvent)
+      .use(batch, {
+        store: {
+          update: (id, fields) => void updates.push({ id, fields }),
+          enqueueDelayed: (spec: DelayedBatchJobSpec) => void delayed.push(spec),
+        },
+        durableRetry: { delayMs: 5000, maxAttempts: 3 },
+      })
+      .registerEvents([
+        { name: asEventName('batch.created'), detector, jobs: [job(() => { throw new Error('transient'); }, { name: 'proc' })] } as EventModule,
+      ]);
+    // The row's input already carries __retryAttempt at the ceiling → no further retry.
+    await kit.handle(hasuraInsert({ id: 'row-9', input: { workUnit: 'W', __retryAttempt: 3 }, trigger_type: 'ap', delay_key: 'ap-9' }));
+
+    expect(delayed).toHaveLength(0); // exhausted — nothing scheduled
+    const lastStatus = updates.filter(u => u.fields.status).at(-1)!.fields.status;
+    expect(lastStatus).toBe('error'); // terminal, correctly
   });
 
   it('handler input overrides the row baseline (handler keys win)', async () => {
@@ -610,7 +637,7 @@ describe('transports/grafana (injected-logger bridge mode)', () => {
     const msgs = lines.map(l => l.msg);
     expect(msgs).toContain('e ⭐ detected');
     expect(msgs).toContain('e running 2 jobs');
-    expect(msgs).toContain('✓ good 0ms');
+    expect(lines.find(l => l.msg.startsWith('✓ good'))?.msg).toMatch(/^✓ good \d+ms$/);
     expect(lines.find(l => l.msg.startsWith('✗ bad'))?.msg).toMatch(/^✗ bad \d+ms \(Error\)$/);
     expect(msgs).toContain('e completed 2 jobs (1 failed)');
     // scopes are structured fields, not baked into the message

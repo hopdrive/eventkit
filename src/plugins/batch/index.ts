@@ -215,9 +215,15 @@ export function batch(config: BatchConfig): EventKitPlugin {
       } else if (execution.status === 'timed_out' || execution.status === 'cancelled') {
         await safeUpdate(row.id, { status: 'timeout', output: composeOutput(row.id, undefined, serializeError(execution.error)) });
       } else {
-        // failed: try a durable delayed retry; either way this row terminates as 'error'.
-        await scheduleDurableRetry(row);
-        await safeUpdate(row.id, { status: 'error', output: composeOutput(row.id, undefined, serializeError(execution.error)) });
+        // failed: try a durable delayed retry. A row with a LIVE retry MUST NOT read as
+        // terminally dead (§12.4 / P0-4) — an operator (and the live batch_jobs watch view)
+        // has to tell "retrying" from "failed for good." When a follow-up attempt was
+        // scheduled, this row reads as a non-terminal retry state ('delaying'); terminal
+        // 'error' is reserved for the exhausted case (no further retry). This matches legacy
+        // @hopdrive/batch, where the delay_key-deduped follow-up row carries the next attempt.
+        const retryScheduled = await scheduleDurableRetry(row);
+        const status: BatchJobStatus = retryScheduled ? 'delaying' : 'error';
+        await safeUpdate(row.id, { status, output: composeOutput(row.id, undefined, serializeError(execution.error)) });
       }
       buffers.delete(row.id);
     },
