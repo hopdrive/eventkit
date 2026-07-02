@@ -41,6 +41,9 @@ const FlowDiagramContent = () => {
   // We'll use direct props instead
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Trail of previously-viewed nodes for the drawer's back button; cross-navigation
+  // pushes, back pops, a fresh canvas click or drawer close resets.
+  const [drawerHistory, setDrawerHistory] = useState<Node[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [autoFocusCompleted, setAutoFocusCompleted] = useState(false);
   const [docs, setDocs] = useState<FlowDoc[]>([]);
@@ -172,11 +175,9 @@ const FlowDiagramContent = () => {
     }
   }, [generatedNodes.length, reactFlowInstance]);
 
-  const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
-    setSelectedNode(node);
-    setDrawerOpen(true);
-
-    // Center and zoom on the selected node, accounting for the 600px drawer on the right
+  // Center and zoom on a node, accounting for the 600px drawer on the right.
+  // Shared by direct canvas clicks and drawer cross-navigation/back.
+  const centerOnNode = useCallback((node: Node) => {
     setTimeout(() => {
       if (reactFlowInstance) {
         const flowBounds = document.querySelector('.react-flow')?.getBoundingClientRect();
@@ -184,8 +185,6 @@ const FlowDiagramContent = () => {
         if (flowBounds) {
           const drawerWidth = 600;
           const zoom = 1.5;
-          const totalWidth = flowBounds.width;
-          const visibleWidth = totalWidth - drawerWidth;
 
           // FLIPPED: To shift the viewport so the node appears LEFT (in visible area),
           // we actually need to move the CENTER POINT to the RIGHT in flow coordinates
@@ -215,9 +214,17 @@ const FlowDiagramContent = () => {
     }, 100);
   }, [reactFlowInstance]);
 
+  const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
+    setSelectedNode(node);
+    setDrawerOpen(true);
+    setDrawerHistory([]); // direct canvas click starts a fresh navigation trail
+    centerOnNode(node);
+  }, [centerOnNode]);
+
   const onPaneClick = useCallback(() => {
     setSelectedNode(null);
     setDrawerOpen(false);
+    setDrawerHistory([]);
 
     // Zoom out to show the entire flow diagram
     if (reactFlowInstance) {
@@ -391,14 +398,31 @@ const FlowDiagramContent = () => {
 
 
 
-  // Drawer cross-navigation: swap the open drawer to any canvas node by id, and
-  // hand the event drawer its job nodes so its rows are one-click jumps.
+  // Drawer cross-navigation: swap the open drawer to any canvas node by id, pan the
+  // canvas to it, and hand the event drawer its job nodes so its rows are one-click jumps.
   const handleOpenNodeId = (nodeId: string) => {
     const target = displayData.nodes.find(n => n.id === nodeId);
     if (target) {
+      if (selectedNode && selectedNode.id !== target.id) {
+        setDrawerHistory(h => [...h, selectedNode]);
+      }
       setSelectedNode(target as Node);
       setDrawerOpen(true);
+      centerOnNode(target as Node);
     }
+  };
+  const handleDrawerBack = () => {
+    const prev = drawerHistory[drawerHistory.length - 1];
+    if (!prev) return;
+    setDrawerHistory(h => h.slice(0, -1));
+    // Re-resolve against current display data in case an overlay toggle changed since.
+    const live = displayData.nodes.find(n => n.id === prev.id) ?? prev;
+    setSelectedNode(live as Node);
+    centerOnNode(live as Node);
+  };
+  const handleDrawerClose = () => {
+    setDrawerOpen(false);
+    setDrawerHistory([]);
   };
   const relatedJobsFor = (eventNode: Node | null): Node[] => {
     if (!eventNode) return [];
@@ -580,25 +604,28 @@ const FlowDiagramContent = () => {
               <InvocationDetailDrawer
                 node={selectedNode}
                 isOpen={drawerOpen}
-                onClose={() => setDrawerOpen(false)}
+                onClose={handleDrawerClose}
                 onOpenNodeId={handleOpenNodeId}
+                onBack={drawerHistory.length > 0 ? handleDrawerBack : undefined}
               />
             )}
             {selectedNode.type === 'job' && (
               <JobDetailDrawer
                 node={selectedNode}
                 isOpen={drawerOpen}
-                onClose={() => setDrawerOpen(false)}
+                onClose={handleDrawerClose}
                 onOpenNodeId={handleOpenNodeId}
+                onBack={drawerHistory.length > 0 ? handleDrawerBack : undefined}
               />
             )}
             {selectedNode.type === 'event' && (
               <EventDetailDrawer
                 node={selectedNode}
                 isOpen={drawerOpen}
-                onClose={() => setDrawerOpen(false)}
+                onClose={handleDrawerClose}
                 relatedJobs={relatedJobsFor(selectedNode)}
                 onOpenNodeId={handleOpenNodeId}
+                onBack={drawerHistory.length > 0 ? handleDrawerBack : undefined}
               />
             )}
           </>

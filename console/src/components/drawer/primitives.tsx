@@ -12,7 +12,7 @@
 
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { XMarkIcon, ClipboardIcon, CheckIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, ClipboardIcon, CheckIcon, ChevronRightIcon, ArrowLeftIcon } from '@heroicons/react/24/outline';
 import { JSONTree } from 'react-json-tree';
 
 export const jsonTreeTheme = {
@@ -184,6 +184,8 @@ export interface DrawerShellProps {
   factStrip?: React.ReactNode; // duration · time strip under the title
   correlationId?: string | null;
   onClose: () => void;
+  /** Present when cross-navigation built a trail — renders a back button that returns to the prior node. */
+  onBack?: () => void;
   children: React.ReactNode;
 }
 
@@ -195,6 +197,7 @@ export const DrawerShell: React.FC<DrawerShellProps> = ({
   factStrip,
   correlationId,
   onClose,
+  onBack,
   children,
 }) => (
   <motion.div
@@ -206,7 +209,16 @@ export const DrawerShell: React.FC<DrawerShellProps> = ({
   >
     <div className='px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white/95 dark:bg-gray-800/95'>
       <div className='flex items-start justify-between gap-2'>
-        <div className='min-w-0'>
+        {onBack && (
+          <button
+            onClick={onBack}
+            className='mt-0.5 p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors flex-shrink-0'
+            title='Back to previous node'
+          >
+            <ArrowLeftIcon className='h-4 w-4' />
+          </button>
+        )}
+        <div className='min-w-0 flex-1'>
           <div className='flex items-center gap-2'>
             <span className={`text-xs font-semibold uppercase tracking-wide ${kindClass}`}>{kindLabel}</span>
             {statusChip}

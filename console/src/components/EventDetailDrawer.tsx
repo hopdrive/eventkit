@@ -16,9 +16,11 @@ interface EventDetailDrawerProps {
   relatedJobs?: Node[];
   /** Swap the drawer to another canvas node (cross-navigation). */
   onOpenNodeId?: (nodeId: string) => void;
+  /** Return to the previously-viewed node (present when a navigation trail exists). */
+  onBack?: () => void;
 }
 
-const EventDetailDrawer: React.FC<EventDetailDrawerProps> = ({ node, isOpen, onClose, relatedJobs = [], onOpenNodeId }) => {
+const EventDetailDrawer: React.FC<EventDetailDrawerProps> = ({ node, isOpen, onClose, relatedJobs = [], onOpenNodeId, onBack }) => {
   if (!isOpen || !node || node.type !== 'event') return null;
   const d = node.data ?? {};
   const started = d.createdAt ? new Date(d.createdAt) : undefined;
@@ -43,6 +45,7 @@ const EventDetailDrawer: React.FC<EventDetailDrawerProps> = ({ node, isOpen, onC
       }
       correlationId={d.correlationId}
       onClose={onClose}
+      onBack={onBack}
     >
       {d.ghost && (
         <div

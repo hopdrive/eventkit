@@ -17,6 +17,8 @@ interface InvocationDetailDrawerProps {
   onClose: () => void;
   /** Swap the drawer to another canvas node (cross-navigation; absent on the table page). */
   onOpenNodeId?: (nodeId: string) => void;
+  /** Return to the previously-viewed node (present when a navigation trail exists). */
+  onBack?: () => void;
 }
 
 /** Shallow changed-fields diff of a Hasura UPDATE payload — the question an operator
@@ -39,7 +41,7 @@ const short = (v: unknown): string => {
   return s.length > 48 ? `${s.slice(0, 45)}…` : s;
 };
 
-const InvocationDetailDrawer: React.FC<InvocationDetailDrawerProps> = ({ node, isOpen, onClose, onOpenNodeId }) => {
+const InvocationDetailDrawer: React.FC<InvocationDetailDrawerProps> = ({ node, isOpen, onClose, onOpenNodeId, onBack }) => {
   const { data, loading, error } = useInvocationDetailQuery({
     variables: { id: node?.id || '' },
     skip: !node?.id || !isOpen,
@@ -79,6 +81,7 @@ const InvocationDetailDrawer: React.FC<InvocationDetailDrawerProps> = ({ node, i
       }
       correlationId={inv?.correlation_id ?? node.data?.correlationId}
       onClose={onClose}
+      onBack={onBack}
     >
       {loading && <div className='text-sm text-gray-500'>Loading invocation…</div>}
       {error && <div className='text-sm text-red-500'>Failed to load: {error.message}</div>}

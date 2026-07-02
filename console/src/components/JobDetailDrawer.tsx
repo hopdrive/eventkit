@@ -16,9 +16,11 @@ interface JobDetailDrawerProps {
   onClose: () => void;
   /** Swap the drawer to another canvas node (cross-navigation). */
   onOpenNodeId?: (nodeId: string) => void;
+  /** Return to the previously-viewed node (present when a navigation trail exists). */
+  onBack?: () => void;
 }
 
-const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({ node, isOpen, onClose }) => {
+const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({ node, isOpen, onClose, onBack }) => {
   if (!isOpen || !node || node.type !== 'job') return null;
   const d = node.data ?? {};
   const jobExecutionId = String(node.id).replace('job-', '');
@@ -45,6 +47,7 @@ const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({ node, isOpen, onClose
       }
       correlationId={d.correlationId}
       onClose={onClose}
+      onBack={onBack}
     >
       <ErrorPanel message={d.error} stack={d.errorStack} />
 
