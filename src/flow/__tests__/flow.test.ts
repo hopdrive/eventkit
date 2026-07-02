@@ -15,7 +15,7 @@ function buildKit() {
     metadata: { description: 'Appointment became ready', owner: 'scheduling', flowHints: { flow: 'mobile-service' } },
     jobs: [
       job(() => { throw new Error('describe must NOT run jobs'); }, { name: 'sendOfferSMS', metadata: { sideEffect: 'sms' } }),
-      job(() => {}, { name: 'notifyOrg', retries: 3, continueOnFailure: false }),
+      job(() => {}, { name: 'notifyOrg', retries: 3 }),
     ],
   });
 
@@ -53,7 +53,7 @@ describe('kit.describe()', () => {
     expect(ready.owner).toBe('scheduling');
     expect(ready.flowHints).toEqual({ flow: 'mobile-service' });
     expect(ready.jobs.map(j => j.name)).toEqual(['sendOfferSMS', 'notifyOrg']);
-    expect(ready.jobs[1]).toMatchObject({ name: 'notifyOrg', retries: 3, continueOnFailure: false });
+    expect(ready.jobs[1]).toMatchObject({ name: 'notifyOrg', retries: 3 });
     expect(ready.jobs[0]!.metadata).toEqual({ sideEffect: 'sms' });
 
     expect(d.events.find(e => e.name === 'billing.quote')!.response).toBe('resolve');
@@ -79,8 +79,7 @@ describe('toFlowGraph()', () => {
     expect(nodes.find(n => n.kind === 'sideEffect')).toMatchObject({ metadata: { sideEffect: 'sms' } });
     expect(edges).toContainEqual({ from: 'source', to: 'event:appointment.ready' });
     expect(edges).toContainEqual({ from: 'event:appointment.ready', to: 'job:appointment.ready:sendOfferSMS' });
-    // continueOnFailure:false → required edge
-    expect(edges).toContainEqual({ from: 'event:appointment.ready', to: 'job:appointment.ready:notifyOrg', required: true });
+    expect(edges).toContainEqual({ from: 'event:appointment.ready', to: 'job:appointment.ready:notifyOrg' });
   });
 });
 

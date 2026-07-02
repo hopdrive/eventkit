@@ -39,8 +39,6 @@ export interface JobOptions<TInput = undefined> {
   /** Retry attempts core will make (durable scheduling of retries is Batch'). */
   retries?: number;
   tags?: string[];
-  /** Per-job override of the run-level continue-on-failure default. */
-  continueOnFailure?: boolean;
   /**
    * Request-scoped data handed to the job. NEVER persisted, logged, or serialized.
    * Live clients (`sdk`), closures, and source rows belong here. Either a static
@@ -177,12 +175,12 @@ export interface JobsResult<TResult = unknown> {
   ok: boolean;
 }
 
-/** Options for `run()`. Defaults are PINNED (ADR-014) — see `run`. */
+/**
+ * Options for a module's job run. Jobs always run in parallel with isolated failures
+ * (ADR-014). The `mode: 'series'` switch and `continueOnFailure` are specified but not
+ * enabled in this release (ADR-031), so they are intentionally absent here.
+ */
 export interface RunOptions {
-  /** Default `'parallel'`. */
-  mode?: 'parallel' | 'series';
-  /** Default `true`. */
-  continueOnFailure?: boolean;
   timeoutMs?: number;
   metadata?: Record<string, unknown>;
 }

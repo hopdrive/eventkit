@@ -1,10 +1,11 @@
 // `runJobs(rt, event, jobs, options, jobInputCtx)` — the runtime-internal job
 // executor (ADR-025). There is no consumer-facing `run()`: the runtime executes a
 // module's declared `jobs` array directly during dispatch, so this receives the
-// invocation runtime explicitly (no AsyncLocalStorage reach-around). Defaults are
-// PINNED (ADR-014): mode='parallel', continueOnFailure=true, matching the legacy
-// Promise.allSettled fan-out so a flaky job never blocks billing. The branded
-// `JobDefinition` + the throw below remain the backstop against a non-job entry.
+// invocation runtime explicitly (no AsyncLocalStorage reach-around). Jobs always run
+// in parallel with isolated failures (ADR-014; runOne never rejects), matching the
+// legacy Promise.allSettled fan-out so a flaky job never blocks billing. Series
+// execution / continueOnFailure are deferred (ADR-031). The branded `JobDefinition` +
+// the throw below remain the backstop against a non-job entry.
 import {
   job,
   serializeError,
@@ -93,31 +94,15 @@ export async function runJobs<TResult = unknown>(
     );
   });
 
-  const mode = options?.mode ?? 'parallel';
-  const continueOnFailure = options?.continueOnFailure ?? true;
   const prepared = (jobInputCtx.prepared as Record<string, unknown> | undefined) ?? {};
 
   if (jobs.length > 0) emitRunStart(rt, event, jobs.length);
 
-  let executions: JobExecution<TResult>[];
-  if (mode === 'series') {
-    executions = [];
-    let stopped = false;
-    for (const def of jobs) {
-      if (stopped) {
-        executions.push(skipped<TResult>(event, def, rt));
-        continue;
-      }
-      const exec = await runOne<TResult>(event, def, rt, options, prepared, jobInputCtx);
-      executions.push(exec);
-      const failed = exec.status === 'failed' || exec.status === 'timed_out';
-      const jobContinue = def.options.continueOnFailure ?? continueOnFailure;
-      if (failed && !jobContinue) stopped = true;
-    }
-  } else {
-    // parallel (default): launch all; isolated failures (runOne never rejects).
-    executions = await Promise.all(jobs.map(def => runOne<TResult>(event, def, rt, options, prepared, jobInputCtx)));
-  }
+  // Jobs always run in parallel with isolated failures — runOne never rejects (ADR-014).
+  // Series execution / continueOnFailure are deferred (ADR-031).
+  const executions: JobExecution<TResult>[] = await Promise.all(
+    jobs.map(def => runOne<TResult>(event, def, rt, options, prepared, jobInputCtx)),
+  );
 
   if (jobs.length > 0) emitRunEnd(rt, event, executions);
   return executions;
@@ -131,25 +116,6 @@ function resolveInput(def: JobDefinition, jobInputCtx: JobInputContext): Record<
   const raw = def.options.input;
   const resolved = typeof raw === 'function' ? (raw as (ctx: JobInputContext) => unknown)(jobInputCtx) : raw;
   return (resolved as Record<string, unknown> | undefined) ?? {};
-}
-
-function skipped<TResult>(event: DetectedEvent, def: JobDefinition, rt: InvocationRuntime): JobExecution<TResult> {
-  const now = new Date();
-  return {
-    id: newUuid(),
-    jobName: def.name,
-    eventId: event.id,
-    eventName: event.name,
-    invocationId: rt.invocation.invocationId,
-    correlationId: rt.invocation.correlationId,
-    status: 'skipped',
-    attempt: 0,
-    maxAttempts: (def.options.retries ?? 0) + 1,
-    startedAt: now,
-    completedAt: now,
-    durationMs: 0,
-    metadata: def.options.metadata ?? {},
-  };
 }
 
 class JobTimeoutError extends Error {

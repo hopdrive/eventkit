@@ -172,8 +172,8 @@ describe('ADR-020: augmentJobContext merge order + ambient trackingToken', () =>
   });
 });
 
-describe('ADR-014: run defaults parallel + continueOnFailure', () => {
-  it('a failing job does not block the others (parallel default)', async () => {
+describe('ADR-014: jobs run parallel + isolated (series deferred, ADR-031)', () => {
+  it('a failing job does not block the others (parallel, isolated failures)', async () => {
     const mod = defineFakeEvent('e', always, [
       job(() => { throw new Error('boom'); }, { name: 'bad' }),
       job(() => 'ok', { name: 'good' }),
@@ -187,23 +187,22 @@ describe('ADR-014: run defaults parallel + continueOnFailure', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('series + continueOnFailure:false stops and marks the rest skipped (run options on the module)', async () => {
-    const ran: string[] = [];
-    const mod = defineFakeEvent(
-      'e',
-      always,
-      [
-        job(() => void ran.push('1'), { name: 'one' }),
-        job(() => { ran.push('2'); throw new Error('stop here'); }, { name: 'two' }),
-        job(() => void ran.push('3'), { name: 'three' }),
-      ],
-      { run: { mode: 'series', continueOnFailure: false } },
+  it('registering a module with run.mode: series fails loud (ADR-031)', () => {
+    const mod = defineFakeEvent('e', always, [job(() => 'ok', { name: 'one' })]);
+    // RunOptions no longer types `mode`; force the legacy/untyped shape.
+    (mod as { run?: unknown }).run = { mode: 'series' };
+    expect(() => createEventKit(fakeSource()).registerEvents([mod])).toThrow(
+      /not available in this release \(ADR-031\)/,
     );
-    const kit = createEventKit(fakeSource()).registerEvents([mod]);
-    const result = await kit.handle('x');
-    const byName = Object.fromEntries(result.events[0]!.jobs.map(j => [j.jobName, j.status]));
-    expect(byName).toEqual({ one: 'completed', two: 'failed', three: 'skipped' });
-    expect(ran).toEqual(['1', '2']); // job three never ran
+  });
+
+  it('registering a job with continueOnFailure fails loud (ADR-031)', () => {
+    const badJob = job(() => 'ok', { name: 'one' });
+    (badJob.options as { continueOnFailure?: boolean }).continueOnFailure = false;
+    const mod = defineFakeEvent('e', always, [badJob]);
+    expect(() => createEventKit(fakeSource()).registerEvents([mod])).toThrow(
+      /not available in this release \(ADR-031\)/,
+    );
   });
 });
 
@@ -384,7 +383,6 @@ describe('ADR-026 amendment: respond (result-driven response) runs after jobs an
     const mod = defineEvent({
       name: 'rpc.partialfail',
       detector: always,
-      run: { continueOnFailure: true },
       jobs: [
         job(() => 'ok', { name: 'good' }),
         job(() => { throw new Error('boom'); }, { name: 'bad' }),

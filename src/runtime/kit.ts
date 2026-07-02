@@ -105,6 +105,15 @@ class Kit implements EventKit {
     if (module.jobs === undefined && module.resolve === undefined && module.respond === undefined) {
       throw new Error(`Event '${module.name}': must declare 'jobs' and/or 'resolve'/'respond' (a module with neither does nothing).`);
     }
+    // ADR-031: series execution and continueOnFailure are specified but NOT enabled in this
+    // release. The option types omit them, so a TS caller can't set them; this guards untyped
+    // JS callers so a stray `run.mode: 'series'` / `continueOnFailure` fails loud instead of
+    // silently downgrading to parallel. (Jobs always run parallel + isolated — ADR-014.)
+    const adr031 = `Event '${module.name}': series execution / continueOnFailure is not available in this release (ADR-031).`;
+    const run = module.run as { mode?: unknown; continueOnFailure?: unknown } | undefined;
+    if (run && ((run.mode !== undefined && run.mode !== 'parallel') || run.continueOnFailure !== undefined)) {
+      throw new Error(adr031);
+    }
     // `jobs`, if present, is a static array. Each entry is a branded job(...) OR a bare
     // job function (auto-wrapped with `job(fn)` — ADR-025 amendment). Normalize at REGISTER
     // time so the runtime always sees JobDefinitions. A non-job, non-function entry (a
@@ -116,7 +125,11 @@ class Kit implements EventKit {
         throw new Error(`Event '${module.name}': jobs must be a static array of job(fn) entries or bare job functions (ADR-025).`);
       }
       normalizedJobs = module.jobs.map((entry, i) => {
-        if (isJobDefinition(entry)) return entry as ReturnType<typeof job>;
+        if (isJobDefinition(entry)) {
+          const def = entry as ReturnType<typeof job>;
+          if ((def.options as { continueOnFailure?: unknown }).continueOnFailure !== undefined) throw new Error(adr031);
+          return def;
+        }
         if (typeof entry === 'function') return job(entry as Parameters<typeof job>[0]); // bare fn → job(fn), no options
         throw new Error(
           `Event '${module.name}': jobs[${i}] is not a job(fn) or a job function (ADR-025). ` +
@@ -563,7 +576,10 @@ class Kit implements EventKit {
         };
         if (opts.retries !== undefined) j.retries = opts.retries;
         if (opts.timeoutMs !== undefined) j.timeoutMs = opts.timeoutMs;
-        if (opts.continueOnFailure !== undefined) j.continueOnFailure = opts.continueOnFailure;
+        // continueOnFailure is gone from JobOptions (ADR-031) and the register guard rejects
+        // it, so this only ever populates for a legacy/untyped shape — read it defensively.
+        const cof = (opts as { continueOnFailure?: boolean }).continueOnFailure;
+        if (cof !== undefined) j.continueOnFailure = cof;
         if (opts.tags && opts.tags.length) j.tags = opts.tags;
         if (opts.metadata && Object.keys(opts.metadata).length) j.metadata = opts.metadata;
         return j;
@@ -571,7 +587,10 @@ class Kit implements EventKit {
 
       const meta = m.metadata as EventModuleMetadata | undefined;
       const ev: KitEventDescription = { name: String(m.name), response, jobs };
-      if (m.run?.mode) ev.runMode = m.run.mode;
+      // run.mode is gone from RunOptions (ADR-031) and the register guard rejects a
+      // non-parallel mode, so this reads defensively for a legacy/untyped shape.
+      const runMode = (m.run as { mode?: 'parallel' | 'series' } | undefined)?.mode;
+      if (runMode) ev.runMode = runMode;
       if (meta?.description) ev.description = meta.description;
       if (meta?.owner) ev.owner = meta.owner;
       if (meta?.tags && meta.tags.length) ev.tags = meta.tags;
