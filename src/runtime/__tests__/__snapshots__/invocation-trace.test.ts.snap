@@ -1,0 +1,102 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`golden-trace observability records (schema contract) > emits invocation/event/job records with the expected shape and semantics 1`] = `
+{
+  "events": [
+    {
+      "correlation_id": "<correlation_id>",
+      "created_at": "<created_at>",
+      "detected": true,
+      "detection_duration_ms": "<detection_duration_ms>",
+      "event_name": "test.rich",
+      "handler_duration_ms": "<handler_duration_ms>",
+      "id": "<id>",
+      "invocation_id": "<invocation_id>",
+      "jobs_count": 2,
+      "jobs_failed": 1,
+      "jobs_succeeded": 1,
+      "status": "completed",
+      "updated_at": "<updated_at>",
+    },
+  ],
+  "invocation": {
+    "correlation_id": "<correlation_id>",
+    "created_at": "<created_at>",
+    "error_message": "kaboom",
+    "error_stack": "<error_stack>",
+    "events_detected_count": 1,
+    "id": "<id>",
+    "source_event_payload": {
+      "hi": 1,
+    },
+    "source_event_time": "<source_event_time>",
+    "source_function": "unknown",
+    "source_system": "fake",
+    "status": "failed",
+    "total_duration_ms": "<total_duration_ms>",
+    "total_jobs_failed": 1,
+    "total_jobs_run": 2,
+    "total_jobs_succeeded": 1,
+    "updated_at": "<updated_at>",
+  },
+  "jobs": [
+    {
+      "correlation_id": "<correlation_id>",
+      "created_at": "<created_at>",
+      "duration_ms": "<duration_ms>",
+      "error_message": "kaboom",
+      "error_stack": "<error_stack>",
+      "event_execution_id": "<event_execution_id>",
+      "id": "<id>",
+      "invocation_id": "<invocation_id>",
+      "job_function_name": "failer",
+      "job_name": "failer",
+      "job_options": {},
+      "status": "failed",
+      "updated_at": "<updated_at>",
+    },
+    {
+      "correlation_id": "<correlation_id>",
+      "created_at": "<created_at>",
+      "duration_ms": "<duration_ms>",
+      "event_execution_id": "<event_execution_id>",
+      "id": "<id>",
+      "invocation_id": "<invocation_id>",
+      "job_function_name": "winner",
+      "job_name": "winner",
+      "job_options": {},
+      "result": {
+        "ok": true,
+      },
+      "status": "completed",
+      "updated_at": "<updated_at>",
+    },
+  ],
+}
+`;
+
+exports[`lifecycle ordering (§11 hook sequence) > runs hooks in the documented order for a detect → handle → 2-job invocation 1`] = `
+[
+  "onInit",
+  "onBeforeNormalize",
+  "onAfterNormalize",
+  "onInvocationStart",
+  "onEventDetectionStart",
+  "onEventDetectionEnd",
+  "onLog",
+  "onEventHandlerStart",
+  "onLog",
+  "onJobStart",
+  "onJobStart",
+  "onJobLog",
+  "onJobEnd",
+  "onJobEnd",
+  "onError",
+  "onLog",
+  "onLog",
+  "onLog",
+  "onEventHandlerEnd",
+  "onInvocationEnd",
+  "onFlush",
+]
+`;
