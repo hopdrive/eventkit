@@ -21,8 +21,15 @@ import 'reactflow/dist/style.css';
 import JobDetailDrawer from './JobDetailDrawer';
 import EventDetailDrawer from './EventDetailDrawer';
 import UndetectedEventsDetailDrawer from './UndetectedEventsDetailDrawer';
+import ExpectedFlowView, { CompareLegend } from './ExpectedFlowView';
+import { compareFlow } from '../flowdoc/compare';
+import { loadBundledDocs, loadUploadedDocs, saveUploadedDoc } from '../flowdoc/store';
+import type { FlowDoc } from '../flowdoc/types';
 
-// FlowDiagram now uses extracted components and positioning hook
+// Observed / Expected / Compare — console-expected-flows.md §2: three modes on one
+// canvas. Observed = the recorded run (below, unchanged). Expected = the committed
+// flow doc's structure. Compare = Observed overlaid on Expected, classified.
+type FlowMode = 'observed' | 'expected' | 'compare';
 
 // Inner component that uses ReactFlow hooks
 const FlowDiagramContent = () => {
@@ -36,10 +43,52 @@ const FlowDiagramContent = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [autoFocusCompleted, setAutoFocusCompleted] = useState(false);
+  const [docs, setDocs] = useState<FlowDoc[]>([]);
+  const [selectedDocTitle, setSelectedDocTitle] = useState<string>('');
+  const [docError, setDocError] = useState<string>('');
 
   // URL Parameters
   const invocationId = searchParams.get('invocationId');
   const autoFocus = searchParams.get('autoFocus') === 'true';
+  const mode = (searchParams.get('mode') as FlowMode) || 'observed';
+
+  const setMode = (m: FlowMode) => {
+    const next = new URLSearchParams(searchParams);
+    if (m === 'observed') next.delete('mode');
+    else next.set('mode', m);
+    setSearchParams(next, { replace: true });
+  };
+
+  // Flow-doc library: bundled samples + uploads (persisted).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const bundled = await loadBundledDocs();
+      if (!cancelled) {
+        setDocs(d => {
+          const merged = [...loadUploadedDocs(), ...bundled];
+          setSelectedDocTitle(t => t || merged[0]?.title || '');
+          return merged.length ? merged : d;
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const selectedDoc = docs.find(d => d.title === selectedDocTitle);
+
+  const handleUpload = async (file: File) => {
+    try {
+      const doc = saveUploadedDoc(await file.text());
+      setDocs(d => [doc, ...d.filter(x => x.title !== doc.title)]);
+      setSelectedDocTitle(doc.title);
+      setDocError('');
+    } catch (e) {
+      setDocError((e as Error).message);
+    }
+  };
 
   // GraphQL Query for invocation tree flow
   const { data, loading, error } = useInvocationTreeFlowQuery({
@@ -55,6 +104,13 @@ const FlowDiagramContent = () => {
     ? [data.invocations_by_pk, ...(data.invocations_by_pk.correlated_invocations || [])]
     : [];
   const { nodes: generatedNodes, edges: generatedEdges } = useFlowPositioning(invocations);
+
+  // Compare: overlay this run's observed tree on the selected expected graph.
+  const compareResult = useMemo(() => {
+    if (mode !== 'compare' || !selectedDoc || invocations.length === 0) return undefined;
+    return compareFlow(selectedDoc.graph, invocations as Parameters<typeof compareFlow>[1]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, selectedDoc, data]);
 
 
   // Auto-focus functionality
@@ -223,43 +279,116 @@ const FlowDiagramContent = () => {
   }, [generatedNodes, generatedEdges, searchTerm, selectedNode]);
 
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-500"></div>
+  // Observed/Compare need the invocation query; Expected renders from the doc alone.
+  const observedGate =
+    mode === 'expected' ? null : loading ? (
+      <div className='flex items-center justify-center h-full'>
+        <div className='animate-spin rounded-full h-32 w-32 border-b-2 border-blue-500'></div>
       </div>
-    );
-  }
+    ) : error ? (
+      <div className='flex items-center justify-center h-full'>
+        <div className='text-red-500'>Error loading flow diagram: {error.message}</div>
+      </div>
+    ) : !data?.invocations_by_pk ? (
+      <div className='flex items-center justify-center h-full'>
+        <div className='text-gray-500'>
+          {mode === 'compare'
+            ? 'Pick an invocation (from Invocations or search) to compare against the expected flow.'
+            : 'No invocation data found'}
+        </div>
+      </div>
+    ) : null;
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-red-500">Error loading flow diagram: {error.message}</div>
-      </div>
-    );
-  }
+  const centerHint = (msg: string) => (
+    <div className='flex items-center justify-center h-full'>
+      <div className='text-gray-500 text-sm max-w-md text-center'>{msg}</div>
+    </div>
+  );
 
-  if (!data?.invocations_by_pk) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-gray-500">No invocation data found</div>
-      </div>
-    );
-  }
+  const modeTab = (m: FlowMode, label: string) => (
+    <button
+      key={m}
+      onClick={() => setMode(m)}
+      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+        mode === m
+          ? 'bg-blue-600 text-white'
+          : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+      }`}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <div className="w-full h-full relative" style={{ minHeight: '600px' }}>
-      {/* Search Bar - Floating overlay */}
-      <div className="absolute top-4 left-4 z-10">
-        <input
-          type="text"
-          placeholder="Search nodes..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm w-64"
-        />
+      {/* Toolbar: mode switch (§2 three modes, one canvas) + flow-doc controls */}
+      <div className='absolute top-4 left-4 z-10 flex items-center gap-2'>
+        <div className='flex gap-0.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-0.5 shadow-sm'>
+          {modeTab('observed', 'Observed')}
+          {modeTab('expected', 'Expected')}
+          {modeTab('compare', 'Compare')}
+        </div>
+        {mode !== 'observed' && (
+          <>
+            <select
+              value={selectedDocTitle}
+              onChange={e => setSelectedDocTitle(e.target.value)}
+              className='px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 max-w-[220px]'
+            >
+              {docs.length === 0 && <option value=''>no flow docs loaded</option>}
+              {docs.map(d => (
+                <option key={d.title} value={d.title}>
+                  {d.title}
+                  {d.origin === 'uploaded' ? ' (uploaded)' : ''}
+                </option>
+              ))}
+            </select>
+            <label className='px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700'>
+              Load flow doc…
+              <input
+                type='file'
+                accept='.yaml,.yml,.json'
+                className='hidden'
+                onChange={e => e.target.files?.[0] && handleUpload(e.target.files[0])}
+              />
+            </label>
+            {docError && <span className='text-xs text-red-500 max-w-[280px] truncate' title={docError}>{docError}</span>}
+          </>
+        )}
+        {mode === 'observed' && (
+          <input
+            type='text'
+            placeholder='Search nodes...'
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm w-64'
+          />
+        )}
       </div>
 
+      {mode === 'compare' && compareResult && (
+        <div className='absolute top-4 right-4 z-10'>
+          <CompareLegend summary={compareResult.summary} />
+        </div>
+      )}
+
+      {mode === 'expected' ? (
+        selectedDoc ? (
+          <ExpectedFlowView doc={selectedDoc} />
+        ) : (
+          centerHint(
+            'No flow doc loaded. Commit one with `eventkit-flow generate` in a consumer repo and load it here, or pick a bundled sample.'
+          )
+        )
+      ) : mode === 'compare' ? (
+        observedGate ??
+        (selectedDoc ? (
+          <ExpectedFlowView doc={selectedDoc} compare={compareResult} />
+        ) : (
+          centerHint('Pick a flow doc to compare this run against.')
+        ))
+      ) : (
+        observedGate ?? (
       <ReactFlow
         nodes={flowData.nodes}
         edges={flowData.edges}
@@ -297,6 +426,8 @@ const FlowDiagramContent = () => {
           }}
         />
       </ReactFlow>
+        )
+      )}
 
       {/* Detail Drawer - Type-specific modals */}
       <AnimatePresence>

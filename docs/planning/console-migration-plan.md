@@ -151,3 +151,22 @@ No schema fork: the eventkit sink already writes the legacy tables with mapped s
 
 ## 11. Non-goals (now)
 Console backend read-API service (§16/D9 — the SPA talks to Hasura directly), Compare-Mode matcher, Flow-Manifest authoring UI, multi-tenant/external access, mobile layouts.
+
+---
+
+## 12. Phase C5 progress — Expected + Compare shipped in the console (2026-07-02)
+
+The three-mode canvas from `console-expected-flows.md` §2 is now implemented in the SPA:
+**Observed** (unchanged), **Expected** (renders a committed `eventkit-flow` YAML doc — or a
+`toFlowGraph` JSON — loaded from bundled samples or user upload, persisted in localStorage),
+and **Compare** (the §3 matcher overlaying one run's correlation tree on the expected graph).
+Node ids are the ADR-032 name-derived scheme, so no adapter layer was needed. The matcher
+(`console/src/flowdoc/compare.ts`) is a pure, dependency-free function implementing the §3
+vocabulary with confidence preserved and unmatched observed activity grafted as first-class
+`unexpected_observed` nodes — written to be upstreamed verbatim into `@hopdrive/eventkit/flow`
+(D-console-1) so CI and the console share one implementation.
+
+Still open from the §5 plan: the backend read layer (docs are file-loaded client-side for
+now), hand-authored manifest support (required/optional edges beyond `continueOnFailure`),
+`condition_not_met` (needs the job no-op signal from the package review), and cross-kit
+chain edges in the aggregated org view.
