@@ -1,4 +1,5 @@
 import React, { useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   ArrowUpIcon,
@@ -87,6 +88,7 @@ const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
 }) => {
   const { setIsPolling } = usePolling();
   const systemStatus = useSystemStatus();
+  const navigate = useNavigate();
 
   // Calculate the actual time range based on the selected option
   const timeRange = useMemo(() => {
@@ -463,7 +465,11 @@ const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             </thead>
             <tbody className='divide-y divide-gray-200 dark:divide-gray-700'>
               {recentInvocations.map(invocation => (
-                <tr key={invocation.id} className='hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer'>
+                <tr
+                  key={invocation.id}
+                  onClick={() => navigate(`/flow?invocationId=${invocation.id}&autoFocus=true`)}
+                  className='hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer'
+                >
                   <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100'>
                     {invocation.source_function}
                   </td>

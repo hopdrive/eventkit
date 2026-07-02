@@ -62,8 +62,14 @@ const FlowDiagramContent = () => {
     if (autoFocus && invocationId && reactFlowInstance && generatedNodes.length > 0 && !autoFocusCompleted) {
       const targetNode = generatedNodes.find(node => node.id === invocationId);
       if (targetNode) {
-        // Center the view on the target node
-        reactFlowInstance.setCenter(targetNode.position.x, targetNode.position.y, { zoom: 1.2 });
+        // Fit the whole chain instead of setCenter on one node: the immediate
+        // setCenter ran before ReactFlow had measured the nodes and left the viewport
+        // on a blank region until a manual fit-view (bug found in C1 verification).
+        // Deferring one frame lets ReactFlow initialize; fitView is the same
+        // known-good path as the manual control.
+        requestAnimationFrame(() => {
+          reactFlowInstance.fitView({ padding: 0.2, maxZoom: 1.2, minZoom: 0.1, duration: 300 });
+        });
 
         // Mark auto-focus as completed to prevent repeated execution
         setAutoFocusCompleted(true);
