@@ -54,6 +54,15 @@ describe('ADR-025: jobs is a static array — non-job entries throw at REGISTER 
     const mod = { name: 'e', detector: always, jobs: 'nope' } as never;
     expect(() => createEventKit(fakeSource()).registerEvents([mod])).toThrow(/jobs must be a static array/);
   });
+
+  it('throws when two modules register the same event name', () => {
+    const a = defineFakeEvent('same.name', always, [job(() => {})]);
+    const b = defineFakeEvent('same.name', always, [job(() => {})]);
+    expect(() => createEventKit(fakeSource()).registerEvents([a, b])).toThrow(/Duplicate event name registered.*same\.name/);
+    // also across separate register calls on the same kit
+    const kit = createEventKit(fakeSource()).registerEvents([defineFakeEvent('same.name', always, [job(() => {})])]);
+    expect(() => kit.registerEvents([defineFakeEvent('same.name', always, [job(() => {})])])).toThrow(/Duplicate event name registered/);
+  });
 });
 
 describe('ADR-025 (amended): a bare job function is auto-wrapped with job(fn)', () => {
