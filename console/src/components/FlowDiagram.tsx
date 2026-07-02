@@ -425,11 +425,15 @@ const FlowDiagramContent = () => {
     setDrawerOpen(false);
     setDrawerHistory([]);
   };
-  const relatedJobsFor = (eventNode: Node | null): Node[] => {
-    if (!eventNode) return [];
-    const targets = new Set(displayData.edges.filter(e => e.source === eventNode.id).map(e => e.target));
-    return displayData.nodes.filter(n => targets.has(n.id) && n.type === 'job') as Node[];
+  // Canvas children of a node by type (edge source → target): an event's jobs, a
+  // job's triggered invocations. Both drawers list them as one-click jump rows.
+  const childNodesFor = (parent: Node | null, type: string): Node[] => {
+    if (!parent) return [];
+    const targets = new Set(displayData.edges.filter(e => e.source === parent.id).map(e => e.target));
+    return displayData.nodes.filter(n => targets.has(n.id) && n.type === type) as Node[];
   };
+  const relatedJobsFor = (eventNode: Node | null): Node[] => childNodesFor(eventNode, 'job');
+  const triggeredInvocationsFor = (jobNode: Node | null): Node[] => childNodesFor(jobNode, 'invocation');
 
   const observedGate = loading ? (
     <div className='flex items-center justify-center h-full'>
@@ -625,6 +629,7 @@ const FlowDiagramContent = () => {
                 onClose={handleDrawerClose}
                 onOpenNodeId={handleOpenNodeId}
                 onBack={drawerHistory.length > 0 ? handleDrawerBack : undefined}
+                triggeredInvocations={triggeredInvocationsFor(selectedNode)}
               />
             )}
             {selectedNode.type === 'event' && (

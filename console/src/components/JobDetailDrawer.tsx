@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { Node } from 'reactflow';
-import { DrawerShell, StatusChip, Fact, FactGrid, ErrorPanel, Collapsible, JsonBlock } from './drawer/primitives';
+import { DrawerShell, StatusChip, Fact, FactGrid, ErrorPanel, Collapsible, JsonBlock, NodeRow } from './drawer/primitives';
 import { formatDuration } from '../utils/formatDuration';
 import { formatRelativeTime } from '../utils/formatTime';
 import { createGrafanaService } from '../services/GrafanaService';
@@ -18,9 +18,11 @@ interface JobDetailDrawerProps {
   onOpenNodeId?: (nodeId: string) => void;
   /** Return to the previously-viewed node (present when a navigation trail exists). */
   onBack?: () => void;
+  /** Invocation nodes on the canvas this job's write triggered (edges job -> invocation). */
+  triggeredInvocations?: Node[];
 }
 
-const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({ node, isOpen, onClose, onBack }) => {
+const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({ node, isOpen, onClose, onBack, onOpenNodeId, triggeredInvocations = [] }) => {
   if (!isOpen || !node || node.type !== 'job') return null;
   const d = node.data ?? {};
   const jobExecutionId = String(node.id).replace('job-', '');
@@ -62,13 +64,27 @@ const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({ node, isOpen, onClose
             Source job — its DB write triggered the invocation to its right.
           </Fact>
         )}
-        {d.triggersInvocation && (
-          <Fact label='Chained' span2>
-            This job's write triggered {d.triggeredInvocationsCount || 'further'} downstream invocation
-            {(d.triggeredInvocationsCount || 2) === 1 ? '' : 's'} — follow its edge on the canvas.
-          </Fact>
-        )}
       </FactGrid>
+
+      {triggeredInvocations.length > 0 && (
+        <div className='space-y-1.5'>
+          <div className='text-xs font-semibold text-gray-700 dark:text-gray-200 uppercase tracking-wide'>
+            Triggered invocations ({triggeredInvocations.length})
+          </div>
+          <div className='text-[11px] text-gray-400 -mt-0.5'>
+            This job's write caused these downstream invocations.
+          </div>
+          {triggeredInvocations.map(inv => (
+            <NodeRow
+              key={inv.id}
+              label={inv.data?.sourceFunction ?? inv.id}
+              sub={`${formatDuration(inv.data?.duration ?? 0)} · ${inv.data?.eventsCount ?? 0} events`}
+              status={inv.data?.status}
+              onClick={onOpenNodeId ? () => onOpenNodeId(inv.id) : undefined}
+            />
+          ))}
+        </div>
+      )}
 
       {hasResult ? (
         <div>
