@@ -421,6 +421,18 @@ Confirm the optional set: `description, tags, owner, flowHints, deprecated, rela
 **Decision:** ✅ **RESOLVED 2026-07-01.** `verify`'s signature MUST expose parsed body + headers + query params. Ship HopDrive verify presets (HMAC `t=`/`v1=`, static-header token, shared-secret, Hasura passphrase). Paired with `rejectUnverified` (ADR-030), this closes a real security gap, not just a consistency one. Documented §7.1.
 **Blast radius:** `WebhookConfig`/`verify` signature, a presets module, §7.1, the external-integration template.
 
+### D34. Test coverage strategy — suite as executable spec + published harness [added 2026-07-01]
+**Question:** This is a mission-critical, low-churn backbone deployed across many repos. What tests make us confident "at any time" that it does what the docs say, and what test tooling should the package publish for consumers?
+**Origin:** Fable-5 test-coverage review. Grounded against the current 136-test suite and the shipped `./testing` surface.
+**Decision:** ✅ **RESOLVED 2026-07-01 (ADR-036; full plan in `testing-strategy.md`).** Package: the suite is the executable form of the spec — every normative MUST maps to a named test. Headline additions: an **error-path chaos matrix** (throw at every seam, five invariants), **golden-trace observability snapshots**, a **`formatResponse` matrix**, a **docs-compile CI gate**, lifecycle-ordering snapshot, concurrency/warm-instance soak, scoped property tests, API-snapshot per subpath, nightly mutation. Consumer: `@hopdrive/eventkit/testing` becomes the **versioned public harness** — payload builders, `testInvocation`/`recordingPlugin`, `detectorContract` (auto-MANUAL case), memory doubles, `simulateChain`, flow assertions — tested through the real runtime, never mocks. Plus the standard four-layer consumer test pyramid in the guide.
+**Blast radius:** the test suite, CI (coverage/mutation/docs-compile/attw), and the `./testing` public surface (now major-version-gated).
+
+### D35. Flow artifact — reserve topology schema now, defer the aggregator [added 2026-07-01]
+**Question:** How far do we push the flow generator, given `describe()` is trustworthy but blind to cross-kit chains?
+**Origin:** Fable-5 test-coverage review, Part 3.
+**Decision:** ✅ **RESOLVED 2026-07-01 (ADR-037).** Add `toFlowMermaid`, `eventkit-flow coverage` (every event has a detector test → CI gate), and `eventkit-flow simulate --payload`. **Reserve now** the `repo`/`function` fields + a job `metadata.effects` convention (`{type:'db-write',table}` / `{type:'api-call',vendor}`) so a future org-level aggregator can infer cross-kit edges losslessly. **Defer** building the aggregator and Compare Mode (D9) — but add a proto-Compare CI helper (observed ⊆ expected via shared node-ids) to validate the matcher on one flow early. Full HTML emitter out of scope (guide exists).
+**Blast radius:** `./flow` emitters + two CLI subcommands; the YAML schema (`repo`/`function`/`effects`).
+
 ## Decision dependency map (what unblocks what)
 
 ```

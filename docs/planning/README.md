@@ -17,9 +17,10 @@ does today*, the authority is the canonical RFC (below) and the code (`../../REA
    decisions aren't re-litigated and rejected designs aren't mistaken for the current API.
 3. **`design-change-log.md`** — the CHG-1…13 change-by-change record (continued in
    the RFC revision history through CHG-17).
-4. **`decision-register.md`** — the decision register (D1–D33). The STATUS block at
-   the top is authoritative; D6/D10/D13 were ratified 2026-07-01 (Fable-5 review), and D29–D33
-   were added the same day (ADR-033/034/035 + typed prepare→input + verify presets).
+4. **`decision-register.md`** — the decision register (D1–D35). The STATUS block at
+   the top is authoritative; D6/D10/D13 were ratified 2026-07-01 (Fable-5 reviews), and D29–D35
+   were added the same day (ADR-033/034/035 hardening + typed prepare→input + verify presets +
+   ADR-036/037 test strategy).
 
 ## The rest
 
@@ -29,6 +30,9 @@ does today*, the authority is the canonical RFC (below) and the code (`../../REA
   Complete: every P0/P1 item shipped; kept as a verification record.
 - **`external-correlation-chaining.md`** — ADR-028 design: reconnecting an event chain across
   an external vendor round-trip (the `correlationResolver` plugin + the awaitable envelope seam).
+- **`testing-strategy.md`** — the test-coverage plan (ADR-036/037): the suite as executable spec
+  (error-path matrix, golden traces, `formatResponse` matrix, docs-compile gate), the published
+  `@hopdrive/eventkit/testing` consumer harness, and the flow-artifact topology additions.
 - **`console-expected-flows.md`** — the plan for the Console's Expected/Compare modes over the
   **shipped** flow-doc generator (ADR-032) and the Observability records. The generator half
   (`kit.describe()` / `@hopdrive/eventkit/flow` / `eventkit-flow`) is built; the matcher, the
