@@ -17,14 +17,15 @@ function run(cmd) {
 function build() {
   run('npm run clean');
 
-  console.log('Compiling ESM...');
+  // Each module build emits its own co-located declarations (dist/esm/*.d.ts under the
+  // type:module marker, dist/cjs/*.d.ts under type:commonjs), so the per-condition
+  // `types` in package.json "exports" resolve to a matching module format — no
+  // "masquerading as ESM" for CJS consumers (verified by attw in CI).
+  console.log('Compiling ESM (+ declarations)...');
   run('npm run build:esm');
 
-  console.log('Compiling CJS...');
+  console.log('Compiling CJS (+ declarations)...');
   run('npm run build:cjs');
-
-  console.log('Emitting declarations...');
-  run('npm run build:types');
 
   console.log('Writing module-type marker files...');
   const root = path.join(__dirname, '..');
