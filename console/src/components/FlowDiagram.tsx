@@ -310,7 +310,6 @@ const FlowDiagramContent = () => {
       </div>
 
       <ReactFlow
-        key={`flow-${flowData.nodes.length}`}
         nodes={flowData.nodes}
         edges={flowData.edges}
         onNodeClick={onNodeClick}
@@ -326,7 +325,7 @@ const FlowDiagramContent = () => {
         elementsSelectable={true}
         defaultEdgeOptions={{
           type: 'default', // Use bezier curves for smooth connections
-          animated: true,
+          animated: false, // perf fix P6: per-edge marching-ants animation janks large chains
           style: { strokeWidth: 2 },
           markerEnd: {
             type: MarkerType.ArrowClosed,

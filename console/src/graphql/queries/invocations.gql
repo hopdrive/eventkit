@@ -1,5 +1,10 @@
+# Slim server-side list query (perf fix P1/P5 — see docs/planning/console-migration-plan.md §4.3).
+# No source_event_payload (was ~6KB/row → 7MB per page load) and no per-row aggregate
+# sub-selects: the counters are the denormalized invocation columns the plugins already
+# write. Detected event names stay — selective join via the (invocation_id) index.
+# Pagination, sorting, facets, and search all arrive server-side through $where/$order_by.
 query InvocationsList(
-  $limit: Int = 20
+  $limit: Int = 50
   $offset: Int = 0
   $where: invocations_bool_exp = {}
   $order_by: [invocations_order_by!] = { created_at: desc }
@@ -7,7 +12,6 @@ query InvocationsList(
   invocations(limit: $limit, offset: $offset, where: $where, order_by: $order_by) {
     id
     created_at
-    updated_at
     source_function
     source_table
     source_operation
@@ -15,7 +19,6 @@ query InvocationsList(
     source_job_id
     correlation_id
     source_user_email
-    source_user_role
     total_duration_ms
     events_detected_count
     total_jobs_run
@@ -23,26 +26,9 @@ query InvocationsList(
     total_jobs_failed
     status
     error_message
-    source_event_payload
-    event_executions_aggregate {
-      aggregate {
-        count
-      }
-    }
-    detected_events: event_executions_aggregate(where: { detected: { _eq: true } }) {
-      aggregate {
-        count
-      }
-    }
-    undetected_events: event_executions_aggregate(where: { detected: { _eq: false } }) {
-      aggregate {
-        count
-      }
-    }
-    event_executions(where: { detected: { _eq: true } }) {
+    event_executions(where: { detected: { _eq: true } }, limit: 6) {
       id
       event_name
-      detected
     }
   }
 
@@ -117,35 +103,74 @@ query InvocationDetail($id: uuid!) {
   }
 }
 
-query CorrelationSearch($searchTerm: String!, $hasColon: Boolean = false, $tablePart: String = "", $idPart: String = "") {
-  invocations(
+# Grouped search (perf fix P2/P3 + UX U1 — plan §4.1). Five perspectives, every
+# predicate on an indexed column; the JSONB payload-cast scan is GONE. Record
+# (table:id) search returns via the source_record_id column (plan §6.2, Phase C5);
+# until then table:id input matches source_table + the correlation/event paths.
+# $exactCorrelation carries the raw term for correlation-id equality when the
+# input looks like one; $prefix is "term%" (btree-friendly); $infix is "%term%".
+query GroupedSearch(
+  $exactCorrelation: String!
+  $prefix: String!
+  $infix: String!
+  $isCorrelationLike: Boolean!
+) {
+  correlation_matches: invocations(
+    where: { correlation_id: { _eq: $exactCorrelation } }
+    order_by: { created_at: desc }
+    limit: 5
+  ) @include(if: $isCorrelationLike) {
+    id
+    correlation_id
+    source_function
+    created_at
+    status
+    events_detected_count
+  }
+
+  function_matches: invocations(
     where: {
       _or: [
-        { correlation_id: { _ilike: $searchTerm } }
-        { source_function: { _ilike: $searchTerm } }
-        { source_user_email: { _ilike: $searchTerm } }
-        { source_event_payload: { _cast: { String: { _ilike: $searchTerm } } } }
-        {
-          _and: [
-            { source_table: { _ilike: $tablePart } }
-            { source_event_payload: { _cast: { String: { _ilike: $idPart } } } }
-          ]
-        }
+        { source_function: { _ilike: $infix } }
+        { source_user_email: { _ilike: $prefix } }
       ]
     }
     order_by: { created_at: desc }
-    limit: 20
+    limit: 5
   ) {
     id
     correlation_id
     source_function
-    source_table
     source_user_email
-    source_event_payload
     created_at
     status
-    total_duration_ms
     events_detected_count
-    total_jobs_run
+  }
+
+  event_matches: event_executions(
+    where: { event_name: { _ilike: $infix }, detected: { _eq: true } }
+    order_by: { created_at: desc }
+    limit: 6
+  ) {
+    id
+    event_name
+    correlation_id
+    invocation_id
+    created_at
+    status
+  }
+
+  job_matches: job_executions(
+    where: { job_name: { _ilike: $infix } }
+    order_by: { created_at: desc }
+    limit: 6
+  ) {
+    id
+    job_name
+    correlation_id
+    invocation_id
+    created_at
+    status
+    duration_ms
   }
 }

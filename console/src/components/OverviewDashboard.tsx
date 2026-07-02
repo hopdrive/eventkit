@@ -112,13 +112,28 @@ const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
     return startDate.toISOString();
   }, [timeRangeOption]);
 
-  const { data, loading, error, networkStatus } = useOverviewDashboardQuery({
+  const { data, loading, error, networkStatus, startPolling, stopPolling } = useOverviewDashboardQuery({
     variables: { timeRange },
     fetchPolicy: 'cache-and-network', // Use cache first, but fetch in background
     errorPolicy: 'all',
     notifyOnNetworkStatusChange: true, // Enable to track refetch status
-    pollInterval: 5000, // Poll every 5 seconds
+    // Perf fix P4: was 5s. At prod volume the dashboard query is heavy, and a wall of
+    // idle dashboards repeating it every 5s was a real load source. 30s is fresh
+    // enough for an operations overview; hidden tabs stop entirely (below).
+    pollInterval: 30000,
   });
+
+  // Pause polling entirely while the tab is hidden (perf fix P4: background dashboards
+  // used to keep querying forever); resume + refresh immediately on return.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) stopPolling();
+      else startPolling(30000);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    onVisibility();
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [startPolling, stopPolling]);
 
   // Track polling status for the Layout indicator
   useEffect(() => {

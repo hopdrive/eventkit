@@ -1,15 +1,12 @@
 // prettier-ignore
 
 import React, { useState, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
   createColumnHelper,
   flexRender,
   getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
   useReactTable,
   ColumnDef,
   SortingState,
@@ -40,8 +37,6 @@ interface Invocation {
   sourceJobId?: string;
   totalDuration: number;
   eventsDetectedCount: number;
-  eventsUndetectedCount: number;
-  totalEventsCount: number;
   detectedEventNames: string[];
   totalJobsSucceeded: number;
   totalJobsFailed: number;
@@ -57,25 +52,97 @@ interface InvocationsTableProps {
   correlationSearch?: string;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Sortable column id -> invocations order_by field (server-side sorting).
+const ORDER_FIELDS: Record<string, string> = {
+  sourceFunction: 'source_function',
+  createdAt: 'created_at',
+  totalDuration: 'total_duration_ms',
+  status: 'status',
+  userEmail: 'source_user_email',
+};
+
 const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch = '' }) => {
   const navigate = useNavigate();
   const [selectedInvocation, setSelectedInvocation] = useState<Node | null>(null);
   const [hideZeroDetectedEvents, setHideZeroDetectedEvents] = useState(true);
   const [hideChildInvocations, setHideChildInvocations] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'createdAt', desc: true }]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [searchText, setSearchText] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
+
+  // Header correlation-search drives the same server-side search.
+  React.useEffect(() => {
+    setSearchText(correlationSearch);
+  }, [correlationSearch]);
+
+  // Debounce the search input (perf fix P3): one server query per pause, not per keystroke.
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchText.trim()), 250);
+    return () => clearTimeout(t);
+  }, [searchText]);
+
+  // Back to page 1 whenever the result-set definition changes.
+  React.useEffect(() => {
+    setPagination(p => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
+  }, [debouncedSearch, statusFilter, hideZeroDetectedEvents, hideChildInvocations]);
+
+  // Server-side where clause (perf fix P1/P5): filters and search run in Postgres over
+  // the WHOLE dataset on indexed columns — not over a 1,000-row client window.
+  const where = useMemo(() => {
+    const and: Record<string, unknown>[] = [];
+    if (hideZeroDetectedEvents) and.push({ events_detected_count: { _gt: 0 } });
+    if (hideChildInvocations) and.push({ source_job_id: { _is_null: true } });
+    if (statusFilter !== 'all') and.push({ status: { _eq: statusFilter } });
+    if (debouncedSearch) {
+      const s = debouncedSearch;
+      const or: Record<string, unknown>[] = [
+        { source_function: { _ilike: `%${s}%` } },
+        { source_user_email: { _ilike: `${s}%` } },
+        { event_executions: { event_name: { _ilike: `%${s}%` } } },
+      ];
+      if (UUID_RE.test(s)) or.unshift({ correlation_id: { _eq: s } });
+      else or.unshift({ correlation_id: { _ilike: `${s}%` } });
+      and.push({ _or: or });
+    }
+    return and.length ? { _and: and } : {};
+  }, [debouncedSearch, statusFilter, hideZeroDetectedEvents, hideChildInvocations]);
+
+  const orderBy = useMemo(() => {
+    const s = sorting[0];
+    const field = (s && ORDER_FIELDS[s.id]) || 'created_at';
+    return [{ [field]: s?.desc === false ? 'asc' : 'desc' }] as any;
+  }, [sorting]);
 
   const {
     data: queryData,
+    previousData,
     loading,
     error,
   } = useInvocationsListQuery({
-    variables: { limit: 1000, offset: 0, order_by: [{ created_at: 'desc' }] },
-    fetchPolicy: 'cache-first',
+    variables: {
+      limit: pagination.pageSize,
+      offset: pagination.pageIndex * pagination.pageSize,
+      where: where as any,
+      order_by: orderBy,
+    },
+    fetchPolicy: 'cache-and-network',
     errorPolicy: 'all',
     notifyOnNetworkStatusChange: false,
   });
 
+  // Keep the previous page rendered while the next loads (no spinner flash between pages).
+  const activeData = queryData ?? previousData;
+  const totalCount = activeData?.invocations_aggregate?.aggregate?.count ?? 0;
+
   const invocationsData = useMemo(() => {
-    const invocations = queryData?.invocations || [];
+    const invocations = activeData?.invocations || [];
     return invocations.map(inv => ({
       id: inv.id,
       sourceFunction: inv.source_function || '',
@@ -84,45 +151,20 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
       sourceOperation: inv.source_operation || '',
       sourceJobId: inv.source_job_id || undefined,
       totalDuration: inv.total_duration_ms || 0,
-      eventsDetectedCount: inv.detected_events?.aggregate?.count || inv.events_detected_count || 0,
-      eventsUndetectedCount: inv.undetected_events?.aggregate?.count || 0,
-      totalEventsCount: inv.event_executions_aggregate?.aggregate?.count || 0,
+      eventsDetectedCount: inv.events_detected_count || 0,
       detectedEventNames: inv.event_executions?.map(e => e.event_name).filter(Boolean) || [],
       totalJobsSucceeded: inv.total_jobs_succeeded || 0,
       totalJobsFailed: inv.total_jobs_failed || 0,
       totalJobsRun: inv.total_jobs_run || 0,
       status: inv.status as 'completed' | 'failed' | 'running',
       createdAt: inv.created_at,
-      //{ "id": "7e981c1b-cad5-4970-afc3-41d78adb5805", "event": { "op": "UPDATE", "data": { "new": { "i
-      recordId: `${inv?.source_table?.split('.')[1]}:${inv.source_event_payload?.event?.data?.new?.id}`,
+      // Record identity (table:id) comes back with the indexed source_record_id column
+      // (plan §6.2, Phase C5) — deriving it from the 6KB payload cost ~7MB per page load.
+      recordId: inv.source_table ? inv.source_table.split('.').pop() ?? undefined : undefined,
     }));
-  }, [queryData]);
+  }, [activeData]);
 
-  const filteredInvocationsData = useMemo(() => {
-    let filtered = invocationsData;
-
-    if (hideZeroDetectedEvents) {
-      filtered = filtered.filter(inv => inv.eventsDetectedCount > 0);
-    }
-
-    if (hideChildInvocations) {
-      filtered = filtered.filter(inv => !inv.sourceJobId);
-    }
-
-    return filtered;
-  }, [invocationsData, hideZeroDetectedEvents, hideChildInvocations]);
-
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'createdAt', desc: true }]);
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
-  const [globalFilter, setGlobalFilter] = useState('');
-  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
-
-  // Update global filter when correlationSearch changes
-  React.useEffect(() => {
-    setGlobalFilter(correlationSearch);
-  }, [correlationSearch]);
+  const filteredInvocationsData = invocationsData;
 
   const handleRowClick = (invocation: Invocation) => {
     navigate(`/flow?invocationId=${invocation.id}&autoFocus=true`);
@@ -241,28 +283,20 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
         id: 'events',
         header: 'Events',
         cell: info => {
-          const row = info.row.original;
-          const detected = row.eventsDetectedCount;
-          const undetected = row.eventsUndetectedCount;
-          const total = detected + undetected;
-
+          // Undetected-count chip removed with the per-row aggregate sub-selects (perf
+          // fix P1); the full detected/undetected breakdown lives in the detail drawer.
+          const detected = info.row.original.eventsDetectedCount;
           return (
             <div className='flex items-center space-x-1'>
-              {detected > 0 && (
-                <span className='px-2 py-1 text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400 rounded'>
-                  {detected}
-                </span>
-              )}
-              {undetected > 0 && (
-                <span className='px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded'>
-                  {undetected}
-                </span>
-              )}
-              {total === 0 && (
-                <span className='px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded'>
-                  0
-                </span>
-              )}
+              <span
+                className={`px-2 py-1 text-xs font-medium rounded ${
+                  detected > 0
+                    ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                }`}
+              >
+                {detected}
+              </span>
             </div>
           );
         },
@@ -336,7 +370,7 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
       }),
       columnHelper.accessor('recordId', {
         id: 'recordId',
-        header: 'Record ID',
+        header: 'Table',
         cell: info => (
           <div className='text-gray-600 dark:text-gray-400 text-sm font-mono text-xs'>{info.getValue() || '-'}</div>
         ),
@@ -369,23 +403,24 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
     []
   );
 
+  // Server-side pagination/sorting/filtering: the row model is exactly one page.
   const table = useReactTable({
     data: filteredInvocationsData,
     columns,
-    state: { sorting, columnFilters, columnVisibility, globalFilter, pagination },
+    state: { sorting, columnFilters, columnVisibility, pagination },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     onColumnVisibilityChange: setColumnVisibility,
-    onGlobalFilterChange: setGlobalFilter,
     onPaginationChange: setPagination,
+    manualPagination: true,
+    manualSorting: true,
+    manualFiltering: true,
+    pageCount: Math.max(1, Math.ceil(totalCount / pagination.pageSize)),
     getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
     debugTable: false,
   });
 
-  if (loading) {
+  if (loading && !activeData) {
     return (
       <div className='h-full flex flex-col'>
         <div className='bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4'>
@@ -427,7 +462,7 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
           <div>
             <h2 className='text-xl font-semibold text-gray-900 dark:text-white'>Invocations</h2>
             <p className='mt-1 text-sm text-gray-600 dark:text-gray-400'>
-              {table.getFilteredRowModel().rows.length} of {filteredInvocationsData.length} invocations
+              {totalCount.toLocaleString()} invocations{loading ? ' · refreshing…' : ''}
             </p>
           </div>
 
@@ -435,18 +470,17 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
             <div className='relative'>
               <MagnifyingGlassIcon className='h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400' />
               <input
-                value={globalFilter ?? ''}
-                onChange={e => setGlobalFilter(String(e.target.value))}
+                value={searchText}
+                onChange={e => setSearchText(e.target.value)}
                 className='pl-10 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500'
-                placeholder='Search all fields...'
+                placeholder='Search function, event, email, correlation…'
               />
             </div>
 
             <select
-              value={(table.getColumn('status')?.getFilterValue() as string) ?? 'all'}
+              value={statusFilter}
               onChange={e => {
-                const value = e.target.value;
-                table.getColumn('status')?.setFilterValue(value === 'all' ? undefined : value);
+                setStatusFilter(e.target.value);
               }}
               className='px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
             >
@@ -541,11 +575,11 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
           </thead>
 
           <tbody className='bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700'>
+            {/* Plain <tr>: the per-row framer-motion mount animation (perf fix P7) cost a
+                spring per row on every page/filter change. */}
             {table.getRowModel().rows.map(row => (
-              <motion.tr
+              <tr
                 key={row.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
                 onClick={() => handleRowClick(row.original)}
                 className='hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors'
               >
@@ -554,7 +588,7 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}
-              </motion.tr>
+              </tr>
             ))}
             {table.getRowModel().rows.length === 0 && (
               <tr>
@@ -573,16 +607,13 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
           <div className='text-sm text-gray-700 dark:text-gray-300'>
             Showing{' '}
             <span className='font-medium'>
-              {table.getState().pagination.pageIndex * table.getState().pagination.pageSize + 1}
+              {totalCount === 0 ? 0 : pagination.pageIndex * pagination.pageSize + 1}
             </span>{' '}
             to{' '}
             <span className='font-medium'>
-              {Math.min(
-                (table.getState().pagination.pageIndex + 1) * table.getState().pagination.pageSize,
-                table.getFilteredRowModel().rows.length
-              )}
+              {Math.min((pagination.pageIndex + 1) * pagination.pageSize, totalCount)}
             </span>{' '}
-            of <span className='font-medium'>{table.getFilteredRowModel().rows.length}</span> results
+            of <span className='font-medium'>{totalCount.toLocaleString()}</span> results
           </div>
           <div className='flex items-center space-x-2'>
             <select
