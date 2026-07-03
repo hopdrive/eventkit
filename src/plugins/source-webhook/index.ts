@@ -20,6 +20,7 @@ import {
   asCorrelationId,
   asEventSourceName,
   ClientError,
+  type CrashPolicy,
   type DetectorContext,
   type DetectorFunction,
   type EventEnvelope,
@@ -76,6 +77,14 @@ export interface WebhookConfig {
    * an event) — keep `false` and guard in the detector if you want the attempt recorded.
    */
   rejectUnverified?: boolean | { status?: number; message?: string };
+  /**
+   * How an unhandled detector/`prepare` crash maps to the HTTP status (ADR-038). Defaults
+   * to `'signalRetry'` for webhooks: a processing crash returns **500** so the vendor's
+   * at-least-once delivery retries it (and the crash is logged loudly for Grafana/Sentry).
+   * Set `'ack'` to instead return 200 on a crash (no retry) — e.g. when the vendor's
+   * retries would be more harmful than a dropped event.
+   */
+  crashPolicy?: CrashPolicy;
 }
 
 interface WebhookFields<TBody> {
@@ -129,6 +138,9 @@ export {
 export function webhook(config: WebhookConfig): WebhookSource {
   if (!config?.vendor) throw new Error('webhook() requires a `vendor`.');
   const { vendor, eventTypeHeader, verify, rejectUnverified } = config;
+  // Inbound vendor webhooks are at-least-once: a processing crash should 500 so the sender
+  // retries, unless the consumer opts out (ADR-038).
+  const crashPolicy: CrashPolicy = config.crashPolicy ?? 'signalRetry';
   if (rejectUnverified && !verify) {
     throw new Error('webhook() `rejectUnverified` requires a `verify` function — there is nothing to verify otherwise.');
   }
@@ -145,6 +157,7 @@ export function webhook(config: WebhookConfig): WebhookSource {
     name: 'source-webhook',
     provides: ['source', 'source:webhook'],
     sourceType: 'webhook',
+    crashPolicy,
     // Authoring helpers — identity wrappers carrying the vendor-typed context.
     detector(fn) {
       return fn as unknown as DetectorFunction;

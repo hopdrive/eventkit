@@ -94,7 +94,15 @@ describe('correlationResolver (ADR-028 Mechanism B — DB lookup)', () => {
     let corr = '';
     const lookup = vi.fn(async () => ({ correlationId: 'should-not-be-used', trackingToken: 'x|y|z' }));
     const kit = createEventKit(acme())
-      .use(loopGuard, { codec: codecCfg, read: (env: { payload?: { metadata?: { eventkit_token?: string } } }) => env.payload?.metadata?.eventkit_token })
+      .use(loopGuard, {
+        codec: codecCfg,
+        // The webhook source surfaces no tokenCandidates; the escape hatch pulls the
+        // echoed token out of this vendor's body so loop-guard's echo-back path wins.
+        candidates: (env: { payload?: { metadata?: { eventkit_token?: string } } }) => {
+          const t = env.payload?.metadata?.eventkit_token;
+          return t ? [t] : [];
+        },
+      })
       .use(correlationResolver, {
         extractKey: (env: { payload?: { ride_id?: string } }) => ({ externalId: env.payload?.ride_id }),
         lookup,

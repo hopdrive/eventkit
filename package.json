@@ -5,88 +5,168 @@
   "type": "module",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
-  "types": "dist/types/index.d.ts",
+  "types": "./dist/esm/index.d.ts",
   "sideEffects": false,
   "exports": {
     ".": {
-      "types": "./dist/types/index.d.ts",
-      "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.js"
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
     },
     "./core": {
-      "types": "./dist/types/core/index.d.ts",
-      "import": "./dist/esm/core/index.js",
-      "require": "./dist/cjs/core/index.js"
+      "import": {
+        "types": "./dist/esm/core/index.d.ts",
+        "default": "./dist/esm/core/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/core/index.d.ts",
+        "default": "./dist/cjs/core/index.js"
+      }
     },
     "./sources": {
-      "types": "./dist/types/plugins/sources.d.ts",
-      "import": "./dist/esm/plugins/sources.js",
-      "require": "./dist/cjs/plugins/sources.js"
+      "import": {
+        "types": "./dist/esm/plugins/sources.d.ts",
+        "default": "./dist/esm/plugins/sources.js"
+      },
+      "require": {
+        "types": "./dist/cjs/plugins/sources.d.ts",
+        "default": "./dist/cjs/plugins/sources.js"
+      }
     },
     "./plugins": {
-      "types": "./dist/types/plugins/index.d.ts",
-      "import": "./dist/esm/plugins/index.js",
-      "require": "./dist/cjs/plugins/index.js"
+      "import": {
+        "types": "./dist/esm/plugins/index.d.ts",
+        "default": "./dist/esm/plugins/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/plugins/index.d.ts",
+        "default": "./dist/cjs/plugins/index.js"
+      }
     },
     "./sources/hasura": {
-      "types": "./dist/types/plugins/source-hasura.d.ts",
-      "import": "./dist/esm/plugins/source-hasura.js",
-      "require": "./dist/cjs/plugins/source-hasura.js"
+      "import": {
+        "types": "./dist/esm/plugins/source-hasura.d.ts",
+        "default": "./dist/esm/plugins/source-hasura.js"
+      },
+      "require": {
+        "types": "./dist/cjs/plugins/source-hasura.d.ts",
+        "default": "./dist/cjs/plugins/source-hasura.js"
+      }
     },
     "./sources/webhook": {
-      "types": "./dist/types/plugins/source-webhook/index.d.ts",
-      "import": "./dist/esm/plugins/source-webhook/index.js",
-      "require": "./dist/cjs/plugins/source-webhook/index.js"
+      "import": {
+        "types": "./dist/esm/plugins/source-webhook/index.d.ts",
+        "default": "./dist/esm/plugins/source-webhook/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/plugins/source-webhook/index.d.ts",
+        "default": "./dist/cjs/plugins/source-webhook/index.js"
+      }
     },
     "./plugins/batch": {
-      "types": "./dist/types/plugins/batch/index.d.ts",
-      "import": "./dist/esm/plugins/batch/index.js",
-      "require": "./dist/cjs/plugins/batch/index.js"
+      "import": {
+        "types": "./dist/esm/plugins/batch/index.d.ts",
+        "default": "./dist/esm/plugins/batch/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/plugins/batch/index.d.ts",
+        "default": "./dist/cjs/plugins/batch/index.js"
+      }
     },
     "./plugins/observability": {
-      "types": "./dist/types/plugins/observability/index.d.ts",
-      "import": "./dist/esm/plugins/observability/index.js",
-      "require": "./dist/cjs/plugins/observability/index.js"
+      "import": {
+        "types": "./dist/esm/plugins/observability/index.d.ts",
+        "default": "./dist/esm/plugins/observability/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/plugins/observability/index.d.ts",
+        "default": "./dist/cjs/plugins/observability/index.js"
+      }
     },
     "./plugins/observability/graphql-sink": {
-      "types": "./dist/types/plugins/observability/graphql-sink.d.ts",
-      "import": "./dist/esm/plugins/observability/graphql-sink.js",
-      "require": "./dist/cjs/plugins/observability/graphql-sink.js"
+      "import": {
+        "types": "./dist/esm/plugins/observability/graphql-sink.d.ts",
+        "default": "./dist/esm/plugins/observability/graphql-sink.js"
+      },
+      "require": {
+        "types": "./dist/cjs/plugins/observability/graphql-sink.d.ts",
+        "default": "./dist/cjs/plugins/observability/graphql-sink.js"
+      }
     },
     "./plugins/loop-guard": {
-      "types": "./dist/types/plugins/loop-guard/index.d.ts",
-      "import": "./dist/esm/plugins/loop-guard/index.js",
-      "require": "./dist/cjs/plugins/loop-guard/index.js"
+      "import": {
+        "types": "./dist/esm/plugins/loop-guard/index.d.ts",
+        "default": "./dist/esm/plugins/loop-guard/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/plugins/loop-guard/index.d.ts",
+        "default": "./dist/cjs/plugins/loop-guard/index.js"
+      }
     },
     "./plugins/correlation-resolver": {
-      "types": "./dist/types/plugins/correlation-resolver/index.d.ts",
-      "import": "./dist/esm/plugins/correlation-resolver/index.js",
-      "require": "./dist/cjs/plugins/correlation-resolver/index.js"
+      "import": {
+        "types": "./dist/esm/plugins/correlation-resolver/index.d.ts",
+        "default": "./dist/esm/plugins/correlation-resolver/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/plugins/correlation-resolver/index.d.ts",
+        "default": "./dist/cjs/plugins/correlation-resolver/index.js"
+      }
     },
     "./plugins/transports/grafana": {
-      "types": "./dist/types/plugins/grafana/index.d.ts",
-      "import": "./dist/esm/plugins/grafana/index.js",
-      "require": "./dist/cjs/plugins/grafana/index.js"
+      "import": {
+        "types": "./dist/esm/plugins/grafana/index.d.ts",
+        "default": "./dist/esm/plugins/grafana/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/plugins/grafana/index.d.ts",
+        "default": "./dist/cjs/plugins/grafana/index.js"
+      }
     },
     "./plugins/transports/sentry": {
-      "types": "./dist/types/plugins/sentry/index.d.ts",
-      "import": "./dist/esm/plugins/sentry/index.js",
-      "require": "./dist/cjs/plugins/sentry/index.js"
+      "import": {
+        "types": "./dist/esm/plugins/sentry/index.d.ts",
+        "default": "./dist/esm/plugins/sentry/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/plugins/sentry/index.d.ts",
+        "default": "./dist/cjs/plugins/sentry/index.js"
+      }
     },
     "./platforms": {
-      "types": "./dist/types/plugins/platforms.d.ts",
-      "import": "./dist/esm/plugins/platforms.js",
-      "require": "./dist/cjs/plugins/platforms.js"
+      "import": {
+        "types": "./dist/esm/plugins/platforms.d.ts",
+        "default": "./dist/esm/plugins/platforms.js"
+      },
+      "require": {
+        "types": "./dist/cjs/plugins/platforms.d.ts",
+        "default": "./dist/cjs/plugins/platforms.js"
+      }
     },
     "./testing": {
-      "types": "./dist/types/testing/index.d.ts",
-      "import": "./dist/esm/testing/index.js",
-      "require": "./dist/cjs/testing/index.js"
+      "import": {
+        "types": "./dist/esm/testing/index.d.ts",
+        "default": "./dist/esm/testing/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/testing/index.d.ts",
+        "default": "./dist/cjs/testing/index.js"
+      }
     },
     "./flow": {
-      "types": "./dist/types/flow/index.d.ts",
-      "import": "./dist/esm/flow/index.js",
-      "require": "./dist/cjs/flow/index.js"
+      "import": {
+        "types": "./dist/esm/flow/index.d.ts",
+        "default": "./dist/esm/flow/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/flow/index.d.ts",
+        "default": "./dist/cjs/flow/index.js"
+      }
     }
   },
   "bin": {
@@ -118,7 +198,11 @@
     "changeset": "changeset",
     "version": "changeset version",
     "release": "npm run build && npm run smoke:bundle && changeset publish",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "attw": "attw --pack . --profile node16",
+    "test:coverage": "vitest run --coverage",
+    "docs:compile": "node scripts/docs-compile.cjs",
+    "mutation": "stryker run"
   },
   "repository": {
     "type": "git",
@@ -130,16 +214,21 @@
     "registry": "https://npm.pkg.github.com/hopdrive"
   },
   "dependencies": {
-    "uuid": "^9.0.0"
+    "uuid": "^14.0.0"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.4",
     "@changesets/cli": "^2.27.0",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
     "@types/node": "^20.11.19",
     "@types/uuid": "^10.0.0",
-    "esbuild": "^0.21.0",
+    "@vitest/coverage-v8": "^4.1.9",
+    "esbuild": "^0.28.1",
+    "fast-check": "^3.23.2",
     "rimraf": "^5.0.5",
     "typedoc": "^0.26.0",
     "typescript": "^5.4.0",
-    "vitest": "^2.1.9"
+    "vitest": "^4.1.9"
   }
 }

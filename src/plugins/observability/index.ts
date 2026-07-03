@@ -323,12 +323,30 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
     // Framework-level errors (normalize/plugin) and detector/handler crashes:
     // mark the invocation failed so the crash is visible even outside *End hooks.
     onError(ctx: ErrorContext) {
+      // A 'warn' is an alarm for alerting backends (ADR-041 warnAtDepth), not a
+      // record failure — do not touch the invocation record.
+      if (ctx.severity === 'warn') return;
       const buf = buffers.get(ctx.invocationId);
       if (!buf) return;
       buf.invocation.error_message = ctx.error.message;
       const s = stack(ctx.error.stack);
       if (s !== undefined) buf.invocation.error_stack = s;
       if (buf.invocation.status === 'running') buf.invocation.status = 'failed';
+      // A halted chain (ADR-041) must be QUERYABLE, not read as a benign zero-event
+      // success: stamp a durable halted marker with the depth/ceiling the branded
+      // LoopDetectedError carries on its serialized `data`.
+      if (ctx.phase === 'chain-guard') {
+        const data = ctx.error.data;
+        const depth = data && typeof data['depth'] === 'number' ? data['depth'] : undefined;
+        const ceiling = data && typeof data['ceiling'] === 'number' ? data['ceiling'] : undefined;
+        if (depth !== undefined && ceiling !== undefined) {
+          const existing =
+            buf.invocation.context_data && typeof buf.invocation.context_data === 'object'
+              ? (buf.invocation.context_data as Record<string, unknown>)
+              : {};
+          buf.invocation.context_data = { ...existing, halted: { depth, ceiling } };
+        }
+      }
       buf.invocation.updated_at = new Date().toISOString();
     },
 

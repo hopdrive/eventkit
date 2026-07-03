@@ -25,7 +25,6 @@ import {
   type RequestContext,
   type RunOptions,
 } from '../core/index.js';
-
 const randomId = (): string =>
   typeof globalThis.crypto?.randomUUID === 'function'
     ? globalThis.crypto.randomUUID()
@@ -190,6 +189,49 @@ export function defineFakeEvent<TPayload = unknown>(
   if (opts?.run) module.run = opts.run;
   return module;
 }
+
+// =============================================================================
+// Recording instruments (ADR-036) — capture what actually happened in a real
+// invocation, so tests assert against the runtime, not a mock of it.
+// =============================================================================
+export { recordingPlugin, memorySink, type RecordingPlugin, type MemorySink } from './instruments.js';
+
+// Payload builders (ADR-036) — construct the raw payload each source expects.
+export {
+  hasuraInsert,
+  hasuraUpdate,
+  hasuraManualEdit,
+  hasuraDelete,
+  hasuraCronPayload,
+  hasuraActionPayload,
+  webhookRequest,
+  isWebhookRequest,
+  type HasuraEventOptions,
+  type WebhookRequestInit,
+  type BuiltWebhookRequest,
+} from './builders.js';
+
+// Recording harness + doubles + assertions (ADR-036).
+export {
+  testInvocation,
+  detectorContract,
+  memoryBatchStore,
+  capturedLogger,
+  simulateChain,
+  expectFlow,
+  observedFlowNodes,
+  assertObservedWithinFlow,
+  type TestInvocationResult,
+  type DetectorContractCases,
+  type DetectorContractReport,
+  type MemoryBatchStore,
+  type CapturedLogger,
+  type CapturedLogEntry,
+  type SimulateChainResult,
+  type FlowEventAssertion,
+  type FlowAssertion,
+  type ObservedFlowComparison,
+} from './harness.js';
 
 // Event-name ↔ filename validator (ADR-025 convention check).
 export {

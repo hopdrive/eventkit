@@ -31,12 +31,18 @@ export type { Capability, CapabilityRole, ParsedCapability } from './capabilitie
 export type { SourceMeta } from './source-meta.js';
 export { SOURCE_META_KEYS } from './source-meta.js';
 
+// ── Tracking-token codec (ADR-039.1: a pure core primitive) ───────────────────
+export type { TokenCodec, TokenCodecConfig, TokenComponents } from './tracking-token.js';
+export { createTokenCodec, isCorrelationIdShape } from './tracking-token.js';
+
 // ── Loggers ───────────────────────────────────────────────────────────────
 export type { LogLevel, LogEntry, DetectorLogger, HandlerLogger, JobLogger } from './logger.js';
 
 // ── Errors + serialization ──────────────────────────────────────────────────
-export type { SerializedError, ErrorContext, ErrorPhase } from './errors.js';
-export { serializeError, serializeOutput, replaceCircularReferences, ClientError, ActionError, isClientError } from './errors.js';
+export type { SerializedError, ErrorContext, ErrorPhase, LoopDetectedDetail } from './errors.js';
+export { serializeError, serializeOutput, replaceCircularReferences, ClientError, ActionError, isClientError, LoopDetectedError, isLoopDetectedError } from './errors.js';
+export type { SuppressDispatch, ChainGuardWarning } from './chain-guard.js';
+export { SUPPRESS_DISPATCH_KEY, CHAIN_GUARD_WARNING_KEY } from './chain-guard.js';
 export { getNonSerializableLabel, stripNonSerializable, assertSerializableMetadata, NonSerializableMetadataError } from './serialize.js';
 
 // ── Envelope + detected event ────────────────────────────────────────────────
@@ -84,6 +90,7 @@ export type {
   EventKitPlugin,
   SourceAdapter,
   PlatformAdapter,
+  CrashPolicy,
   DetectionResult,
   HandlerResult,
   NormalizeFn,
@@ -91,7 +98,7 @@ export type {
 } from './plugin.js';
 
 // ── Kit / entry point (types only; createEventKit + run are runtime, re-exported from the root) ──
-export type { EventKit, InvocationResult, EventOutcome, ResolvedOutcome, ResolvedError, PluginFactory, HandlerShortCircuit, HttpRequestEvent } from './kit.js';
+export type { EventKit, InvocationResult, EventOutcome, ResolvedOutcome, ResolvedError, PluginFactory, HandlerShortCircuit, HttpRequestEvent, DryRunResult, DryRunEvent } from './kit.js';
 
 // ── Flow description + manifest vocabulary (§14–§16) ─────────────────────────
 export type {
@@ -104,4 +111,5 @@ export type {
   FlowEdge,
   FlowNodeKind,
   FlowSourceRef,
+  JobEffect,
 } from './flow.js';

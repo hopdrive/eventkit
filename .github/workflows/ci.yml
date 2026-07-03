@@ -20,8 +20,10 @@ jobs:
       # Negative-type fixtures: brand/contribution guards must keep failing to compile.
       - name: Typecheck contracts (negative-type fixtures)
         run: npm run typecheck:contracts
-      - name: Unit tests
-        run: npm test
+      # Unit tests + coverage gate (thresholds in vitest.config.ts: strict on
+      # runtime/+core/, looser global). A coverage regression fails the build.
+      - name: Unit tests + coverage
+        run: npm run test:coverage
       - name: Build (dual ESM/CJS + types)
         run: npm run build
       # D8 release gate: every subpath export must resolve under esbuild (the
@@ -29,3 +31,12 @@ jobs:
       # unreliable.
       - name: Netlify-bundle smoke test
         run: npm run smoke:bundle
+      # Types-correctness gate: the dual ESM/CJS type resolution must stay clean for
+      # node16 (CJS + ESM) and bundler consumers (legacy node10 is excluded via the
+      # node16 profile). Catches a "masquerading as ESM" regression.
+      - name: Types resolution (are-the-types-wrong)
+        run: npm run attw
+      # Doc-drift gate: every documented `import { … } from '@hopdrive/eventkit…'`
+      # must reference exports that actually exist in the built package.
+      - name: Docs example imports resolve
+        run: npm run docs:compile

@@ -9,6 +9,7 @@
 //    buildHandlerContext; platform extractPayload / buildRequest / formatResponse)
 import type {
   Capability,
+  CrashPolicy,
   DetectionResult,
   DetectorContext,
   ErrorContext,
@@ -154,6 +155,15 @@ export class PluginManager {
     return (this.source as EventKitPlugin & { sourceType?: EventSourceType }).sourceType ?? 'application';
   }
 
+  /**
+   * The source's crash policy (ADR-038). Framework default `'ack'` (a processing crash
+   * stays a 200, no retry); a source that wants at-least-once retry (webhook) declares
+   * `'signalRetry'`. Read off the resolved source plugin, like `sourceType`.
+   */
+  get crashPolicy(): CrashPolicy {
+    return (this.source as EventKitPlugin & { crashPolicy?: CrashPolicy }).crashPolicy ?? 'ack';
+  }
+
   // ── Singleton capabilities ─────────────────────────────────────────────────
   normalize(raw: unknown, request: RequestContext): EventEnvelope {
     if (!this.source.normalize) throw new Error(`Source '${this.source.name}' does not implement normalize().`);
@@ -237,6 +247,7 @@ export class PluginManager {
     };
     if (extra.eventName !== undefined) ctx.eventName = extra.eventName;
     if (extra.jobName !== undefined) ctx.jobName = extra.jobName;
+    if (extra.severity !== undefined) ctx.severity = extra.severity;
     for (const p of this.plugins) {
       try {
         await p.onError?.(ctx);

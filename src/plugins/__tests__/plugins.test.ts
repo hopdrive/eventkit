@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createEventKit, job, asEventName, assertSerializableMetadata, type EventModule, type JobContext } from '../../index.js';
 import { fakeSource, defineFakeEvent } from '../../testing/index.js';
 import { hasuraEvent } from '../source-hasura.js';
-import { loopGuard, createTokenCodec } from '../loop-guard/index.js';
+import { loopGuard, hopdriveLoopGuard, createTokenCodec } from '../loop-guard/index.js';
 import { observability, type ObservabilityBatch } from '../observability/index.js';
 import { graphqlSink } from '../observability/graphql-sink.js';
 import { safeSerialize } from '../observability/serialize.js';
@@ -12,19 +12,22 @@ import { sentry, type SentryEvent } from '../sentry/index.js';
 
 const UUID = '11111111-1111-1111-1111-111111111111';
 
-// Minimal Hasura DB-event payload builder.
-function hasuraInsert(newRow: Record<string, unknown>): unknown {
+// Minimal Hasura DB-event payload builder. `session` merges into session_variables
+// so a test can carry a token in the header channel (x-hasura-tracking-token).
+function hasuraInsert(newRow: Record<string, unknown>, session: Record<string, unknown> = {}): unknown {
   return {
     id: 'evt',
     created_at: '2026-06-28T12:00:00.000Z',
     table: { schema: 'public', name: 'batch_jobs' },
     trigger: { name: 't' },
-    event: { op: 'INSERT', data: { old: null, new: newRow }, session_variables: { 'x-hasura-role': 'admin' } },
+    event: { op: 'INSERT', data: { old: null, new: newRow }, session_variables: { 'x-hasura-role': 'admin', ...session } },
   };
 }
 
 describe('loopGuard', () => {
-  const cfg = { field: 'updated_by', serviceId: 'svc-a', codec: { separator: '|', validateCorrelationId: true } };
+  // No `field:` — the Hasura source surfaces meta.tokenCandidates (updated_by +
+  // x-hasura-tracking-token session variable); loopGuard consumes them, no anatomy.
+  const cfg = { serviceId: 'svc-a', codec: { separator: '|', validateCorrelationId: true } };
 
   it('round-trips an inbound token: meta.sourceTrackingToken in, lineage-preserving ctx.trackingToken out', async () => {
     const inbound = `origin-svc|${UUID}|origin-job`;
@@ -112,30 +115,173 @@ describe('loopGuard', () => {
       expect(codec.getCorrelationId(chainedOut)).toBe(UUID); // chaining still holds
     });
 
-    it('haltAtDepth suppresses dispatch: no detector/job runs, invocation returns cleanly', async () => {
+    it('haltAtDepth suppresses dispatch AND elevates a branded LoopDetectedError (ADR-041)', async () => {
       let ran = false;
+      // A probe plugin captures the onError fan-out (which receives the SERIALIZED error).
+      const errs: Array<{ name: string; phase: string; data?: Record<string, unknown>; severity?: string }> = [];
+      const probe = {
+        name: 'probe',
+        onError: (c: { error: { name: string; data?: Record<string, unknown> }; phase: string; severity?: string }) =>
+          void errs.push({ name: c.error.name, phase: c.phase, data: c.error.data, severity: c.severity }),
+      };
       const mod = { name: asEventName('e'), detector: hasuraEvent.detector(() => { ran = true; return true; }), jobs: [job(() => { ran = true; })] } as EventModule;
-      const kit = createEventKit(hasuraEvent).use(loopGuard, depthCfg({ haltAtDepth: 3 })).registerEvents([mod]);
+      const kit = createEventKit(hasuraEvent).use(probe).use(loopGuard, depthCfg({ haltAtDepth: 3 })).registerEvents([mod]);
       // inbound depth 2 → this invocation is depth 3 → at the ceiling → suppressed.
       const res = await kit.handle(hasuraInsert({ id: 1, updated_by: `origin-svc|${UUID}|origin-job|2` }));
 
       expect(ran).toBe(false);           // neither detector nor job ran
       expect(res.events).toHaveLength(0);
       expect(res.ok).toBe(true);         // clean stop, not an error
+
+      const halt = errs.find(e => e.name === 'LoopDetectedError');
+      expect(halt).toBeTruthy();
+      expect(halt!.phase).toBe('chain-guard');
+      expect(halt!.data).toMatchObject({ depth: 3, ceiling: 3, serviceId: 'svc-a' });
     });
 
-    it('warnAtDepth logs a breadcrumb WITHOUT suppressing dispatch', async () => {
+    it('warnAtDepth reports a NON-FATAL LoopDetectedError (severity warn) while dispatch proceeds (ADR-041)', async () => {
       const logs: Array<{ msg: string }> = [];
       const logcap = { name: 'logcap', onLog: (e: { message: string }) => void logs.push({ msg: e.message }) };
+      const errs: Array<{ name: string; phase: string; severity?: string }> = [];
+      const probe = {
+        name: 'probe',
+        onError: (c: { error: { name: string }; phase: string; severity?: string }) =>
+          void errs.push({ name: c.error.name, phase: c.phase, severity: c.severity }),
+      };
       let ran = false;
       const mod = { name: asEventName('e'), detector: hasuraEvent.detector(() => true), jobs: [job(() => { ran = true; })] } as EventModule;
-      const kit = createEventKit(hasuraEvent).use(logcap).use(loopGuard, depthCfg({ warnAtDepth: 2 })).registerEvents([mod]);
+      const kit = createEventKit(hasuraEvent).use(probe).use(logcap).use(loopGuard, depthCfg({ warnAtDepth: 2 })).registerEvents([mod]);
       // inbound depth 1 → this invocation is depth 2 → warn (not halt).
       const res = await kit.handle(hasuraInsert({ id: 1, updated_by: `origin-svc|${UUID}|origin-job|1` }));
 
       expect(ran).toBe(true);            // dispatch proceeded
       expect(res.events).toHaveLength(1);
       expect(logs.some(l => /hop-depth warning/.test(l.msg))).toBe(true);
+      const warn = errs.find(e => e.name === 'LoopDetectedError');
+      expect(warn).toBeTruthy();
+      expect(warn!.severity).toBe('warn');
+      expect(warn!.phase).toBe('chain-guard');
+    });
+  });
+
+  // ── ADR-039.3: source-surfaced candidates + the generic escape hatch ─────────
+  it('a session-variable candidate carrying a FULL token lifts sourceJobId + hopDepth', async () => {
+    let metaToken: unknown;
+    let sourceJobId: unknown;
+    let outToken = '';
+    const inbound = `origin-svc|${UUID}|origin-job|2`;
+    const mod = defineFakeEvent('e', () => true, [
+      job((c: JobContext) => {
+        metaToken = c.envelope.meta['sourceTrackingToken'];
+        sourceJobId = c.envelope.meta['sourceJobId'];
+        outToken = c.trackingToken;
+      }),
+    ]);
+    // The token rides ONLY the header channel (no updated_by on the row).
+    const kit = createEventKit(hasuraEvent).use(loopGuard, { ...cfg, warnAtDepth: 99 }).registerEvents([
+      { name: asEventName('e'), detector: mod.detector, jobs: mod.jobs } as EventModule,
+    ]);
+    await kit.handle(hasuraInsert({ id: 1 }, { 'x-hasura-tracking-token': inbound }));
+
+    const codec = createTokenCodec(cfg.codec);
+    expect(metaToken).toBe(inbound);          // full token lifted from the session variable
+    expect(sourceJobId).toBe('origin-job');   // prior job id parsed out
+    expect(codec.getHopDepth(outToken)).toBe(3); // inbound depth 2 → this hop is 3
+    expect(codec.getCorrelationId(outToken)).toBe(UUID);
+  });
+
+  it('a bare 32-hex dashless value chains as correlationId WITHOUT setting meta.sourceTrackingToken', async () => {
+    const bare = 'abcdef0123456789abcdef0123456789'; // 32 hex, dashless (a trace-id root, ADR-040)
+    let cid = '';
+    let metaToken: unknown = 'sentinel';
+    const mod = defineFakeEvent('e', () => true, [
+      job((c: JobContext) => {
+        cid = c.correlationId;
+        metaToken = c.envelope.meta['sourceTrackingToken'];
+      }),
+    ]);
+    const kit = createEventKit(hasuraEvent).use(loopGuard, cfg).registerEvents([
+      { name: asEventName('e'), detector: mod.detector, jobs: mod.jobs } as EventModule,
+    ]);
+    await kit.handle(hasuraInsert({ id: 1, updated_by: bare }));
+
+    expect(cid).toBe(bare);                 // bare id chains as the correlation id
+    expect(metaToken).toBeUndefined();      // NOT a token — correlationResolver must still recover lineage
+  });
+
+  it('the `candidates` escape hatch lifts lineage on a source that surfaces none (fake source)', async () => {
+    const tokenFromAnywhere = `origin-svc|${UUID}|origin-job`;
+    let metaToken: unknown;
+    let cid = '';
+    const mod = defineFakeEvent('e', () => true, [
+      job((c: JobContext) => {
+        metaToken = c.envelope.meta['sourceTrackingToken'];
+        cid = c.correlationId;
+      }),
+    ]);
+    const kit = createEventKit(fakeSource())
+      .use(loopGuard, { ...cfg, candidates: () => [tokenFromAnywhere] })
+      .registerEvents([{ name: asEventName('e'), detector: mod.detector, jobs: mod.jobs } as EventModule]);
+    await kit.handle('anything');
+
+    expect(metaToken).toBe(tokenFromAnywhere);
+    expect(cid).toBe(UUID);
+  });
+
+  it('ordering: given [garbage, fullToken], the full token wins', async () => {
+    const fullToken = `origin-svc|${UUID}|origin-job`;
+    let metaToken: unknown;
+    const mod = defineFakeEvent('e', () => true, [
+      job((c: JobContext) => void (metaToken = c.envelope.meta['sourceTrackingToken'])),
+    ]);
+    const kit = createEventKit(fakeSource())
+      .use(loopGuard, { ...cfg, candidates: () => ['not-a-token', fullToken] })
+      .registerEvents([{ name: asEventName('e'), detector: mod.detector, jobs: mod.jobs } as EventModule]);
+    await kit.handle('anything');
+    expect(metaToken).toBe(fullToken);
+  });
+
+  // ── ADR-039.6: the hopdriveLoopGuard preset ─────────────────────────────────
+  describe('hopdriveLoopGuard preset', () => {
+    it('throws without a serviceId', () => {
+      // @ts-expect-error serviceId is required
+      expect(() => hopdriveLoopGuard({})).toThrow(/serviceId/);
+      expect(() => hopdriveLoopGuard({ serviceId: '' })).toThrow(/serviceId/);
+    });
+
+    it('parses a pipe token whose correlation part is 32-hex dashless (validation ON, ADR-040 shape accepted)', async () => {
+      const trace = 'abcdef0123456789abcdef0123456789'; // 32-hex dashless trace-id root
+      const inbound = `origin-svc|${trace}|origin-job`;
+      let metaToken: unknown;
+      let cid = '';
+      const mod = defineFakeEvent('e', () => true, [
+        job((c: JobContext) => { metaToken = c.envelope.meta['sourceTrackingToken']; cid = c.correlationId; }),
+      ]);
+      const kit = createEventKit(hasuraEvent).use(hopdriveLoopGuard, { serviceId: 'svc-a' }).registerEvents([
+        { name: asEventName('e'), detector: mod.detector, jobs: mod.jobs } as EventModule,
+      ]);
+      await kit.handle(hasuraInsert({ id: 1, updated_by: inbound }));
+      expect(metaToken).toBe(inbound);
+      expect(cid).toBe(trace);
+    });
+
+    it('rejects a pipe token whose correlation part is garbage → falls back to a fresh mint', async () => {
+      const inbound = 'origin-svc|garbage|origin-job'; // correlation part fails validation
+      let metaToken: unknown = 'sentinel';
+      let outToken = '';
+      let cid = '';
+      const mod = defineFakeEvent('e', () => true, [
+        job((c: JobContext) => { metaToken = c.envelope.meta['sourceTrackingToken']; outToken = c.trackingToken; cid = c.correlationId; }),
+      ]);
+      const kit = createEventKit(hasuraEvent).use(hopdriveLoopGuard, { serviceId: 'svc-a' }).registerEvents([
+        { name: asEventName('e'), detector: mod.detector, jobs: mod.jobs } as EventModule,
+      ]);
+      await kit.handle(hasuraInsert({ id: 1, updated_by: inbound }));
+
+      const codec = createTokenCodec({ separator: '|', validateCorrelationId: true });
+      expect(metaToken).toBeUndefined();          // not lifted — garbage token rejected
+      expect(codec.getSource(outToken)).toBe('svc-a'); // fresh mint from serviceId
+      expect(codec.getCorrelationId(outToken)).toBe(cid);
     });
   });
 });
@@ -180,7 +326,7 @@ describe('observability', () => {
     const batches: ObservabilityBatch[] = [];
     const detector = hasuraEvent.detector(ctx => ctx.operation === 'INSERT');
     const kit = createEventKit(hasuraEvent)
-      .use(loopGuard, { field: 'updated_by', codec: { separator: '|', validateCorrelationId: true } })
+      .use(loopGuard, { codec: { separator: '|', validateCorrelationId: true } })
       .use(observability, { sink: (bb: ObservabilityBatch) => void batches.push(bb) })
       .registerEvents([{ name: asEventName('batch.created'), detector, jobs: [] } as EventModule]);
     await kit.handle(hasuraInsert({ id: 1, updated_by: `prior-svc|${UUID}|prior-job-9` }));
@@ -252,7 +398,7 @@ describe('observability', () => {
 
 describe('observability: parent-child linkage (the capability behind the dropped jobExecutionId mutation)', () => {
   const codec = createTokenCodec({ separator: '|', validateCorrelationId: true });
-  const lpCfg = { field: 'updated_by', serviceId: 'svc', codec: { separator: '|', validateCorrelationId: true } };
+  const lpCfg = { serviceId: 'svc', codec: { separator: '|', validateCorrelationId: true } };
 
   it('the persisted job row id, the outbound token job segment, and the next invocation source_job_id all agree', async () => {
     // ── Invocation A: run a job, capture its observability row id + outbound token ──
@@ -284,33 +430,6 @@ describe('observability: parent-child linkage (the capability behind the dropped
     expect(bBatches[0]!.invocation.source_job_id).toBe(jobRowId);
     // (d) correlation chaining: the child runs under the SAME correlationId as the parent
     expect(bBatches[0]!.invocation.correlation_id).toBe(aBatches[0]!.invocation.correlation_id);
-  });
-});
-
-describe('loop-guard: multi-strategy extraction (chains via metadata/session, not just updated_by)', () => {
-  const cfg = { codec: { separator: '|', validateCorrelationId: true } };
-  const captureCorrelation = (raw: unknown) => {
-    let cid = '';
-    // a job reads the resolved correlationId off its context (set by loop-guard)
-    const mod = defineFakeEvent('e', () => true, [job((c: JobContext) => { cid = c.correlationId; })]);
-    const kit = createEventKit(hasuraEvent).use(loopGuard, cfg).registerEvents([
-      { name: asEventName('e'), detector: mod.detector, jobs: mod.jobs } as EventModule,
-    ]);
-    return kit.handle(raw).then(() => cid);
-  };
-
-  it('extracts a correlation id from a metadata column', async () => {
-    const cid = await captureCorrelation(hasuraInsert({ id: 1, correlation_id: UUID }));
-    expect(cid).toBe(UUID);
-  });
-
-  it('extracts a correlation id from a session variable', async () => {
-    const payload = {
-      id: 'e', created_at: '2026-06-28T12:00:00Z', table: { schema: 'public', name: 't' }, trigger: { name: 't' },
-      event: { op: 'INSERT', data: { old: null, new: { id: 1 } }, session_variables: { 'x-correlation-id': UUID } },
-    };
-    const cid = await captureCorrelation(payload);
-    expect(cid).toBe(UUID);
   });
 });
 

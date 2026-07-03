@@ -10,9 +10,14 @@ import {
   isClientError,
   job,
   serializeError,
+  SUPPRESS_DISPATCH_KEY,
+  CHAIN_GUARD_WARNING_KEY,
+  type ChainGuardWarning,
+  type SuppressDispatch,
   type DetectedEvent,
   type DetectionResult,
   type DetectorContext,
+  type DryRunResult,
   type EventEnvelope,
   type EventKit,
   type EventKitPlugin,
@@ -312,17 +317,38 @@ class Kit implements EventKit {
 
     await this.pm.onInvocationStart(invocation);
 
-    // Generic suppress-dispatch seam (ADR-034): a pre-dispatch plugin (e.g. loopGuard at
-    // its hop-depth ceiling) may set `envelope.meta.suppressDispatch` to a reason string
-    // to hard-stop this invocation before any detector runs. We log it, report it as an
-    // onError breadcrumb, and return a clean empty result — the finally still records +
-    // flushes the invocation, so a halted loop is visible in observability.
-    const suppressReason = (envelope.meta as { suppressDispatch?: unknown } | undefined)?.suppressDispatch;
-    if (typeof suppressReason === 'string' && suppressReason.length > 0) {
-      invocation.log.warn('Dispatch suppressed before detection', { reason: suppressReason });
-      await this.pm.reportError(new Error(suppressReason), 'normalize', { invocationId, correlationId });
+    // Chain-guard suppress seam (ADR-034 / ADR-041): a pre-dispatch plugin (e.g. loopGuard at
+    // its hop-depth ceiling) may set `envelope.meta[SUPPRESS_DISPATCH_KEY]` — either a bare
+    // reason string (generic plugin) or a structured `SuppressDispatch { reason, error }` — to
+    // hard-stop this invocation before any detector runs. We log it, report the (typically
+    // branded LoopDetectedError) through onError with phase 'chain-guard', and return a clean
+    // empty result. HTTP stays 200 (never invite a retry of a loop). The finally still records
+    // + flushes, so a halted chain is queryable in observability, not a benign no-op.
+    const meta = envelope.meta as
+      | { suppressDispatch?: unknown; chainGuardWarning?: unknown }
+      | undefined;
+    const suppress = meta?.[SUPPRESS_DISPATCH_KEY];
+    if (typeof suppress === 'string' ? suppress.length > 0 : suppress != null) {
+      const sd: SuppressDispatch =
+        typeof suppress === 'string' ? { reason: suppress } : (suppress as SuppressDispatch);
+      const reason = sd.reason;
+      const err = sd.error ?? new Error(reason);
+      invocation.log.warn('Dispatch suppressed before detection', { reason });
+      await this.pm.reportError(err, 'chain-guard', { invocationId, correlationId });
       result = { ok: true, invocationId, events: [], durationMs: Date.now() - start };
       return result;
+    }
+
+    // Non-fatal early alarm (ADR-041 warnAtDepth): a pre-dispatch plugin set a branded error
+    // on `meta[CHAIN_GUARD_WARNING_KEY]` to report while dispatch PROCEEDS. Route it through
+    // onError at severity 'warn' so alerting fires early, then continue normally.
+    const warning = meta?.[CHAIN_GUARD_WARNING_KEY];
+    if (warning != null && typeof warning === 'object' && 'error' in warning) {
+      await this.pm.reportError((warning as ChainGuardWarning).error, 'chain-guard', {
+        invocationId,
+        correlationId,
+        severity: 'warn',
+      });
     }
 
     const detected = await this.detect(envelope, invocation);
@@ -336,6 +362,26 @@ class Kit implements EventKit {
     };
     if (timedOut) result.timedOut = true;
     if (resolved) result.resolved = resolved;
+
+    // ADR-038: under crashPolicy 'signalRetry' (the webhook source's default), an
+    // UNHANDLED processing crash — a detector or prepare throw, surfaced as
+    // events[].error — is escalated to a top-level framework error → 500 → an
+    // at-least-once sender retries. A deliberate resolve/respond reply (`resolved`)
+    // wins: that response is intentional, not a crash. Emit a loud error log too, so a
+    // crash this severe is visible in Grafana (the obs sink) on top of the onError
+    // route (Sentry) that reportError already fired during detect/dispatch.
+    if (this.pm.crashPolicy === 'signalRetry' && !resolved) {
+      const crashed = events.find(e => e.error !== undefined);
+      if (crashed?.error) {
+        invocation.log.error('Processing crash escalated to a retryable 500 (crashPolicy=signalRetry)', {
+          event: crashed.name,
+          detected: crashed.detected,
+          error: crashed.error.message,
+        });
+        result.error = crashed.error;
+        result.ok = false;
+      }
+    }
 
     return result;
     } catch (err) {
@@ -379,6 +425,56 @@ class Kit implements EventKit {
         }
       }
     }
+  }
+
+  async dryRun(rawPayloadOrArgs: unknown, request?: RequestContext | unknown): Promise<DryRunResult> {
+    await this.ensureReady();
+    let raw: unknown;
+    let req: RequestContext;
+    if (this.pm.platform) {
+      raw = await this.pm.platform.extractPayload?.(rawPayloadOrArgs, request);
+      req = (this.pm.platform.buildRequest?.(rawPayloadOrArgs, request) as RequestContext) ?? {};
+    } else {
+      raw = rawPayloadOrArgs;
+      req = (request as RequestContext) ?? {};
+    }
+    await this.pm.onBeforeNormalize(raw, req);
+    let envelope: EventEnvelope = this.pm.normalize(raw, req);
+    envelope = await this.pm.augmentEnvelope(envelope);
+    await this.pm.onAfterNormalize(envelope);
+
+    const invocationId = req.invocationId ? asInvocationId(req.invocationId) : newInvocationId();
+    const correlationId = envelope.correlationId ?? newCorrelationId();
+    const invocation: InvocationContext = {
+      invocationId,
+      correlationId,
+      source: envelope.source,
+      sourceType: this.pm.sourceType,
+      envelope,
+      request: req,
+      startedAt: new Date(),
+      signal: new AbortController().signal,
+      log: createHandlerLogger({ invocationId, correlationId, scope: 'dry-run' }, entry => void this.pm.onLog(entry)),
+    };
+
+    // Detection only — no dispatch, so no prepare/job/resolve/respond runs.
+    const detected = await this.detect(envelope, invocation);
+    const jobNamesOf = (module: EventModule): string[] =>
+      (module.jobs ?? []).map(entry => String((entry as { name?: unknown }).name ?? 'anonymous'));
+
+    return {
+      invocationId,
+      correlationId,
+      events: detected.map(d => {
+        const ev: DryRunResult['events'][number] = {
+          name: String(d.module.name),
+          detected: d.event !== null,
+          jobs: d.event !== null ? jobNamesOf(d.module) : [],
+        };
+        if (d.error !== undefined) ev.error = d.error.message;
+        return ev;
+      }),
+    };
   }
 
   /**

@@ -112,6 +112,24 @@ export interface InvocationResult {
  * the optional platform and all observer/transform plugins — registers via
  * `use(plugin, config?)`.
  */
+/** One event's verdict from `kit.dryRun()` — detected + the jobs it would dispatch. */
+export interface DryRunEvent {
+  name: string;
+  detected: boolean;
+  /** The declared job names this event would dispatch if it fired (static, ADR-025). */
+  jobs: string[];
+  /** Present if the detector threw. */
+  error?: string;
+}
+
+/** The result of `kit.dryRun()` — detection only, no jobs run. */
+export interface DryRunResult {
+  invocationId: string;
+  correlationId: string;
+  /** Events whose detector fired (or threw). Clean non-matches are omitted. */
+  events: DryRunEvent[];
+}
+
 export interface EventKit {
   /**
    * Register a plugin/factory (NOT a call) plus optional config; the kit
@@ -134,6 +152,13 @@ export interface EventKit {
   }): (...args: unknown[]) => unknown;
   /** Manual entry: forward raw platform args (the adapter extracts payload + budget). */
   handle(rawPayloadOrArgs: unknown, request?: RequestContext | unknown): Promise<InvocationResult>;
+  /**
+   * Run detection ONLY against a payload (normalize → augment → detect) and report which
+   * events would fire and the jobs they'd dispatch — WITHOUT running any job or response
+   * seam. Near-pure (side effects live in jobs, which don't run). Powers `eventkit-flow
+   * simulate` and consumer "would this fire?" tests.
+   */
+  dryRun(rawPayloadOrArgs: unknown, request?: RequestContext | unknown): Promise<DryRunResult>;
   shutdown(): Promise<void>;
 
   /**

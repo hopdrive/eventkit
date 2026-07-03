@@ -24,6 +24,7 @@ import type {
   HasuraOperation,
 } from './types.js';
 import { columnAdded, columnChanged, columnRemoved, getNewRow, getOldRow, getOperation, getSession } from './payload.js';
+import { collectTokenCandidates, type HasuraTokenDiscoveryConfig } from './token-discovery.js';
 
 const randomId = (): string =>
   typeof globalThis.crypto?.randomUUID === 'function' ? globalThis.crypto.randomUUID() : `hasura-${Date.now().toString(36)}`;
@@ -34,7 +35,11 @@ const randomId = (): string =>
  * means). Correlation id precedence: explicit request → Hasura `trace_context`
  * trace_id → generated.
  */
-export function normalizeHasuraEvent(raw: unknown, request: RequestContext): EventEnvelope<HasuraEventPayload> {
+export function normalizeHasuraEvent(
+  raw: unknown,
+  request: RequestContext,
+  config: HasuraTokenDiscoveryConfig = {},
+): EventEnvelope<HasuraEventPayload> {
   const payload = (raw ?? {}) as HasuraEventPayload;
   const traceId = payload?.event?.trace_context?.trace_id;
   const correlationId = asCorrelationId(request.correlationId ?? traceId ?? randomId());
@@ -51,6 +56,11 @@ export function normalizeHasuraEvent(raw: unknown, request: RequestContext): Eve
   if (payload?.id) meta.sourceEventId = payload.id;
   if (session['x-hasura-user-email']) meta.sourceUserEmail = session['x-hasura-user-email'];
   if (session['x-hasura-role']) meta.sourceUserRole = session['x-hasura-role'];
+
+  // Inbound token discovery (ADR-039.2): the row write field then session variables.
+  const row = getNewRow(payload) ?? getOldRow(payload);
+  const tokenCandidates = collectTokenCandidates(row, session, config);
+  if (tokenCandidates.length > 0) meta.tokenCandidates = tokenCandidates;
 
   return {
     id: payload?.id ?? randomId(),
@@ -120,13 +130,22 @@ export function buildHasuraHandlerContext(
  * EventEnvelope. `sourceType: 'cron'`. No `trace_context`, so correlation comes
  * from the request or is generated. Tolerant of malformed input.
  */
-export function normalizeHasuraCron(raw: unknown, request: RequestContext): EventEnvelope<HasuraCronPayload> {
+export function normalizeHasuraCron(
+  raw: unknown,
+  request: RequestContext,
+  config: HasuraTokenDiscoveryConfig = {},
+): EventEnvelope<HasuraCronPayload> {
   const payload = (raw ?? {}) as HasuraCronPayload;
   const correlationId = asCorrelationId(request.correlationId ?? randomId());
   const receivedAt = payload?.scheduled_time ? new Date(payload.scheduled_time) : new Date();
   const meta: SourceMeta = {};
   if (payload?.name) meta.sourceFunction = payload.name; // the schedule name identifies the cron function
   if (payload?.id) meta.sourceEventId = payload.id;
+
+  // A cron payload carries neither a row nor session variables — wire the reader with
+  // nulls so the config surface stays uniform across the family. A deliberate no-op.
+  const tokenCandidates = collectTokenCandidates(null, null, config);
+  if (tokenCandidates.length > 0) meta.tokenCandidates = tokenCandidates;
 
   return {
     id: payload?.id ?? randomId(),
@@ -194,7 +213,11 @@ const actionFields = (envelope: EventEnvelope<HasuraActionPayload>) => {
  * EventEnvelope. `sourceType: 'action'`. Correlation from the request or generated.
  * Tolerant of malformed input (never throws — the detector decides).
  */
-export function normalizeHasuraAction(raw: unknown, request: RequestContext): EventEnvelope<HasuraActionPayload> {
+export function normalizeHasuraAction(
+  raw: unknown,
+  request: RequestContext,
+  config: HasuraTokenDiscoveryConfig = {},
+): EventEnvelope<HasuraActionPayload> {
   const payload = (raw ?? {}) as HasuraActionPayload;
   const correlationId = asCorrelationId(request.correlationId ?? randomId());
   const session = (payload?.session_variables ?? {}) as Record<string, string | undefined>;
@@ -202,6 +225,10 @@ export function normalizeHasuraAction(raw: unknown, request: RequestContext): Ev
   if (payload?.action?.name) meta.sourceFunction = payload.action.name; // the action name identifies the function
   if (session['x-hasura-user-email']) meta.sourceUserEmail = session['x-hasura-user-email'];
   if (session['x-hasura-role']) meta.sourceUserRole = session['x-hasura-role'];
+
+  // An action carries no row — token discovery reads only the session variables.
+  const tokenCandidates = collectTokenCandidates(null, session, config);
+  if (tokenCandidates.length > 0) meta.tokenCandidates = tokenCandidates;
 
   return {
     id: randomId(),
