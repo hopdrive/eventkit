@@ -141,7 +141,7 @@ describe('memory doubles', () => {
 });
 
 describe('simulateChain (correlation continuity, ADR-028)', () => {
-  const cfg = { field: 'updated_by', serviceId: 'svc-a', codec: { separator: '|', validateCorrelationId: true } };
+  const cfg = { serviceId: 'svc-a', codec: { separator: '|', validateCorrelationId: true } };
   const chainKit = () => {
     const mod = { name: asEventName('e'), detector: hasuraEvent.detector(() => true), jobs: [job(() => 'ok', { name: 'j' })] } as EventModule;
     return createEventKit(hasuraEvent).use(loopGuard, cfg).registerEvents([mod]);

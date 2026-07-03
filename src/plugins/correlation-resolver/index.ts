@@ -20,7 +20,7 @@
 // echo-back path (loop-guard) already recovered the lineage (`skipIfResolved`).
 import type { CorrelationId, EventEnvelope, EventKitPlugin } from '../../core/index.js';
 import { asCorrelationId, ClientError } from '../../core/index.js';
-import { createTokenCodec, type TokenCodec, type TokenCodecConfig } from '../loop-guard/codec.js';
+import { createTokenCodec, type TokenCodec, type TokenCodecConfig } from '../../core/tracking-token.js';
 
 /** What an injected `lookup` returns: the recovered lineage for a vendor key. */
 export interface ResolvedCorrelation {

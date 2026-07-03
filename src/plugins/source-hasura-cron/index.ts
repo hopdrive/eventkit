@@ -17,9 +17,18 @@ import type {
 } from '../../core/index.js';
 import type { HasuraCronPayload, HasuraCronContext, HasuraCronHandlerContext } from '../hasura-shared/types.js';
 import { normalizeHasuraCron, buildHasuraCronDetectorContext, buildHasuraCronHandlerContext } from '../hasura-shared/adapter.js';
+import type { HasuraTokenDiscoveryConfig } from '../hasura-shared/token-discovery.js';
 
-/** The `hasuraCron` source adapter plus its authoring helpers. */
+/** Source config for `hasuraCron` — the second arg of `createEventKit`. */
+export type HasuraCronConfig = HasuraTokenDiscoveryConfig;
+
+/**
+ * The `hasuraCron` source adapter plus its authoring helpers. Also CALLABLE as a
+ * factory (ADR-039.2) for a uniform config surface, though a cron payload carries
+ * no inbound token channel (the config is a no-op here).
+ */
 export interface HasuraCronSource extends EventKitPlugin {
+  (config?: HasuraCronConfig): EventKitPlugin;
   sourceType: EventSourceType;
   detector<TPayload = Record<string, unknown>>(
     fn: (ctx: HasuraCronContext<TPayload>) => boolean | Promise<boolean>,
@@ -29,23 +38,36 @@ export interface HasuraCronSource extends EventKitPlugin {
   ): PrepareFunction<HasuraCronPayload<TPayload>>;
 }
 
-export const hasuraCron: HasuraCronSource = {
-  name: 'source-hasura-cron',
-  provides: ['source', 'source:hasura-cron'],
-  sourceType: 'cron',
-  detector(fn) {
-    return fn as unknown as DetectorFunction;
-  },
-  prepare(fn) {
-    return fn as unknown as PrepareFunction;
-  },
-  normalize(raw: unknown, request: RequestContext): EventEnvelope {
-    return normalizeHasuraCron(raw, request) as EventEnvelope;
-  },
-  buildDetectorContext(envelope: EventEnvelope, base: DetectorContext): HasuraCronContext {
-    return buildHasuraCronDetectorContext(envelope as EventEnvelope<HasuraCronPayload>, base as DetectorContext<HasuraCronPayload>);
-  },
-  buildHandlerContext(envelope: EventEnvelope, base: HandlerContext) {
-    return buildHasuraCronHandlerContext(envelope as EventEnvelope<HasuraCronPayload>, base as HandlerContext<HasuraCronPayload>);
-  },
-};
+function detector(fn: unknown): DetectorFunction {
+  return fn as unknown as DetectorFunction;
+}
+function prepare(fn: unknown): PrepareFunction {
+  return fn as unknown as PrepareFunction;
+}
+
+/** Build the plugin object; `normalize` closes over the source config (ADR-039.2). */
+function build(config: HasuraCronConfig): EventKitPlugin {
+  return {
+    name: 'source-hasura-cron',
+    provides: ['source', 'source:hasura-cron'],
+    sourceType: 'cron',
+    detector,
+    prepare,
+    normalize(raw: unknown, request: RequestContext): EventEnvelope {
+      return normalizeHasuraCron(raw, request, config) as EventEnvelope;
+    },
+    buildDetectorContext(envelope: EventEnvelope, base: DetectorContext): HasuraCronContext {
+      return buildHasuraCronDetectorContext(envelope as EventEnvelope<HasuraCronPayload>, base as DetectorContext<HasuraCronPayload>);
+    },
+    buildHandlerContext(envelope: EventEnvelope, base: HandlerContext) {
+      return buildHasuraCronHandlerContext(envelope as EventEnvelope<HasuraCronPayload>, base as HandlerContext<HasuraCronPayload>);
+    },
+  } as EventKitPlugin;
+}
+
+const factory = (config: HasuraCronConfig = {}): EventKitPlugin => build(config);
+const defaults = build({});
+const { name: pluginName, ...rest } = defaults;
+Object.assign(factory, rest, { detector, prepare });
+Object.defineProperty(factory, 'name', { value: pluginName, configurable: true });
+export const hasuraCron = factory as HasuraCronSource;

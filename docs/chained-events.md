@@ -2,8 +2,10 @@
 
 > **Status:** proven end to end on 2026-07-02 against a local Hasura (v2.26) with two
 > EventKit functions, a real mutation-driven chain, and a simulated vendor round trip.
-> Relies on two small package changes that are still in review: loop-guard parsing full
-> tokens from session variables, and correlation-resolver carrying hop depth forward.
+> The package changes that run relied on have shipped, along with the placement refactor
+> the proof motivated (ADR-039/040/041): the token codec lives in core, the Hasura source
+> owns inbound token discovery, loopGuard is generic, dashless trace ids validate, and a
+> halted chain is loud. The config snippets below show the current API.
 > The internal design memo for the vendor piece is
 > [planning/external-correlation-chaining.md](planning/external-correlation-chaining.md) (ADR-028).
 
@@ -82,19 +84,30 @@ This is the preferred channel for DB writes that go through Hasura, and it was t
 big discovery of the proof. **The token never touches the row.**
 
 Hasura forwards any header prefixed `x-hasura-*` on an admin-secret request into the
-event trigger payload as a session variable. So the job sends its mutation like this:
+event trigger payload as a session variable. You do not build that request by hand.
+Register `hasuraChainedClient` and every job gets a `gql` helper that attaches the
+header automatically:
 
 ```js
-await fetch(config.graphqlUrl, {
-  method: 'POST',
-  headers: {
-    'content-type': 'application/json',
-    'x-hasura-admin-secret': config.graphqlSecret,
-    'x-hasura-tracking-token': ctx.trackingToken,   // the whole channel
-  },
-  body: JSON.stringify({ query, variables }),
-});
+const { hasuraChainedClient } = require('@hopdrive/eventkit/sources/hasura');
+
+createEventKit(hasuraEvent)
+  .use(hasuraChainedClient, {
+    endpoint: config.graphqlUrl,
+    headers: { 'x-hasura-admin-secret': config.graphqlSecret },
+  })
 ```
+
+```js
+const myJob = async ctx => {
+  const { gql } = ctx.input;
+  // x-hasura-tracking-token: ctx.trackingToken rides on every request
+  const data = await gql(`mutation Advance($id: Int!) { ... }`, { id: ctx.input.id });
+};
+```
+
+The helper throws on GraphQL errors and returns the parsed `data`. If a job defines
+its own `gql` input key, the job's value wins.
 
 and the next event arrives with:
 
@@ -105,17 +118,32 @@ and the next event arrives with:
 }
 ```
 
-On the receiving side, loop-guard reads it back out:
+On the receiving side there is nothing to configure. The Hasura source reads the
+`x-hasura-tracking-token` session variable by default (ADR-039: the source knows its
+own payload shape and surfaces token candidates; loopGuard just consumes them). So
+the receiving kit is:
 
 ```js
-.use(loopGuard, {
-  serviceId: 'my-service',
-  codec: { separator: '|', validateCorrelationId: false },  // see gotchas
-  extractFromUpdatedBy: false,      // headers only, the row is never consulted
-  extractFromMetadata: false,
-  sessionVariables: ['x-hasura-tracking-token'],
-  warnAtDepth: 8,
-  haltAtDepth: 12,
+const { hopdriveLoopGuard } = require('@hopdrive/eventkit/plugins');
+
+createEventKit(hasuraEvent)
+  .use(hopdriveLoopGuard, {
+    serviceId: 'my-service',
+    warnAtDepth: 8,
+    haltAtDepth: 12,
+  })
+```
+
+`hopdriveLoopGuard` is `loopGuard` with the HopDrive wire format pinned: pipe
+separator, correlation-id validation on. It requires a `serviceId`. Use plain
+`loopGuard` only when you need a different separator.
+
+If your token lives in a nonstandard place, configure the source, not the plugin:
+
+```js
+createEventKit(hasuraEvent, {
+  tokenField: 'modified_by',                            // default: 'updated_by'
+  tokenSessionVariables: ['x-hasura-tracking-token'],   // the default
 })
 ```
 
@@ -146,12 +174,13 @@ Know the limits:
 ## Channel 2: the write field (`updated_by`)
 
 The legacy channel, and still the durable fallback. The job stamps `ctx.trackingToken`
-into the row's `updated_by` (or a configured field), and loop-guard's default
-extraction reads it back on the next event. Use it when the writer cannot send headers
-through Hasura, or when you want the token to survive on the row for replay and audit.
+into the row's `updated_by` (or whatever `tokenField` names), and the Hasura source
+reads it back on the next event. Use it when the writer cannot send headers through
+Hasura, or when you want the token to survive on the row for replay and audit.
 
-Both channels can be on at once. Loop-guard checks the write field first, then session
-variables, so a row token wins when present and the header covers everything else.
+Both channels are on at once by default. The source lists the write field first, then
+session variables, so a row token wins when present and the header covers everything
+else.
 
 ## Channel 3: vendor round trips (correlation-resolver)
 
@@ -189,7 +218,7 @@ The mapping table is correlation infrastructure. Track it for GraphQL access, bu
 vendor's key off the body, and how to turn that key into the stored lineage:
 
 ```js
-.use(loopGuard, { serviceId: 'partner-webhooks', ... })   // still owns outbound tokens
+.use(hopdriveLoopGuard, { serviceId: 'partner-webhooks', warnAtDepth: 8, haltAtDepth: 12 })
 .use(correlationResolver, {
   extractKey: envelope => envelope.payload?.ref,
   lookup: async ref => {
@@ -201,6 +230,11 @@ vendor's key off the body, and how to turn that key into the stored lineage:
   onMiss: (envelope, key) => log.warn(`no lineage for ref ${key}, starting a fresh chain`),
 })
 ```
+
+Loop-guard still runs first even here. The webhook source surfaces no token candidates
+(real vendor bodies do not carry your token), so there is nothing to turn off. It owns
+the outbound tokens the webhook's own jobs mint, and the resolver recovers the inbound
+lineage.
 
 The resolver rides the same envelope seam loop-guard uses, and sets the same fields.
 Downstream, a resolver-recovered hop is indistinguishable from an inline-token hop:
@@ -246,12 +280,30 @@ accumulates. Every dropped token resets the counter to zero. That makes the chan
 above a safety feature, not just an observability feature. Configure both knobs:
 
 ```js
-warnAtDepth: 8,    // log a loud breadcrumb, keep going
-haltAtDepth: 12,   // suppress dispatch entirely, log why
+warnAtDepth: 8,    // raise a non-fatal alarm, keep going
+haltAtDepth: 12,   // suppress dispatch entirely
 ```
 
 Set the ceiling well above your deepest legitimate chain. The proof chain above peaks
 at hop 3.
+
+A halt is loud now, not just a stop (ADR-041). When the ceiling trips, the runtime
+reports a branded `LoopDetectedError` through `onError`, so Sentry and Grafana pick it
+up with no extra wiring. The invocation record carries `error_message` and
+`context_data.halted = { depth, ceiling }`, so you can query for halted chains:
+
+```graphql
+query Halted {
+  invocations(where: {context_data: {_has_key: "halted"}}) {
+    id correlation_id created_at error_message context_data
+  }
+}
+```
+
+`warnAtDepth` raises the same branded error at warning severity while the chain keeps
+running. That is your early alarm, before the ceiling. The HTTP response stays 200 on
+a halt. A retry would just re-enter at the same depth and halt again, so we never ask
+the sender to redeliver a loop.
 
 ## Gotchas from the proof
 
@@ -259,13 +311,12 @@ These all bit us in the live run. Learn from our bruises.
 
 1. **`x-hasura-` prefix or nothing.** Custom headers without the prefix never reach
    `session_variables`. If your pass-through test "fails", check the prefix first.
-2. **`validateCorrelationId: true` breaks the header channel today.** The Hasura source
-   adopts the payload's `trace_context.trace_id` as the root correlation id. That is 32
-   hex characters with no dashes, so the codec's UUID check rejects every token built
-   from it, silently, and the extraction falls back to treating the whole token as a
-   bare correlation id. Tokens nest inside tokens and the chain looks insane. This is
-   decided now (ADR-040): the codec will accept UUIDs and dashless 32-hex ids, and
-   trace-id adoption stays. Until that ships, run with `validateCorrelationId: false`.
+2. **Dashless trace ids used to break validation.** The Hasura source adopts the
+   payload's `trace_context.trace_id` as the root correlation id, and that is 32 hex
+   characters with no dashes. The codec's old UUID-only check rejected every token
+   built from one, silently, and tokens nested inside tokens. Fixed (ADR-040): the
+   codec accepts UUIDs and dashless 32-hex ids. Run with validation on. The
+   `hopdriveLoopGuard` preset pins it on for you.
 3. **The mapping insert must not trigger events.** If you put an event trigger on the
    correlation-refs table you will chain your chain bookkeeping.
 4. **Do not expect the vendor to give your ids back.** Design the webhook modules
@@ -280,10 +331,9 @@ These all bit us in the live run. Learn from our bruises.
 
 On the event-function side (Hasura source):
 
-- [ ] `loopGuard` registered with your `serviceId`, `sessionVariables:
-      ['x-hasura-tracking-token']`, and depth ceilings
-- [ ] every job mutation goes through a helper that attaches
-      `x-hasura-tracking-token: ctx.trackingToken`
+- [ ] `hopdriveLoopGuard` registered with your `serviceId` and depth ceilings
+- [ ] `hasuraChainedClient` registered so every job mutation carries the token
+      (jobs use `const { gql } = ctx.input`)
 - [ ] observability plugin wired with the graphql sink
 
 On the webhook-function side (vendor source):
@@ -291,7 +341,7 @@ On the webhook-function side (vendor source):
 - [ ] `webhook({ vendor, eventTypeHeader, verify, rejectUnverified })` with a real
       verify preset
 - [ ] one named module per webhook event type, routed by `ctx.eventType`
-- [ ] `loopGuard` registered (owns outbound tokens even here)
+- [ ] `hopdriveLoopGuard` registered (owns outbound tokens even here)
 - [ ] `correlationResolver` registered after loop-guard with `extractKey`, `lookup`,
       and a deliberate `onLookupError` choice
 

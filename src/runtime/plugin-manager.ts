@@ -247,6 +247,7 @@ export class PluginManager {
     };
     if (extra.eventName !== undefined) ctx.eventName = extra.eventName;
     if (extra.jobName !== undefined) ctx.jobName = extra.jobName;
+    if (extra.severity !== undefined) ctx.severity = extra.severity;
     for (const p of this.plugins) {
       try {
         await p.onError?.(ctx);

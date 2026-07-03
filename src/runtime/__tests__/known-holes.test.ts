@@ -27,7 +27,7 @@ const hasuraInsert = (newRow: Record<string, unknown>): unknown => ({
 });
 
 describe('correlation-id precedence: inbound token BEATS source-derived BEATS fresh mint', () => {
-  const cfg = { field: 'updated_by', serviceId: 'svc-a', codec: { separator: '|', validateCorrelationId: true } };
+  const cfg = { serviceId: 'svc-a', codec: { separator: '|', validateCorrelationId: true } };
   const capture = (sink: (corr: string) => void): EventModule =>
     ({ name: asEventName('e'), detector: hasuraEvent.detector(() => true), jobs: [job((c: JobContext) => void sink(c.correlationId))] } as EventModule);
 
