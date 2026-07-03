@@ -12,3 +12,6 @@ scripts/.smoke-tmp/
 docs/api/
 reports/
 .stryker-tmp/
+
+# Obsidian vault workspace (local editor state, not project content)
+.obsidian/
