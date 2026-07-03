@@ -223,12 +223,12 @@
     "@stryker-mutator/vitest-runner": "^9.6.1",
     "@types/node": "^20.11.19",
     "@types/uuid": "^10.0.0",
-    "@vitest/coverage-v8": "^2.1.9",
+    "@vitest/coverage-v8": "^4.1.9",
     "esbuild": "^0.21.0",
     "fast-check": "^3.23.2",
     "rimraf": "^5.0.5",
     "typedoc": "^0.26.0",
     "typescript": "^5.4.0",
-    "vitest": "^2.1.9"
+    "vitest": "^4.1.9"
   }
 }
