@@ -9,11 +9,8 @@
 import React, { useEffect, useReducer, useState } from 'react';
 import { PlayIcon, PauseIcon, XMarkIcon, ArrowPathIcon, MinusIcon, PlusIcon } from '@heroicons/react/20/solid';
 import { formatDuration } from '../utils/formatDuration';
-import { BASE_MS, MIN_SPEED, MAX_SPEED, type FlowPlayback } from '../hooks/useFlowPlayback';
+import { BASE_MS, MIN_SPEED, MAX_SPEED, SPEED_PRESETS, type FlowPlayback } from '../hooks/useFlowPlayback';
 
-// Preset chips lean slow: chains execute in millisecond bursts, so the useful
-// range is mostly below 1× (1× = whole chain in ~10s of wall time).
-const SPEED_PRESETS = [0.05, 0.1, 0.25, 0.5, 1, 2, 4];
 const fmtSpeed = (s: number) => `${Number(s.toFixed(2))}×`;
 
 interface FlowPlaybackBarProps {
@@ -38,6 +35,21 @@ const FlowPlaybackBar: React.FC<FlowPlaybackBarProps> = ({ playback, drawerOpen 
     return () => cancelAnimationFrame(frame);
   }, [playing]);
 
+  // Esc closes the speed popover before the global cascade (drawer/replay/selection)
+  // sees the keypress — capture phase on window fires ahead of bubble listeners,
+  // and stopPropagation keeps it from reaching them.
+  useEffect(() => {
+    if (!speedOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setSpeedOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [speedOpen]);
+
   const time = playback.timeRef.current;
   const ended = time >= total;
 
@@ -61,7 +73,7 @@ const FlowPlaybackBar: React.FC<FlowPlaybackBarProps> = ({ playback, drawerOpen 
         <button
           onClick={playback.togglePlay}
           className='p-1 rounded-md text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
-          title={playing ? 'Pause' : ended ? 'Replay from start' : 'Play'}
+          title={playing ? 'Pause (Space)' : ended ? 'Replay from start (Space)' : 'Play (Space)'}
         >
           {playing ? (
             <PauseIcon className='h-4 w-4' />
@@ -85,6 +97,7 @@ const FlowPlaybackBar: React.FC<FlowPlaybackBarProps> = ({ playback, drawerOpen 
           }}
           className='w-56 sm:w-72 h-1.5 cursor-pointer accent-blue-600'
           aria-label='Replay timeline'
+          title='←/→ step one frame at a time'
         />
 
         <span className='text-xs text-gray-600 dark:text-gray-300 tabular-nums whitespace-nowrap'>
@@ -101,7 +114,7 @@ const FlowPlaybackBar: React.FC<FlowPlaybackBarProps> = ({ playback, drawerOpen 
                 ? 'text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-500/60 bg-blue-50 dark:bg-blue-500/10'
                 : 'text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
             }`}
-            title='Playback speed (1× replays the whole run in ~10s)'
+            title='Playback speed — ↑/↓ to change (1× replays the whole run in ~10s)'
           >
             {fmtSpeed(speed)}
           </button>
@@ -176,11 +189,15 @@ const FlowPlaybackBar: React.FC<FlowPlaybackBarProps> = ({ playback, drawerOpen 
         <button
           onClick={playback.exit}
           className='p-1 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
-          title='Exit replay'
+          title='Exit replay (Esc)'
         >
           <XMarkIcon className='h-4 w-4' />
         </button>
       </div>
+      {/* Passive hotkey hint: small enough to ignore, present enough to teach. */}
+      <p className='mt-1 text-center text-[10px] text-gray-400 dark:text-gray-500 select-none'>
+        Space play/pause · ← → step · ↑ ↓ speed · Esc exit
+      </p>
     </div>
   );
 };

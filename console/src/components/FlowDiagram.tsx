@@ -23,7 +23,9 @@ import EventDetailDrawer from './EventDetailDrawer';
 import FlowBreadcrumb from './FlowBreadcrumb';
 import FlowStatsPill from './FlowStatsPill';
 import FlowPlaybackBar from './FlowPlaybackBar';
-import { useFlowPlayback } from '../hooks/useFlowPlayback';
+import KeyboardShortcutsOverlay from './KeyboardShortcutsOverlay';
+import { useFlowPlayback, SPEED_PRESETS } from '../hooks/useFlowPlayback';
+import { useFlowHotkeys } from '../hooks/useFlowHotkeys';
 import { PlayIcon } from '@heroicons/react/20/solid';
 import { compareFlow } from '../flowdoc/compare';
 import { loadBundledDocs, loadUploadedDocs, saveUploadedDoc } from '../flowdoc/store';
@@ -74,6 +76,8 @@ const FlowDiagramContent = () => {
   const [docs, setDocs] = useState<FlowDoc[]>([]);
   const [selectedDocTitle, setSelectedDocTitle] = useState<string>('');
   const [docError, setDocError] = useState<string>('');
+  const [helpOpen, setHelpOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // URL Parameters
   const invocationId = searchParams.get('invocationId');
@@ -206,44 +210,25 @@ const FlowDiagramContent = () => {
     }
   }, [generatedNodes.length, reactFlowInstance]);
 
-  // Center and zoom on a node, accounting for the 600px drawer on the right.
-  // Shared by direct canvas clicks and drawer cross-navigation/back.
-  const centerOnNode = useCallback((node: Node) => {
-    setTimeout(() => {
-      if (reactFlowInstance) {
-        const flowBounds = document.querySelector('.react-flow')?.getBoundingClientRect();
-
-        if (flowBounds) {
-          const drawerWidth = 600;
-          const zoom = 1.5;
-
-          // FLIPPED: To shift the viewport so the node appears LEFT (in visible area),
-          // we actually need to move the CENTER POINT to the RIGHT in flow coordinates
-          // This is because setCenter positions what FLOW POINT appears at screen center
-
-          // We want the node to appear at the center of the visible area
-          // which is visibleWidth/2 from the left edge of the screen
-          // In terms of offset from total screen center: -(drawerWidth/2)
-          // But since we're moving the flow coordinate that appears at screen center,
-          // we need to ADD (positive) to shift viewport left
-          const shiftRight = (drawerWidth / 2);
-
-          // Convert to flow coordinates
-          const centerShiftInFlowCoords = shiftRight / zoom;
-
-          // Position the node in the center of the visible area
-          reactFlowInstance.setCenter(
-            node.position.x + 120 + centerShiftInFlowCoords,
-            node.position.y,
-            {
-              zoom: zoom,
-              duration: 800
-            }
-          );
-        }
-      }
-    }, 100);
-  }, [reactFlowInstance]);
+  // Center and zoom on a node, optionally shifted so it lands in the middle of the
+  // visible area LEFT of the 600px drawer (setCenter positions a FLOW POINT at the
+  // screen center, so the center point moves RIGHT by half the drawer width in flow
+  // coordinates). Clicks zoom in to 1.5; keyboard walking keeps the user's zoom
+  // (clamped) so arrow-stepping through the chain doesn't lurch the viewport.
+  const centerOnNode = useCallback(
+    (node: Node, opts?: { drawer?: boolean; keepZoom?: boolean }) => {
+      if (!reactFlowInstance) return;
+      const drawer = opts?.drawer ?? true;
+      const zoom = opts?.keepZoom ? Math.min(Math.max(reactFlowInstance.getZoom(), 0.75), 1.5) : 1.5;
+      const shift = drawer ? 600 / 2 / zoom : 0;
+      reactFlowInstance.setCenter(
+        node.position.x + (node.width ?? 240) / 2 + shift,
+        node.position.y + (node.height ?? 70) / 2,
+        { zoom, duration: 500 }
+      );
+    },
+    [reactFlowInstance]
+  );
 
   const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
     setSelectedNode(node);
@@ -528,6 +513,51 @@ const FlowDiagramContent = () => {
   const relatedJobsFor = (eventNode: Node | null): Node[] => childNodesFor(eventNode, 'job');
   const triggeredInvocationsFor = (jobNode: Node | null): Node[] => childNodesFor(jobNode, 'invocation');
 
+  // Keyboard layer: arrows/WASD walk selection, Enter/Esc drive the drawer, R/Space/
+  // arrows drive the replay, F/+/− the viewport, ?/E/U/O panels and overlays. The
+  // full map lives in useFlowHotkeys; ? shows it to the user.
+  const cycleSpeed = (dir: 1 | -1) => {
+    const s = playback.speed;
+    const next =
+      dir > 0
+        ? SPEED_PRESETS.find(p => p > s + 1e-9)
+        : [...SPEED_PRESETS].reverse().find(p => p < s - 1e-9);
+    if (next != null) playback.setSpeed(next);
+  };
+  useFlowHotkeys({
+    // ReactFlow's internal nodes carry measured width/height for centering; replay
+    // marks un-revealed nodes selectable:false, which also takes them off the
+    // keyboard path (the wavefront reveals them into reach).
+    getNodes: () => (reactFlowInstance?.getNodes() ?? []).filter(n => n.selectable !== false),
+    selectedNode,
+    drawerOpen,
+    canDrawerBack: drawerHistory.length > 0,
+    helpOpen,
+    playback,
+    onNavigate: node => {
+      setSelectedNode(node);
+      centerOnNode(node, { drawer: drawerOpen, keepZoom: true });
+    },
+    onOpenDrawer: () => {
+      if (!selectedNode) return;
+      setDrawerOpen(true);
+      setDrawerHistory([]);
+      centerOnNode(selectedNode, { drawer: true, keepZoom: true });
+    },
+    onCloseDrawer: handleDrawerClose,
+    onDrawerBack: handleDrawerBack,
+    onClearSelection: () => setSelectedNode(null),
+    onStartReplay: startReplay,
+    onFitView: () => reactFlowInstance?.fitView({ padding: 0.2, duration: 500, maxZoom: 1.5, minZoom: 0.1 }),
+    onZoom: dir =>
+      dir > 0 ? reactFlowInstance?.zoomIn({ duration: 200 }) : reactFlowInstance?.zoomOut({ duration: 200 }),
+    onFocusSearch: () => searchInputRef.current?.focus(),
+    onToggleHelp: open => setHelpOpen(o => (open == null ? !o : open)),
+    onToggleFlag: key =>
+      setFlag(key, !(key === 'expected' ? showExpected : key === 'offcontract' ? flagOffContract : showUndetected)),
+    onCycleSpeed: cycleSpeed,
+  });
+
   const observedGate = loading ? (
     <div className='flex items-center justify-center h-full'>
       <div className='animate-spin rounded-full h-32 w-32 border-b-2 border-blue-500'></div>
@@ -547,17 +577,19 @@ const FlowDiagramContent = () => {
       {/* Toolbar: search + expected-overlay toggles (one canvas — toggles only add/remove nodes) */}
       <div className='absolute top-4 left-4 z-10 flex items-center gap-2 flex-wrap'>
         <input
+          ref={searchInputRef}
           type='text'
           placeholder='Search nodes...'
           value={searchTerm}
           onChange={e => setSearchTerm(e.target.value)}
           className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm w-56'
+          title='Focus with / — Esc to leave'
         />
         {playback.hasTimeline && !playback.active && (
           <button
             onClick={startReplay}
             className='inline-flex items-center gap-1.5 px-2.5 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
-            title='Replay this chain in the order it actually executed'
+            title='Replay this chain in the order it actually executed (R)'
           >
             <PlayIcon className='h-3.5 w-3.5 text-blue-600 dark:text-blue-400' />
             Replay
@@ -621,6 +653,14 @@ const FlowDiagramContent = () => {
             )}
           </>
         )}
+        <button
+          onClick={() => setHelpOpen(true)}
+          className='px-2.5 py-2 text-xs font-mono font-semibold border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+          title='Keyboard shortcuts (?)'
+          aria-label='Keyboard shortcuts'
+        >
+          ?
+        </button>
       </div>
 
       {/* Wrong-doc warning: comparing this run against a doc for a different kit */}
@@ -680,6 +720,11 @@ const FlowDiagramContent = () => {
         nodesConnectable={false}
         elementsSelectable={true}
         defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+        // The keyboard belongs to useFlowHotkeys: ReactFlow's a11y default binds
+        // arrows to MOVE the focused node (we walk selection instead), and nothing
+        // on this read-only canvas should ever be deletable from the keyboard.
+        disableKeyboardA11y
+        deleteKeyCode={null}
       >
         <Background gap={20} className='bg-gray-50 dark:bg-gray-900' />
         <Controls className='bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700' />
@@ -696,13 +741,15 @@ const FlowDiagramContent = () => {
       {/* Replay transport: play/pause + scrubbable timeline (bottom edge) */}
       {playback.active && <FlowPlaybackBar playback={playback} drawerOpen={drawerOpen && !!selectedNode} />}
 
-      {/* Path breadcrumb: origin → … → selected node, follows every selection change */}
+      {/* Path breadcrumb: origin → … → selected node, follows every selection change
+          (including keyboard-only selection, where the drawer stays closed) */}
       <FlowBreadcrumb
-        selectedNode={drawerOpen ? selectedNode : null}
+        selectedNode={selectedNode}
         nodes={displayData.nodes as Node[]}
         edges={displayData.edges}
         onSelect={handleOpenNodeId}
         lifted={playback.active}
+        drawerOpen={drawerOpen && !!selectedNode}
       />
 
       {/* Detail Drawer - Type-specific modals */}
@@ -741,6 +788,9 @@ const FlowDiagramContent = () => {
           </>
         )}
       </AnimatePresence>
+
+      {/* Hotkey reference (toggled by ? or the toolbar button) */}
+      {helpOpen && <KeyboardShortcutsOverlay onClose={() => setHelpOpen(false)} />}
     </div>
   );
 };
