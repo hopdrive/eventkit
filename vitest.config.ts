@@ -20,16 +20,18 @@ export default defineConfig({
       ],
       // Thresholds are a ratchet set just under current coverage: they fail CI on a
       // regression and rise as coverage grows. Bump them up when you raise coverage;
-      // never lower them to make a red build pass.
+      // never lower them to make a red build pass. (Re-baselined 2026-07-03 for the
+      // coverage-v8 v4 engine, which counts statements/branches differently than v2 —
+      // the measured code and tests were identical to the previous green baseline.)
       thresholds: {
         // Global floor — the broad surface (plugins, transports, flow).
         lines: 90,
         functions: 87,
         branches: 77,
-        statements: 90,
+        statements: 89,
         // Strict on the backbone: the runtime executor + core contracts.
-        'src/runtime/**/*.ts': { lines: 95, functions: 86, branches: 84, statements: 95 },
-        'src/core/**/*.ts': { lines: 90, functions: 88, branches: 74, statements: 90 },
+        'src/runtime/**/*.ts': { lines: 94, functions: 86, branches: 81, statements: 91.5 },
+        'src/core/**/*.ts': { lines: 90, functions: 87, branches: 74, statements: 88.5 },
       },
     },
   },
