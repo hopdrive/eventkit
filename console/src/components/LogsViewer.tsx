@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { JSONTree } from 'react-json-tree';
+import { JsonBlock } from './drawer/primitives';
 import {
   MagnifyingGlassIcon,
   ClipboardDocumentIcon,
@@ -139,26 +139,6 @@ const LogsViewer: React.FC<LogsViewerProps> = ({
       default:
         return 'text-blue-600 dark:text-blue-400';
     }
-  };
-
-  const jsonTreeTheme = {
-    scheme: 'monokai',
-    base00: '#1f2937',
-    base01: '#374151',
-    base02: '#4b5563',
-    base03: '#6b7280',
-    base04: '#9ca3af',
-    base05: '#d1d5db',
-    base06: '#e5e7eb',
-    base07: '#f3f4f6',
-    base08: '#ef4444',
-    base09: '#f97316',
-    base0A: '#eab308',
-    base0B: '#10b981',
-    base0C: '#06b6d4',
-    base0D: '#3b82f6',
-    base0E: '#8b5cf6',
-    base0F: '#ec4899',
   };
 
   if (loading) {
@@ -318,13 +298,7 @@ const LogsViewer: React.FC<LogsViewerProps> = ({
 
         {viewMode === 'json' && (
           <div className="p-4">
-            <JSONTree
-              data={displayedLogs}
-              theme={jsonTreeTheme}
-              invertTheme={false}
-              hideRoot
-              shouldExpandNode={(keyName, data, level) => level < 2}
-            />
+            <JsonBlock data={displayedLogs} />
           </div>
         )}
 

@@ -13,26 +13,28 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { XMarkIcon, ClipboardIcon, CheckIcon, ChevronRightIcon, ArrowLeftIcon } from '@heroicons/react/24/outline';
-import { JSONTree } from 'react-json-tree';
+import ReactJson from '@microlink/react-json-view';
 
-export const jsonTreeTheme = {
-  scheme: 'monokai',
-  base00: '#1f2937',
+// react-json-view base16 theme on the tailwind gray-800 panel. Key slots
+// (per the library's mapping): base07 object keys, base09 strings, base0B
+// floats, base0E booleans, base0F integers, base0A null, base0D expand icon.
+export const jsonViewTheme = {
+  base00: 'transparent', // panel bg comes from the container
   base01: '#374151',
-  base02: '#4b5563',
+  base02: '#4b5563', // indent guides
   base03: '#6b7280',
-  base04: '#9ca3af',
-  base05: '#d1d5db',
+  base04: '#9ca3af', // item counts
+  base05: '#d1d5db', // brackets/default
   base06: '#e5e7eb',
-  base07: '#f9fafb',
+  base07: '#93c5fd', // object keys — blue-300
   base08: '#f87171',
-  base09: '#fb923c',
-  base0A: '#facc15',
-  base0B: '#4ade80',
+  base09: '#4ade80', // strings — green-400
+  base0A: '#f87171', // null/regexp — red-400
+  base0B: '#fb923c', // floats — orange-400
   base0C: '#22d3ee',
-  base0D: '#60a5fa',
-  base0E: '#c084fc',
-  base0F: '#f472b6',
+  base0D: '#9ca3af', // expand/collapse icons
+  base0E: '#c084fc', // booleans — purple-400
+  base0F: '#fb923c', // integers — orange-400
 };
 
 export const StatusChip: React.FC<{ status?: string | null }> = ({ status }) => {
@@ -138,9 +140,20 @@ export const Collapsible: React.FC<{
   );
 };
 
-export const JsonBlock: React.FC<{ data: unknown }> = ({ data }) => (
-  <div className='rounded bg-gray-800 p-2 text-xs overflow-auto max-h-96'>
-    <JSONTree data={data} theme={jsonTreeTheme} invertTheme={false} hideRoot shouldExpandNodeInitially={(_k, _d, level) => level < 2} />
+export const JsonBlock: React.FC<{ data: unknown; collapsed?: number }> = ({ data, collapsed = 2 }) => (
+  <div className='rounded-lg bg-gray-800 p-2.5 overflow-auto max-h-96'>
+    <ReactJson
+      src={(typeof data === 'object' && data !== null ? data : { value: data }) as object}
+      theme={jsonViewTheme}
+      collapsed={collapsed}
+      name={false}
+      displayDataTypes={false}
+      displayObjectSize={true}
+      enableClipboard={true}
+      quotesOnKeys={false}
+      indentWidth={2}
+      style={{ backgroundColor: 'transparent', fontSize: '12px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+    />
   </div>
 );
 
