@@ -467,13 +467,20 @@ const FlowDiagramContent = () => {
             }
           : { ...n, style: { ...n.style, ...fade, opacity: 1 } };
       });
+    // Connector grammar: animation means ACTIVITY. An edge gets the animated
+    // dashed style only while an endpoint is busy at the clock's position —
+    // work is flowing across that connector right now. Settled steps (and the
+    // whole canvas outside replay) render solid and still: past tense.
     const edges = displayData.edges
       .filter(e => !String(e.id).startsWith('ghost-'))
-      .map(e =>
-        playback.revealed.has(e.source) && playback.revealed.has(e.target)
-          ? e
-          : { ...e, style: { ...e.style, opacity: 0.04 }, animated: false }
-      );
+      .map(e => {
+        if (!playback.revealed.has(e.source) || !playback.revealed.has(e.target)) {
+          return { ...e, style: { ...e.style, opacity: 0.04 }, animated: false };
+        }
+        return playback.running.has(e.source) || playback.running.has(e.target)
+          ? { ...e, animated: true }
+          : e;
+      });
     return { nodes, edges };
   }, [displayData, playback.active, playback.revealed, playback.running, playback.waiting]);
 

@@ -201,7 +201,7 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
           target: invocation.id,
           targetHandle: 'left',
           type: 'default',
-          animated: true,
+          animated: false, // animation means ACTIVITY — only the replay marks live edges animated
           style: { stroke: '#3b82f6', strokeWidth: 2 }, // blue for invocations
           markerEnd: arrow,
         });
@@ -242,7 +242,7 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
           sourceHandle: 'right',
           target: `event-${event.id}`,
           type: 'default',
-          animated: true,
+          animated: false, // animation means ACTIVITY — only the replay marks live edges animated
           style: { stroke: '#10b981', strokeWidth: 2 }, // green for events
           markerEnd: arrow,
         });
@@ -282,7 +282,7 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
             source: `event-${event.id}`,
             target: `job-${job.id}`,
             type: 'default',
-            animated: true,
+            animated: false, // animation means ACTIVITY — only the replay marks live edges animated
             style: { stroke: '#8b5cf6', strokeWidth: 2 }, // purple for jobs
             markerEnd: arrow,
           });
@@ -310,7 +310,7 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
                 target: t.id,
                 targetHandle: 'left',
                 type: 'default',
-                animated: true,
+                animated: false, // animation means ACTIVITY — only the replay marks live edges animated
                 style: { stroke: '#3b82f6', strokeWidth: 2 }, // blue for invocations
                 markerEnd: arrow,
               });
