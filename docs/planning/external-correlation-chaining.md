@@ -14,6 +14,24 @@
 > rename — fixed in the same pass.) **Still app-side / not in this spike:** §8 items 1–2
 > (the query-param plumbing + the echo-back recipe), 5 (the `event_correlations` table +
 > SDK accessors + per-vendor `extractKey`/`read`), and a live `ntl dev` proof.
+>
+> **Live proof landed (2026-07-02).** Full E2E against local Hasura v2.26 + a simulated
+> vendor: the origin job persists `vendor ref → token` into a mapping table
+> (`eventkit_correlation_refs` — tracked, NO event trigger), the vendor's webhooks carry
+> ONLY its own ref, and `correlationResolver` (`extractKey` + async GraphQL `lookup`,
+> `onLookupError: 'reject'`) reconnects the chain: 8 invocations, one correlation id,
+> correct branching (both async webhooks → the same parent job via `source_job_id`),
+> hop depth 1→2→3 across the round trip. Two changes came out of the proof:
+> correlation-resolver now carries the recovered token's hop depth into `meta.hopDepth`
+> (loop-guard runs first and had already set root depth, so `haltAtDepth` was evadable
+> via a vendor bounce), and the outbound legs used the session-variable header channel
+> (`x-hasura-tracking-token` → `event.session_variables`; loop-guard now codec-parses
+> session values) instead of `updated_by` — the row write field was never consulted.
+> Consumer-facing writeup: [../chained-events.md](../chained-events.md). Open item
+> before the HopDrive preset ships: `validateCorrelationId: true` rejects
+> trace-id-rooted correlation ids (the hasura source adopts `trace_context.trace_id`,
+> 32 hex / no dashes) — codec and source must agree on correlation-id shape (needs an
+> ADR).
 
 ---
 

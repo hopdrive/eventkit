@@ -36,6 +36,13 @@ export interface SourceMeta {
   sourceJobId?: string;
   /** Inbound provenance token (loop-guard). */
   sourceTrackingToken?: string;
+  /**
+   * Ordered inbound tracking-token candidates, best first, surfaced by the source
+   * during normalize (ADR-039.2). `loopGuard` consumes them and lifts lineage from
+   * the first that parses — the source knows its payload anatomy (which fields and
+   * session variables carry a token), so the plugin stays generic.
+   */
+  tokenCandidates?: string[];
 }
 
 /** The well-known key names, for writers/readers that prefer constants over literals. */
@@ -48,4 +55,5 @@ export const SOURCE_META_KEYS = {
   sourceUserRole: 'sourceUserRole',
   sourceJobId: 'sourceJobId',
   sourceTrackingToken: 'sourceTrackingToken',
+  tokenCandidates: 'tokenCandidates',
 } as const satisfies Record<keyof SourceMeta, string>;

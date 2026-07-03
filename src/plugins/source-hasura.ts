@@ -16,6 +16,13 @@ export {
   getNewRow,
   getSession,
 } from './hasura-shared/payload.js';
-export { hasuraEvent, type HasuraEventSource } from './source-hasura-event/index.js';
-export { hasuraCron, type HasuraCronSource } from './source-hasura-cron/index.js';
-export { hasuraAction, type HasuraActionSource } from './source-hasura-action/index.js';
+export { hasuraEvent, type HasuraEventSource, type HasuraEventConfig } from './source-hasura-event/index.js';
+export { hasuraCron, type HasuraCronSource, type HasuraCronConfig } from './source-hasura-cron/index.js';
+export { hasuraAction, type HasuraActionSource, type HasuraActionConfig } from './source-hasura-action/index.js';
+export { collectTokenCandidates, type HasuraTokenDiscoveryConfig } from './hasura-shared/token-discovery.js';
+export {
+  hasuraChainedClient,
+  GraphqlRequestError,
+  type HasuraChainedClientConfig,
+  type GqlFunction,
+} from './hasura-shared/chained-client.js';

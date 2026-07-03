@@ -208,7 +208,8 @@ export function grafana(config: GrafanaConfig): EventKitPlugin {
       }),
     onError: (ctx: ErrorContext) =>
       emit(
-        'error',
+        // ADR-041: a warnAtDepth early alarm logs at warn level, not error.
+        ctx.severity === 'warn' ? 'warn' : 'error',
         `[${ctx.phase}] ${ctx.error.name}: ${ctx.error.message}`,
         {
           source,
