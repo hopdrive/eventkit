@@ -60,8 +60,8 @@ export interface FlowPlayback {
   totalCount: number;
   hasTimeline: boolean;
   /** Camera-follow mode: the diagram pans to each batch of newly revealed nodes
-   *  so the wavefront stays in focus (toggled on the transport bar / C key).
-   *  Sticky across replays within the page session. */
+   *  so the wavefront stays in focus. ON by default; toggled on the transport
+   *  bar / C key, sticky across replays within the page session. */
   follow: boolean;
   toggleFollow: () => void;
   start: () => void;
@@ -109,7 +109,7 @@ export const useFlowPlayback = (nodes: Node[], edges: Edge[]): FlowPlayback => {
   const [active, setActive] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeedState] = useState(DEFAULT_SPEED);
-  const [follow, setFollow] = useState(false);
+  const [follow, setFollow] = useState(true);
   const toggleFollow = useCallback(() => setFollow(f => !f), []);
   const timeRef = useRef(0);
   const [sets, setSets] = useState<{ revealed: Set<string>; running: Set<string>; waiting: Set<string> }>({
