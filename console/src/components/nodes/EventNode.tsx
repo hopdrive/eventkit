@@ -25,6 +25,8 @@ export interface EventNodeData {
   hasFailedJobs: boolean;
   createdAt?: string;
   updatedAt?: string;
+  /** Replay: executing at the replay clock's position (spinner + activity sweep). */
+  replayRunning?: boolean;
 }
 
 const DRIFT_TITLE =
@@ -73,9 +75,13 @@ export const EventNode: React.FC<NodeProps<EventNodeData>> = ({ data, selected }
       selected={selected}
       failed={hasErrors}
       dimmed={!isDetected}
+      running={data.replayRunning}
       statusArea={
         isDetected ? (
-          <StatusGlyph status={hasErrors ? 'failed' : data.status} title={hasErrors ? 'a job failed' : undefined} />
+          <StatusGlyph
+            status={data.replayRunning ? 'running' : hasErrors ? 'failed' : data.status}
+            title={hasErrors && !data.replayRunning ? 'a job failed' : undefined}
+          />
         ) : undefined
       }
       meta={

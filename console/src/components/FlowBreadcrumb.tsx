@@ -58,9 +58,11 @@ interface FlowBreadcrumbProps {
   nodes: Node[];
   edges: Edge[];
   onSelect: (nodeId: string) => void;
+  /** Raise above the replay transport bar when playback mode is active. */
+  lifted?: boolean;
 }
 
-const FlowBreadcrumb: React.FC<FlowBreadcrumbProps> = ({ selectedNode, nodes, edges, onSelect }) => {
+const FlowBreadcrumb: React.FC<FlowBreadcrumbProps> = ({ selectedNode, nodes, edges, onSelect, lifted }) => {
   const path = useMemo(
     () => (selectedNode ? pathToRoot(selectedNode.id, nodes, edges) : []),
     [selectedNode, nodes, edges]
@@ -70,7 +72,9 @@ const FlowBreadcrumb: React.FC<FlowBreadcrumbProps> = ({ selectedNode, nodes, ed
   return (
     // Centered within the VISIBLE canvas (the 600px drawer is open whenever a node
     // is selected, so center on the remaining width).
-    <div className='absolute bottom-3 left-[calc((100%-600px)/2)] -translate-x-1/2 z-40 max-w-[calc(100%-640px)] min-w-0'>
+    <div
+      className={`absolute ${lifted ? 'bottom-16' : 'bottom-3'} left-[calc((100%-600px)/2)] -translate-x-1/2 z-40 max-w-[calc(100%-640px)] min-w-0`}
+    >
       <div className='flex items-center gap-0.5 px-2 py-1.5 rounded-lg bg-white/95 dark:bg-gray-800/95 border border-gray-200 dark:border-gray-700 shadow-lg backdrop-blur overflow-x-auto whitespace-nowrap'>
         {path.map((n, i) => {
           const kind = KIND_STYLES[n.type ?? ''] ?? KIND_STYLES.invocation;

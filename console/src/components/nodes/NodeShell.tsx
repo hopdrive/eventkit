@@ -38,6 +38,9 @@ export interface NodeShellProps {
   /** Ghost/expected nodes: dashed hairline, muted content. */
   dashed?: boolean;
   dimmed?: boolean;
+  /** Replay: this node is executing at the replay clock's position — show a
+   *  live activity sweep along the bottom edge until its duration elapses. */
+  running?: boolean;
   /** Small chips rendered after the kind label (ORIGIN, source, …). */
   badges?: React.ReactNode;
   /** Status glyph / extra affordances, right-aligned in the header row. */
@@ -61,6 +64,7 @@ export const NodeShell: React.FC<NodeShellProps> = ({
   failed,
   dashed,
   dimmed,
+  running,
   badges,
   statusArea,
   meta,
@@ -103,6 +107,11 @@ export const NodeShell: React.FC<NodeShellProps> = ({
           {footer && <p className='mt-0.5 text-[11px] text-gray-400 dark:text-gray-500'>{footer}</p>}
         </div>
       </div>
+      {running && (
+        <div className='absolute inset-x-0 bottom-0 h-0.5 overflow-hidden rounded-b-lg'>
+          <div className='h-full w-1/3 bg-blue-500 animate-replay-sweep' />
+        </div>
+      )}
       {children}
     </div>
   );

@@ -20,6 +20,8 @@ export interface JobNodeData {
   triggeredInvocationsCount?: number;
   createdAt?: string;
   updatedAt?: string;
+  /** Replay: executing at the replay clock's position (spinner + activity sweep). */
+  replayRunning?: boolean;
 }
 
 export const JobNode: React.FC<NodeProps<JobNodeData>> = ({ data, selected }) => {
@@ -60,7 +62,8 @@ export const JobNode: React.FC<NodeProps<JobNodeData>> = ({ data, selected }) =>
       title={data.jobName}
       selected={selected}
       failed={status === 'failed'}
-      statusArea={<StatusGlyph status={status} />}
+      running={data.replayRunning}
+      statusArea={<StatusGlyph status={data.replayRunning ? 'running' : status} />}
       meta={
         <>
           {formatDuration(liveDuration)}

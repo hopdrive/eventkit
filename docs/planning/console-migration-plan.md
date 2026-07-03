@@ -195,3 +195,17 @@ Shipped from live design feedback on the flow page:
   max(node height + 48px gap, sum of child bands), nested through
   invocation → events → jobs → triggered invocations. Verified programmatically on a
   113-node / 17-invocation chain: 0 overlapping rects, min vertical gap exactly 48px.
+- **Chain replay** (`useFlowPlayback` + `FlowPlaybackBar`): every node persists
+  created_at (ms) + a duration, so the run replays with no extra data. Nodes reveal at
+  their real start offset and count as RUNNING until their duration elapses (parent
+  invocations stay hot while their events/jobs execute — total_duration_ms covers the
+  handlers). Running nodes get a blue wavefront ring (readable zoomed out) plus an
+  in-card spinner glyph and an indeterminate bottom-edge activity sweep. Un-revealed
+  nodes hold their layout at 5% opacity (viewport/minimap never shift); ghost overlay
+  nodes are excluded (they never happened). The clock is normalized — 1× replays any
+  chain in ~10s (raw wall-clock is useless at both extremes) — with 0.5/1/2/4×,
+  a scrubbable timeline labeled in the run's own ms, play/pause/restart, reveal
+  counter, and exit. Frame deltas are clamped to 100ms so a hidden/occluded window
+  (rAF stops) behaves like a pause instead of skipping to the end. Between execution
+  bursts nothing is marked running — truthful: the chain is waiting on event delivery
+  or debounce in the queue, not executing in any node.

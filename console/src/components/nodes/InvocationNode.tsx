@@ -23,6 +23,8 @@ export interface InvocationNodeData {
   isOrigin?: boolean;
   /** The invocation the user navigated here with ("you are here"). */
   isFocus?: boolean;
+  /** Replay: executing at the replay clock's position (spinner + activity sweep). */
+  replayRunning?: boolean;
 }
 
 export const InvocationNode: React.FC<NodeProps<InvocationNodeData>> = ({ data, selected }) => {
@@ -41,6 +43,7 @@ export const InvocationNode: React.FC<NodeProps<InvocationNodeData>> = ({ data, 
       selected={selected}
       focused={data.isFocus}
       failed={data.status === 'failed'}
+      running={data.replayRunning}
       badges={
         <>
           {data.isOrigin && (
@@ -56,7 +59,7 @@ export const InvocationNode: React.FC<NodeProps<InvocationNodeData>> = ({ data, 
       statusArea={
         <>
           <SourceChip sourceType={data.sourceType} sourceSystem={data.sourceSystem} compact />
-          <StatusGlyph status={data.status} />
+          <StatusGlyph status={data.replayRunning ? 'running' : data.status} />
         </>
       }
       meta={

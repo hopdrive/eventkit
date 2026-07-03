@@ -22,6 +22,9 @@ import JobDetailDrawer from './JobDetailDrawer';
 import EventDetailDrawer from './EventDetailDrawer';
 import FlowBreadcrumb from './FlowBreadcrumb';
 import FlowStatsPill from './FlowStatsPill';
+import FlowPlaybackBar from './FlowPlaybackBar';
+import { useFlowPlayback } from '../hooks/useFlowPlayback';
+import { PlayIcon } from '@heroicons/react/20/solid';
 import { compareFlow } from '../flowdoc/compare';
 import { loadBundledDocs, loadUploadedDocs, saveUploadedDoc } from '../flowdoc/store';
 import type { FlowDoc } from '../flowdoc/types';
@@ -400,6 +403,61 @@ const FlowDiagramContent = () => {
 
 
 
+  // Chain replay: reveal nodes in real chronological order on a scrubbable,
+  // normalized clock (every node's created_at + duration is persisted, so the
+  // timeline is derived — no extra data needed). While replaying, un-revealed
+  // nodes stay faintly in place (layout/minimap never shift), currently-executing
+  // nodes carry a blue wavefront ring, and ghost overlay nodes are hidden (they
+  // never happened, so they have no place on the timeline).
+  const playback = useFlowPlayback(displayData.nodes as Node[]);
+  // Reveal/running sets only change when the clock crosses a node boundary; keying
+  // the (113-node) remap on this signature keeps the 60fps rAF clock from
+  // re-rendering the whole canvas every frame. Sizes are a sound key: both sets'
+  // membership is monotonic between boundaries, so equal sizes ⇒ equal sets.
+  const playbackSig = playback.active ? `${playback.revealed.size}:${playback.running.size}` : 'off';
+  const canvasData = useMemo(() => {
+    if (!playback.active) return displayData;
+    const fade = { transition: 'opacity 300ms ease' };
+    const nodes = displayData.nodes
+      .filter(n => !String(n.id).startsWith('ghost-'))
+      .map(n => {
+        if (!playback.revealed.has(n.id)) {
+          return {
+            ...n,
+            style: { ...n.style, ...fade, opacity: 0.05, pointerEvents: 'none' as const },
+            selectable: false,
+          };
+        }
+        // Currently executing at the clock's position: wavefront ring (visible
+        // zoomed out) + in-card spinner and activity sweep (via replayRunning).
+        return playback.running.has(n.id)
+          ? {
+              ...n,
+              className: `${n.className ?? ''} rounded-lg ring-2 ring-blue-400/60`,
+              style: { ...n.style, ...fade, opacity: 1 },
+              data: { ...n.data, replayRunning: true },
+            }
+          : { ...n, style: { ...n.style, ...fade, opacity: 1 } };
+      });
+    const edges = displayData.edges
+      .filter(e => !String(e.id).startsWith('ghost-'))
+      .map(e =>
+        playback.revealed.has(e.source) && playback.revealed.has(e.target)
+          ? e
+          : { ...e, style: { ...e.style, opacity: 0.04 }, animated: false }
+      );
+    return { nodes, edges };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayData, playback.active, playbackSig]);
+
+  const startReplay = () => {
+    playback.start();
+    // Show the whole chain before it lights up.
+    setTimeout(() => {
+      reactFlowInstance?.fitView({ padding: 0.2, duration: 400, maxZoom: 1.5, minZoom: 0.1 });
+    }, 50);
+  };
+
   // Drawer cross-navigation: swap the open drawer to any canvas node by id, pan the
   // canvas to it, and hand the event drawer its job nodes so its rows are one-click jumps.
   const handleOpenNodeId = (nodeId: string) => {
@@ -461,6 +519,16 @@ const FlowDiagramContent = () => {
           onChange={e => setSearchTerm(e.target.value)}
           className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm w-56'
         />
+        {playback.hasTimeline && !playback.active && (
+          <button
+            onClick={startReplay}
+            className='inline-flex items-center gap-1.5 px-2.5 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
+            title='Replay this chain in the order it actually executed'
+          >
+            <PlayIcon className='h-3.5 w-3.5 text-blue-600 dark:text-blue-400' />
+            Replay
+          </button>
+        )}
         <label className='inline-flex items-center gap-1.5 px-2.5 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700'>
           <input
             type='checkbox'
@@ -564,8 +632,8 @@ const FlowDiagramContent = () => {
 
       {observedGate ?? (
       <ReactFlow
-        nodes={displayData.nodes}
-        edges={displayData.edges}
+        nodes={canvasData.nodes}
+        edges={canvasData.edges}
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
         nodeTypes={nodeTypes}
@@ -605,12 +673,16 @@ const FlowDiagramContent = () => {
       {/* Compact chain stats (replaces the old page-header KPI tiles) */}
       <FlowStatsPill invocations={invocations} nodes={displayData.nodes as Node[]} />
 
+      {/* Replay transport: play/pause + scrubbable timeline (bottom edge) */}
+      {playback.active && <FlowPlaybackBar playback={playback} drawerOpen={drawerOpen && !!selectedNode} />}
+
       {/* Path breadcrumb: origin → … → selected node, follows every selection change */}
       <FlowBreadcrumb
         selectedNode={drawerOpen ? selectedNode : null}
         nodes={displayData.nodes as Node[]}
         edges={displayData.edges}
         onSelect={handleOpenNodeId}
+        lifted={playback.active}
       />
 
       {/* Detail Drawer - Type-specific modals */}

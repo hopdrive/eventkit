@@ -186,3 +186,13 @@ tbody tr:hover::before {
   transform: translateX(100%);
   transition: transform 300ms ease-in;
 }
+
+/* Replay: indeterminate activity sweep along the bottom edge of a node card
+   that is currently executing at the replay clock's position. */
+@keyframes replay-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.animate-replay-sweep {
+  animation: replay-sweep 1.2s linear infinite;
+}
