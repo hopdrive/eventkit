@@ -69,6 +69,7 @@ const KeyboardShortcutsOverlay: React.FC<{ onClose: () => void }> = ({ onClose }
           <Row keys={['Space']} label='Play / pause' />
           <Row keys={['←', '→']} label='Step one frame back / forward' />
           <Row keys={['↑', '↓']} label='Playback speed up / down' />
+          <Row keys={['C']} label='Follow new nodes as they appear' />
           <Row keys={['Home', 'End']} label='Jump to start / end' />
         </Section>
         <Section title='Overlays'>
@@ -80,7 +81,8 @@ const KeyboardShortcutsOverlay: React.FC<{ onClose: () => void }> = ({ onClose }
       </div>
       <p className='mt-4 text-[11px] text-gray-400 dark:text-gray-500'>
         Arrows and WASD keep working while the details panel is open — the panel follows the selection.
-        Shortcuts pause while you’re typing in a field.
+        Shortcuts pause while you’re typing in a field. Replay is a visualization of recorded
+        timestamps — nothing is executed again.
       </p>
     </div>
   </div>
