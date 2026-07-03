@@ -21,6 +21,10 @@ export const BASE_MS = 10_000;
 const DEFAULT_SPEED = 0.25;
 export const MIN_SPEED = 0.05;
 export const MAX_SPEED = 4;
+// Preset chips lean slow: chains execute in millisecond bursts, so the useful
+// range is mostly below 1× (1× = whole chain in ~10s of wall time). Shared by
+// the transport bar's popover and the ↑/↓ / < > speed hotkeys.
+export const SPEED_PRESETS = [0.05, 0.1, 0.25, 0.5, 1, 2, 4];
 const EMPTY = new Set<string>();
 
 const nodeDurationMs = (n: Node): number => {
@@ -59,6 +63,9 @@ export interface FlowPlayback {
   exit: () => void;
   togglePlay: () => void;
   seek: (ms: number) => void;
+  /** Pause and nudge the clock by N frames' worth of chain time at the current
+   *  speed (keyboard frame-stepping; ±1e12 reaches start/end). */
+  step: (frames: number) => void;
   setSpeed: (s: number) => void;
 }
 
@@ -195,6 +202,22 @@ export const useFlowPlayback = (nodes: Node[], edges: Edge[]): FlowPlayback => {
     },
     [total, syncSets]
   );
+  // Keyboard frame-stepping: pause, then advance by N frames' worth of chain time
+  // (one 60fps frame ≈ 16.7ms of wall time → × speed × total/BASE_MS chain ms).
+  // The serial bump re-renders the host so the transport bar reflects the new
+  // position — rAF ticks never touch state, but a paused step needs the nudge,
+  // and steps are discrete keypresses so the re-render cost is nothing.
+  const [, setStepSerial] = useState(0);
+  const step = useCallback(
+    (frames: number) => {
+      setPlaying(false);
+      const dt = frames * (1000 / 60) * speed * (total / BASE_MS);
+      timeRef.current = Math.min(Math.max(timeRef.current + dt, 0), total);
+      syncSets(timeRef.current);
+      setStepSerial(n => n + 1);
+    },
+    [speed, total, syncSets]
+  );
   const setSpeed = useCallback(
     (s: number) => setSpeedState(Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(s * 100) / 100))),
     []
@@ -215,6 +238,7 @@ export const useFlowPlayback = (nodes: Node[], edges: Edge[]): FlowPlayback => {
     exit,
     togglePlay,
     seek,
+    step,
     setSpeed,
   };
 };

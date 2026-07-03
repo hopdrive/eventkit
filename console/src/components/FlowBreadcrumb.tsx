@@ -60,9 +60,12 @@ interface FlowBreadcrumbProps {
   onSelect: (nodeId: string) => void;
   /** Raise above the replay transport bar when playback mode is active. */
   lifted?: boolean;
+  /** Center within the visible canvas when the 600px detail drawer is open —
+   *  keyboard selection shows the trail without opening the drawer. */
+  drawerOpen?: boolean;
 }
 
-const FlowBreadcrumb: React.FC<FlowBreadcrumbProps> = ({ selectedNode, nodes, edges, onSelect, lifted }) => {
+const FlowBreadcrumb: React.FC<FlowBreadcrumbProps> = ({ selectedNode, nodes, edges, onSelect, lifted, drawerOpen }) => {
   const path = useMemo(
     () => (selectedNode ? pathToRoot(selectedNode.id, nodes, edges) : []),
     [selectedNode, nodes, edges]
@@ -70,10 +73,11 @@ const FlowBreadcrumb: React.FC<FlowBreadcrumbProps> = ({ selectedNode, nodes, ed
   if (!selectedNode || path.length === 0) return null;
 
   return (
-    // Centered within the VISIBLE canvas (the 600px drawer is open whenever a node
-    // is selected, so center on the remaining width).
+    // Centered within the VISIBLE canvas (offset left of the drawer when open).
     <div
-      className={`absolute ${lifted ? 'bottom-16' : 'bottom-3'} left-[calc((100%-600px)/2)] -translate-x-1/2 z-40 max-w-[calc(100%-640px)] min-w-0`}
+      className={`absolute ${lifted ? 'bottom-20' : 'bottom-3'} -translate-x-1/2 z-40 min-w-0 ${
+        drawerOpen ? 'left-[calc((100%-600px)/2)] max-w-[calc(100%-640px)]' : 'left-1/2 max-w-[calc(100%-32px)]'
+      }`}
     >
       <div className='flex items-center gap-0.5 px-2 py-1.5 rounded-lg bg-white/95 dark:bg-gray-800/95 border border-gray-200 dark:border-gray-700 shadow-lg backdrop-blur overflow-x-auto whitespace-nowrap'>
         {path.map((n, i) => {
