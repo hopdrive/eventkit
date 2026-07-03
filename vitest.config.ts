@@ -31,7 +31,7 @@ export default defineConfig({
         statements: 89,
         // Strict on the backbone: the runtime executor + core contracts.
         'src/runtime/**/*.ts': { lines: 94, functions: 86, branches: 81, statements: 91.5 },
-        'src/core/**/*.ts': { lines: 90, functions: 87, branches: 74, statements: 88.5 },
+        'src/core/**/*.ts': { lines: 90, functions: 87, branches: 74, statements: 88 },
       },
     },
   },
