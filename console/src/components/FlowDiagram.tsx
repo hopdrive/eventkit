@@ -435,7 +435,7 @@ const FlowDiagramContent = () => {
   // nodes stay faintly in place (layout/minimap never shift), currently-executing
   // nodes carry a blue wavefront ring, and ghost overlay nodes are hidden (they
   // never happened, so they have no place on the timeline).
-  const playback = useFlowPlayback(displayData.nodes as Node[]);
+  const playback = useFlowPlayback(displayData.nodes as Node[], displayData.edges);
   // The revealed/running sets are React state that changes ONLY on boundary
   // crossings (the 60fps clock lives in a ref inside the hook), so this remap —
   // and the diagram render it feeds — runs a handful of times per replay, not
@@ -454,14 +454,16 @@ const FlowDiagramContent = () => {
             selectable: false,
           };
         }
-        // Currently executing at the clock's position: wavefront ring (visible
-        // zoomed out) + in-card spinner and activity sweep (via replayRunning).
+        // Currently busy at the clock's position: wavefront ring (visible zoomed
+        // out) + in-card spinner and activity sweep (via replayRunning). Waiting
+        // = finished executing but its downstream delivery is still in flight;
+        // same indicators, annotated on the card as delivering.
         return playback.running.has(n.id)
           ? {
               ...n,
               className: `${n.className ?? ''} rounded-lg ring-2 ring-blue-400/60`,
               style: { ...n.style, ...fade, opacity: 1 },
-              data: { ...n.data, replayRunning: true },
+              data: { ...n.data, replayRunning: true, replayWaiting: playback.waiting.has(n.id) },
             }
           : { ...n, style: { ...n.style, ...fade, opacity: 1 } };
       });
@@ -473,7 +475,7 @@ const FlowDiagramContent = () => {
           : { ...e, style: { ...e.style, opacity: 0.04 }, animated: false }
       );
     return { nodes, edges };
-  }, [displayData, playback.active, playback.revealed, playback.running]);
+  }, [displayData, playback.active, playback.revealed, playback.running, playback.waiting]);
 
   const startReplay = () => {
     playback.start();

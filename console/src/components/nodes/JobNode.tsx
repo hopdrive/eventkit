@@ -22,6 +22,9 @@ export interface JobNodeData {
   updatedAt?: string;
   /** Replay: executing at the replay clock's position (spinner + activity sweep). */
   replayRunning?: boolean;
+  /** Replay: finished executing, but its downstream invocation(s) haven't started
+   *  yet — the write/webhook is still being delivered (debounce, event queue). */
+  replayWaiting?: boolean;
 }
 
 export const JobNode: React.FC<NodeProps<JobNodeData>> = ({ data, selected }) => {
@@ -71,11 +74,15 @@ export const JobNode: React.FC<NodeProps<JobNodeData>> = ({ data, selected }) =>
         </>
       }
       footer={
-        chains
-          ? `chains ${chainCount > 0 ? chainCount : 'a'} downstream invocation${chainCount === 1 ? '' : 's'} →`
-          : data.isSourceJob
-            ? 'its write triggered the next invocation →'
-            : undefined
+        data.replayWaiting ? (
+          <span className='text-blue-500 dark:text-blue-400' title='The job finished; its write/webhook is still being delivered to the next invocation (debounce, event queue).'>
+            delivering to downstream invocation…
+          </span>
+        ) : chains ? (
+          `chains ${chainCount > 0 ? chainCount : 'a'} downstream invocation${chainCount === 1 ? '' : 's'} →`
+        ) : data.isSourceJob ? (
+          'its write triggered the next invocation →'
+        ) : undefined
       }
       minWidthClass='min-w-[190px]'
     >
