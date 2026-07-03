@@ -2,9 +2,12 @@
 
 > **Status:** proven end to end on 2026-07-02 against a local Hasura (v2.26) with two
 > EventKit functions, a real mutation-driven chain, and a simulated vendor round trip.
-> The package changes that run relied on have shipped, along with the placement refactor
-> the proof motivated (ADR-039/040/041): the token codec lives in core, the Hasura source
-> owns inbound token discovery, loopGuard is generic, dashless trace ids validate, and a
+> Re-proven 2026-07-03 on the shipped ADR-039/040/041 API: same 8-invocation chain, one
+> correlation id, hop depth 1→2→3, `updated_by` null throughout, with correlation-id
+> validation ON (the dashless trace-id root now passes), plus a forced-halt run
+> (`haltAtDepth: 2`) that stopped the chain and left a queryable
+> `context_data.halted = { depth: 2, ceiling: 2 }` marker. The token codec lives in
+> core, the Hasura source owns inbound token discovery, loopGuard is generic, and a
 > halted chain is loud. The config snippets below show the current API.
 > The internal design memo for the vendor piece is
 > [planning/external-correlation-chaining.md](planning/external-correlation-chaining.md) (ADR-028).
