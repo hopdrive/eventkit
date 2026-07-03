@@ -1,8 +1,12 @@
 // Replay transport bar along the bottom edge of the flow canvas: play/pause, a
 // scrubbable timeline (in the run's own milliseconds), speed control, reveal
 // progress, and an exit button. Rendered only while replay mode is active.
+//
+// The bar runs its OWN rAF ticker to follow the clock ref while playing — the
+// 60fps updates re-render only this small component, never the diagram, so the
+// canvas animations (edge dashes, node spinners, activity sweeps) keep running.
 
-import React from 'react';
+import React, { useEffect, useReducer } from 'react';
 import { PlayIcon, PauseIcon, XMarkIcon, ArrowPathIcon } from '@heroicons/react/20/solid';
 import { formatDuration } from '../utils/formatDuration';
 import type { FlowPlayback } from '../hooks/useFlowPlayback';
@@ -14,7 +18,21 @@ interface FlowPlaybackBarProps {
 }
 
 const FlowPlaybackBar: React.FC<FlowPlaybackBarProps> = ({ playback, drawerOpen }) => {
-  const { playing, time, total, speed, revealed, totalCount } = playback;
+  const { playing, total, speed, revealed, totalCount } = playback;
+  const [, tick] = useReducer((x: number) => x + 1, 0);
+
+  useEffect(() => {
+    if (!playing) return;
+    let frame: number;
+    const loop = () => {
+      tick();
+      frame = requestAnimationFrame(loop);
+    };
+    frame = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(frame);
+  }, [playing]);
+
+  const time = playback.timeRef.current;
   const ended = time >= total;
 
   return (
@@ -55,7 +73,10 @@ const FlowPlaybackBar: React.FC<FlowPlaybackBarProps> = ({ playback, drawerOpen 
           max={total}
           step={Math.max(total / 500, 1)}
           value={time}
-          onChange={e => playback.seek(Number(e.target.value))}
+          onChange={e => {
+            playback.seek(Number(e.target.value));
+            tick(); // reflect the new position immediately even while paused
+          }}
           className='w-56 sm:w-72 h-1.5 cursor-pointer accent-blue-600'
           aria-label='Replay timeline'
         />

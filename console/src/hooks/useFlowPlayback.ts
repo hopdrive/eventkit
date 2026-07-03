@@ -3,13 +3,21 @@ import type { Node } from 'reactflow';
 
 // Chain replay clock. Every observed node carries created_at (ms precision) and a
 // duration, so the run can be replayed: a node is REVEALED when the clock passes
-// its start offset and RUNNING until the clock passes its end. `time` is measured
+// its start offset and RUNNING until the clock passes its end. Time is measured
 // in the run's own milliseconds (scrubber + labels speak real chain time); the
 // wall-clock mapping is normalized — 1× plays the WHOLE timeline in BASE_MS
 // regardless of real span, because raw wall-clock replay is useless at both
 // extremes (a 300ms chain flashes by; a 4-minute chain is unwatchable).
+//
+// PERF CONTRACT: the clock advances in a ref, NOT React state. An earlier version
+// setState'd the time 60×/s, which re-rendered the whole flow page (and rebuilt
+// the graph) every frame — starving the very CSS animations (edge dashes, node
+// spinners, activity sweeps) the replay exists to show. Now the diagram only
+// re-renders when a node crosses a reveal/running boundary; the transport bar
+// runs its own tiny rAF ticker to keep the scrubber moving.
 const BASE_MS = 10_000;
 const SPEEDS = [0.5, 1, 2, 4];
+const EMPTY = new Set<string>();
 
 const nodeDurationMs = (n: Node): number => {
   const d = n.data ?? {};
@@ -28,8 +36,10 @@ const nodeDurationMs = (n: Node): number => {
 export interface FlowPlayback {
   active: boolean;
   playing: boolean;
-  /** Position in REAL chain milliseconds (0..total). */
-  time: number;
+  /** Clock position in REAL chain milliseconds (0..total). A ref so per-frame
+   *  ticks never re-render the diagram; the transport bar reads it on its own
+   *  rAF ticker. */
+  timeRef: React.MutableRefObject<number>;
   /** Real chain span in milliseconds. */
   total: number;
   speed: number;
@@ -67,66 +77,93 @@ export const useFlowPlayback = (nodes: Node[]): FlowPlayback => {
   const [active, setActive] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const [time, setTime] = useState(0);
-  const lastFrameRef = useRef(0);
+  const timeRef = useRef(0);
+  const [sets, setSets] = useState<{ revealed: Set<string>; running: Set<string> }>({
+    revealed: EMPTY,
+    running: EMPTY,
+  });
+
+  const computeSets = useCallback(
+    (t: number) => {
+      const revealed = new Set<string>();
+      const running = new Set<string>();
+      for (const [id, o] of offsets) {
+        if (t >= o.start) {
+          revealed.add(id);
+          if (t < o.end) running.add(id);
+        }
+      }
+      return { revealed, running };
+    },
+    [offsets]
+  );
+
+  // Publish new sets ONLY on a boundary crossing. Size comparison is sound:
+  // revealed sets are threshold sets (equal size ⇒ same inter-start window ⇒
+  // same set), and within one window running membership only shrinks as ends
+  // pass, so equal sizes ⇒ equal nested sets.
+  const syncSets = useCallback(
+    (t: number) => {
+      const next = computeSets(t);
+      setSets(prev =>
+        prev.revealed.size === next.revealed.size && prev.running.size === next.running.size ? prev : next
+      );
+    },
+    [computeSets]
+  );
 
   useEffect(() => {
     if (!active || !playing) return;
     let frame: number;
-    lastFrameRef.current = performance.now();
+    let last = performance.now();
     const tick = (now: number) => {
       // Clamp the frame delta: rAF stops while the window is hidden/occluded, so
       // an unclamped delta would skip the replay to the end when the user tabs
       // back. Clamped, a rendering stall behaves like a pause instead.
-      const dt = Math.min(now - lastFrameRef.current, 100);
-      lastFrameRef.current = now;
-      setTime(t => {
-        const next = t + dt * speed * (total / BASE_MS);
-        if (next >= total) {
-          setPlaying(false);
-          return total;
-        }
-        return next;
-      });
+      const dt = Math.min(now - last, 100);
+      last = now;
+      const next = timeRef.current + dt * speed * (total / BASE_MS);
+      if (next >= total) {
+        timeRef.current = total;
+        syncSets(total);
+        setPlaying(false);
+        return;
+      }
+      timeRef.current = next;
+      syncSets(next);
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [active, playing, speed, total]);
-
-  const { revealed, running } = useMemo(() => {
-    const revealedSet = new Set<string>();
-    const runningSet = new Set<string>();
-    if (active) {
-      for (const [id, t] of offsets) {
-        if (time >= t.start) {
-          revealedSet.add(id);
-          if (time < t.end) runningSet.add(id);
-        }
-      }
-    }
-    return { revealed: revealedSet, running: runningSet };
-  }, [active, time, offsets]);
+  }, [active, playing, speed, total, syncSets]);
 
   const start = useCallback(() => {
-    setTime(0);
+    timeRef.current = 0;
+    syncSets(0);
     setActive(true);
     setPlaying(true);
-  }, []);
+  }, [syncSets]);
   const exit = useCallback(() => {
     setActive(false);
     setPlaying(false);
-    setTime(0);
+    timeRef.current = 0;
+    setSets({ revealed: EMPTY, running: EMPTY });
   }, []);
   const togglePlay = useCallback(() => {
     setPlaying(p => {
-      if (!p && time >= total) setTime(0); // play again from the top when ended
+      if (!p && timeRef.current >= total) {
+        timeRef.current = 0; // play again from the top when ended
+        syncSets(0);
+      }
       return !p;
     });
-  }, [time, total]);
+  }, [total, syncSets]);
   const seek = useCallback(
-    (ms: number) => setTime(Math.min(Math.max(ms, 0), total)),
-    [total]
+    (ms: number) => {
+      timeRef.current = Math.min(Math.max(ms, 0), total);
+      syncSets(timeRef.current);
+    },
+    [total, syncSets]
   );
   const cycleSpeed = useCallback(
     () => setSpeed(s => SPEEDS[(SPEEDS.indexOf(s) + 1) % SPEEDS.length]),
@@ -136,11 +173,11 @@ export const useFlowPlayback = (nodes: Node[]): FlowPlayback => {
   return {
     active,
     playing,
-    time,
+    timeRef,
     total,
     speed,
-    revealed,
-    running,
+    revealed: sets.revealed,
+    running: sets.running,
     totalCount,
     hasTimeline: totalCount > 0,
     start,

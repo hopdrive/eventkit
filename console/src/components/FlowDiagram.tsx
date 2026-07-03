@@ -36,6 +36,26 @@ import type { FlowDoc } from '../flowdoc/types';
 // EventNode/JobNode components); "Flag off-contract" rings observed nodes absent
 // from the doc (outline only).
 
+// Referentially-stable ReactFlow props: inline literals here would hand ReactFlow
+// a "changed" prop on every render and make it churn its internal edge/node state.
+const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
+const DEFAULT_EDGE_OPTIONS = {
+  type: 'default', // bezier curves for smooth connections
+  animated: false, // perf fix P6: per-edge marching-ants animation janks large chains
+  style: { strokeWidth: 2 },
+  markerEnd: {
+    type: MarkerType.ArrowClosed,
+    width: 20,
+    height: 20,
+  },
+};
+const minimapNodeColor = (node: Node) => {
+  if (node.type === 'invocation') return '#3b82f6';
+  if (node.type === 'event') return '#10b981';
+  if (node.type === 'job') return '#8b5cf6';
+  return '#6b7280';
+};
+
 // Inner component that uses ReactFlow hooks
 const FlowDiagramContent = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -109,10 +129,16 @@ const FlowDiagramContent = () => {
   });
 
   // Use the positioning hook to generate nodes and edges
-  // Combine the main invocation with its correlated invocations for recursive rendering
-  const invocations = data?.invocations_by_pk
-    ? [data.invocations_by_pk, ...(data.invocations_by_pk.correlated_invocations || [])]
-    : [];
+  // Combine the main invocation with its correlated invocations for recursive rendering.
+  // MUST be memoized: a fresh array every render would invalidate the layout memo and
+  // rebuild every node/edge object on every render of this component.
+  const invocations = useMemo(
+    () =>
+      data?.invocations_by_pk
+        ? [data.invocations_by_pk, ...(data.invocations_by_pk.correlated_invocations || [])]
+        : [],
+    [data]
+  );
   const { nodes: generatedNodes, edges: generatedEdges } = useFlowPositioning(invocations);
 
   // Compare: overlay this run's observed tree on the selected expected graph.
@@ -410,11 +436,11 @@ const FlowDiagramContent = () => {
   // nodes carry a blue wavefront ring, and ghost overlay nodes are hidden (they
   // never happened, so they have no place on the timeline).
   const playback = useFlowPlayback(displayData.nodes as Node[]);
-  // Reveal/running sets only change when the clock crosses a node boundary; keying
-  // the (113-node) remap on this signature keeps the 60fps rAF clock from
-  // re-rendering the whole canvas every frame. Sizes are a sound key: both sets'
-  // membership is monotonic between boundaries, so equal sizes ⇒ equal sets.
-  const playbackSig = playback.active ? `${playback.revealed.size}:${playback.running.size}` : 'off';
+  // The revealed/running sets are React state that changes ONLY on boundary
+  // crossings (the 60fps clock lives in a ref inside the hook), so this remap —
+  // and the diagram render it feeds — runs a handful of times per replay, not
+  // per frame. That keeps the canvas CSS animations (dashes/spinners/sweeps)
+  // alive while the replay plays.
   const canvasData = useMemo(() => {
     if (!playback.active) return displayData;
     const fade = { transition: 'opacity 300ms ease' };
@@ -447,8 +473,7 @@ const FlowDiagramContent = () => {
           : { ...e, style: { ...e.style, opacity: 0.04 }, animated: false }
       );
     return { nodes, edges };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayData, playback.active, playbackSig]);
+  }, [displayData, playback.active, playback.revealed, playback.running]);
 
   const startReplay = () => {
     playback.start();
@@ -638,34 +663,20 @@ const FlowDiagramContent = () => {
         onPaneClick={onPaneClick}
         nodeTypes={nodeTypes}
         connectionMode={ConnectionMode.Loose}
-        defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+        defaultViewport={DEFAULT_VIEWPORT}
         minZoom={0.1}
         maxZoom={2}
         attributionPosition="bottom-left"
         nodesDraggable={true}
         nodesConnectable={false}
         elementsSelectable={true}
-        defaultEdgeOptions={{
-          type: 'default', // Use bezier curves for smooth connections
-          animated: false, // perf fix P6: per-edge marching-ants animation janks large chains
-          style: { strokeWidth: 2 },
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            width: 20,
-            height: 20,
-          },
-        }}
+        defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
       >
         <Background gap={20} className='bg-gray-50 dark:bg-gray-900' />
         <Controls className='bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700' />
         <MiniMap
           className='bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700'
-          nodeColor={node => {
-            if (node.type === 'invocation') return '#3b82f6';
-            if (node.type === 'event') return '#10b981';
-            if (node.type === 'job') return '#8b5cf6';
-            return '#6b7280';
-          }}
+          nodeColor={minimapNodeColor}
         />
       </ReactFlow>
       )}
