@@ -10,3 +10,5 @@ coverage/
 /tmp/
 scripts/.smoke-tmp/
 docs/api/
+reports/
+.stryker-tmp/

@@ -1,0 +1,31 @@
+name: Mutation (nightly)
+
+# Mutation testing is a NIGHTLY, NON-GATING signal about test strength (ADR-036 /
+# testing-strategy.md §20). It never blocks a PR — stryker.config.json sets
+# thresholds.break: null, and this job is continue-on-error so a red run is
+# informational only. Scoped to the runtime/ + core/ backbone.
+on:
+  schedule:
+    - cron: '0 7 * * *' # 07:00 UTC nightly
+  workflow_dispatch:
+
+jobs:
+  stryker:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Mutation test (runtime + core)
+        run: npx stryker run
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          if-no-files-found: ignore

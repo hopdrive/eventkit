@@ -2,11 +2,17 @@
 // Ported from the legacy hasura-event-detector tracking-token.ts — which imports
 // nothing HopDrive-specific, proving the mechanism is generic. Separator and
 // correlation-id validation are config (ADR-024); HopDrive presets pin them.
+//
+// This is a pure, dependency-free core primitive (ADR-039.1). It is consumed by
+// `loopGuard`, `correlationResolver`, the Hasura sources, and (eventually) sdk-*
+// write helpers. It used to live inside the loop-guard plugin; `correlationResolver`
+// reaching across into `plugins/loop-guard/codec.js` for it was the tell that it
+// belonged in core.
 
 export interface TokenCodecConfig {
   /** Delimiter between parts. Legacy HopDrive uses `'|'`; core's default is `'.'`. */
   separator?: string;
-  /** When true, `isValid`/`parse` require the correlation part to be a UUID (legacy behavior). */
+  /** When true, `isValid`/`parse` require the correlation part to match `isCorrelationIdShape` (legacy behavior). */
   validateCorrelationId?: boolean;
 }
 
@@ -31,7 +37,21 @@ export interface TokenCodec {
   getHopDepth(token: string): number | null;
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// ADR-040: a correlation id is a canonical UUID (8-4-4-4-12) OR 128-bit dashless
+// hex (exactly 32 hex chars). Hasura `trace_context.trace_id` roots are 32-hex
+// dashless; UUID-only validation silently broke every trace-rooted token parse in
+// the live proof (the whole token got treated as a bare id, nesting tokens inside
+// tokens and losing sourceJobId/hop depth). One widened regex covers both shapes.
+const CORRELATION_ID_RE = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$/i;
+
+/**
+ * True when `value` is a string shaped like a correlation id: a canonical UUID
+ * (8-4-4-4-12) or 128-bit dashless hex (exactly 32 hex chars). Non-string inputs
+ * are rejected. No whitespace trimming — the value must match exactly.
+ */
+export function isCorrelationIdShape(value: unknown): value is string {
+  return typeof value === 'string' && CORRELATION_ID_RE.test(value);
+}
 
 export function createTokenCodec(config: TokenCodecConfig = {}): TokenCodec {
   const separator = config.separator ?? '.';
@@ -46,7 +66,7 @@ export function createTokenCodec(config: TokenCodecConfig = {}): TokenCodec {
     const parts = value.split(separator);
     if (parts.length < 2 || parts.length > 4) return false;
     if (!parts.every(p => p.length > 0)) return false;
-    if (validateCorrelationId && !UUID_RE.test(parts[1]!)) return false;
+    if (validateCorrelationId && !isCorrelationIdShape(parts[1]!)) return false;
     return true;
   };
 

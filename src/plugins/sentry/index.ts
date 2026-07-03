@@ -14,7 +14,7 @@ export interface SentryEvent {
   event_id: string;
   timestamp: number; // seconds since epoch
   platform: 'node';
-  level: 'error';
+  level: 'error' | 'warning';
   exception: { values: Array<{ type: string; value: string }> };
   tags: Record<string, string>;
   extra?: Record<string, unknown>;
@@ -81,7 +81,8 @@ export function sentry(config: SentryConfig = {}): EventKitPlugin {
         event_id: newEventId(),
         timestamp: Date.now() / 1000,
         platform: 'node',
-        level: 'error',
+        // ADR-041: a warnAtDepth early alarm routes at Sentry's warning level, not error.
+        level: ctx.severity === 'warn' ? 'warning' : 'error',
         exception: { values: [{ type: ctx.error.name, value: ctx.error.message }] },
         tags: {
           phase: ctx.phase,

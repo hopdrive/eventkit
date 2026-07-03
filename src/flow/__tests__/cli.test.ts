@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -79,5 +79,91 @@ describe('eventkit-flow CLI', () => {
     err = [];
     expect(await runCli(['generate'])).toBe(1);
     expect(err.join('')).toContain('Missing --kit');
+  });
+
+  it('coverage passes when every event has a detector-contract test, fails otherwise', async () => {
+    const dir = resolve(tmpdir(), `eventkit-cov-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    const testFile = resolve(dir, 'thing.contract.test.ts');
+    try {
+      // No test yet → the fixture's 'thing.happened' event is uncovered.
+      let code = await runCli(['coverage', '--kit', KIT, '--tests', dir]);
+      expect(code).toBe(1);
+      expect(err.join('')).toContain('thing.happened');
+
+      // Add a detector-contract test naming the event → covered.
+      writeFileSync(testFile, `detectorContract(src, mod, {}); // 'thing.happened'\n`, 'utf8');
+      out = [];
+      err = [];
+      code = await runCli(['coverage', '--kit', KIT, '--tests', dir]);
+      expect(code).toBe(0);
+      expect(out.join('')).toContain('every registered event has a detector-contract test');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('simulate prints the events that would fire for a fixture payload', async () => {
+    const payload = resolve(tmpdir(), `eventkit-sim-${process.pid}.json`);
+    try {
+      writeFileSync(payload, JSON.stringify({ anything: true }), 'utf8');
+      const code = await runCli(['simulate', '--kit', KIT, '--payload', payload]);
+      expect(code).toBe(0);
+      expect(out.join('')).toContain('Would fire');
+      expect(out.join('')).toContain('thing.happened');
+      expect(out.join('')).toContain('doThing');
+    } finally {
+      rmSync(payload, { force: true });
+    }
+  });
+
+  it('simulate errors (exit 1) when the payload fixture is missing', async () => {
+    const code = await runCli(['simulate', '--kit', KIT, '--payload', resolve(tmpdir(), 'nope-does-not-exist.json')]);
+    expect(code).toBe(1);
+    expect(err.join('')).toContain('not found');
+  });
+
+  it('simulate errors (exit 1) when --payload is omitted', async () => {
+    const code = await runCli(['simulate', '--kit', KIT]);
+    expect(code).toBe(1);
+    expect(err.join('')).toContain('requires --payload');
+  });
+
+  it('simulate errors (exit 1) on malformed JSON', async () => {
+    const payload = resolve(tmpdir(), `eventkit-sim-bad-${process.pid}.json`);
+    try {
+      writeFileSync(payload, '{ not: valid json', 'utf8');
+      const code = await runCli(['simulate', '--kit', KIT, '--payload', payload]);
+      expect(code).toBe(1);
+      expect(err.join('')).toContain('could not parse');
+    } finally {
+      rmSync(payload, { force: true });
+    }
+  });
+
+  it('simulate reports when no events would fire', async () => {
+    const kitNoFire = resolve(here, 'fixtures/kit-nofire.ts');
+    const payload = resolve(tmpdir(), `eventkit-sim-none-${process.pid}.json`);
+    try {
+      writeFileSync(payload, JSON.stringify({ x: 1 }), 'utf8');
+      const code = await runCli(['simulate', '--kit', kitNoFire, '--payload', payload]);
+      expect(code).toBe(0);
+      expect(out.join('')).toContain('No events would fire');
+    } finally {
+      rmSync(payload, { force: true });
+    }
+  });
+
+  it('simulate surfaces a detector crash on stderr (still exit 0)', async () => {
+    const kitCrash = resolve(here, 'fixtures/kit-crash.ts');
+    const payload = resolve(tmpdir(), `eventkit-sim-crash-${process.pid}.json`);
+    try {
+      writeFileSync(payload, JSON.stringify({ x: 1 }), 'utf8');
+      const code = await runCli(['simulate', '--kit', kitCrash, '--payload', payload]);
+      expect(code).toBe(0);
+      expect(err.join('')).toContain('detector threw');
+    } finally {
+      rmSync(payload, { force: true });
+    }
   });
 });

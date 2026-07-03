@@ -19,7 +19,7 @@ export interface SerializedError {
 }
 
 /** Phase in which an error surfaced, handed to a plugin's `onError`. */
-export type ErrorPhase = 'normalize' | 'detect' | 'handle' | 'job' | 'plugin';
+export type ErrorPhase = 'normalize' | 'detect' | 'handle' | 'job' | 'plugin' | 'chain-guard';
 
 /** Context accompanying an `onError` notification (§11.2). */
 export interface ErrorContext {
@@ -29,6 +29,12 @@ export interface ErrorContext {
   correlationId: string;
   eventName?: EventName;
   jobName?: JobName;
+  /**
+   * Absent means 'error' (a failure). `'warn'` marks a NON-FATAL early alarm
+   * (ADR-041 `warnAtDepth`): alerting backends may route it at a lower level and
+   * observability must NOT treat it as a record failure.
+   */
+  severity?: 'error' | 'warn';
 }
 
 const MAX_CAUSE_DEPTH = 8;
@@ -190,4 +196,64 @@ export class ActionError extends Error {
     if (code !== undefined) this.code = code;
     if (extensions !== undefined) this.extensions = extensions;
   }
+}
+
+// =============================================================================
+// Loop-halt error (ADR-041)
+// =============================================================================
+// A halted chain is a first-class, loud event. When the hop ceiling suppresses
+// dispatch, the runtime reports THIS branded error through `onError` (phase
+// 'chain-guard') so any alerting backend routes on the brand without bespoke
+// wiring; `warnAtDepth` reports the same error non-fatally (severity 'warn').
+// Brand-checked like ClientError (a registry Symbol survives bundled module copies).
+// The detail rides `.data` so the existing serializeError carries it into
+// SerializedError.data with zero extra wiring.
+const LOOP_DETECTED_ERROR_BRAND = Symbol.for('@hopdrive/eventkit/LoopDetectedError');
+
+/** The halted-chain detail carried on `LoopDetectedError.data` (and its readonly fields). */
+export interface LoopDetectedDetail {
+  correlationId: string;
+  depth: number;
+  ceiling: number;
+  serviceId: string;
+  sourceFunction?: string;
+}
+
+/**
+ * Thrown/reported when a chain's hop depth reaches its ceiling (`haltAtDepth`,
+ * ADR-034/041). Fields mirror `LoopDetectedDetail`; `.data` (a plain object) makes
+ * the detail survive `serializeError` into `SerializedError.data` untouched.
+ */
+export class LoopDetectedError extends Error {
+  override readonly name = 'LoopDetectedError';
+  readonly correlationId: string;
+  readonly depth: number;
+  readonly ceiling: number;
+  readonly serviceId: string;
+  readonly sourceFunction?: string;
+  readonly data: Record<string, unknown>;
+  constructor(message: string, detail: LoopDetectedDetail) {
+    super(message);
+    this.correlationId = detail.correlationId;
+    this.depth = detail.depth;
+    this.ceiling = detail.ceiling;
+    this.serviceId = detail.serviceId;
+    if (detail.sourceFunction !== undefined) this.sourceFunction = detail.sourceFunction;
+    this.data = { ...detail };
+    (this as unknown as Record<symbol, unknown>)[LOOP_DETECTED_ERROR_BRAND] = true;
+  }
+}
+
+/**
+ * True ONLY for a branded `LoopDetectedError` — even across bundled module copies
+ * (same cross-copy rationale as `isClientError`). `onError` subscribers route on
+ * this brand; note that `onError` receives the SERIALIZED error, so a subscriber
+ * inside the fan-out must brand-check the live throw, not the serialized copy.
+ */
+export function isLoopDetectedError(err: unknown): err is LoopDetectedError {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as Record<symbol, unknown>)[LOOP_DETECTED_ERROR_BRAND] === true
+  );
 }

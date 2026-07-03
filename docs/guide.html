@@ -1902,6 +1902,61 @@ events:
   </div>
 </section>
 
+<!-- ============ TESTING ============ -->
+<section id="testing">
+  <div class="wrap">
+    <div class="sec-head narrow">
+      <p class="eyebrow">How you test it</p>
+      <h2>Test your modules, not a mock of the runtime</h2>
+      <p class="sec-sub">The old way was mocking <code>run()</code> and <code>job()</code>, and those mocks drifted from the real thing until the tests were lying to you. So the test helpers ship in the package, at <code>@hopdrive/eventkit/testing</code>, and they run your modules through the <b>real</b> runtime. Same version as the code they test, so they can never skew. It&rsquo;s a versioned public surface, held to the same stability bar as everything else.</p>
+    </div>
+
+    <p style="font-size:14.5px;color:var(--muted);max-width:70ch;margin:0 0 22px;line-height:1.6">Think of a consumer&rsquo;s tests as four layers, widest at the bottom. Most of your tests are tiny detector checks. One snapshot pins each kit&rsquo;s shape. A handful of full runs prove the wiring. And CI keeps the flow doc honest. You lean on the first layer and barely touch the last.</p>
+
+    <div class="feats" style="grid-template-columns:repeat(2,1fr)">
+      <div class="feat">
+        <h3><span class="ic">◆</span> Detector contracts <span class="pico" style="margin-left:6px">most of your tests</span></h3>
+        <p>The predicate is where the bugs live, so this is where the volume goes. <code>detectorContract(source, module, { fires, suppresses })</code> runs a table of payloads through the real detector and asserts each verdict. For a <code>hasuraEvent</code> module it <b>auto-appends a MANUAL case</b> that must suppress, so a detector that forgot its operation guard and would re-fire on a console edit gets caught in every repo, for free.</p>
+        <span class="pico">detectorContract · hasuraInsert / hasuraUpdate / webhookRequest().signWith()</span>
+      </div>
+      <div class="feat">
+        <h3><span class="ic">◆</span> One flow snapshot per kit</h3>
+        <p>A kit&rsquo;s shape is declarative, so freeze it. <code>expectFlow(kit).event(&hellip;).hasJobs(&hellip;)</code> pins the specific structure you care about, and a <code>toFlowYaml(kit)</code> snapshot catches anything that changes. One of these per kit is plenty. It&rsquo;s the tripwire for &ldquo;someone added a job and didn&rsquo;t mean to.&rdquo;</p>
+        <span class="pico">expectFlow · toFlowYaml(kit)</span>
+      </div>
+      <div class="feat">
+        <h3><span class="ic">◆</span> A few full-kit runs</h3>
+        <p><code>testInvocation(kit, payload)</code> runs a real <code>handle()</code> and hands you back everything that happened: which detectors fired, each job&rsquo;s execution and output, the response, the logs, the observability records, and the hook sequence. You need only a few of these, for the paths that matter most. Build the payload with <code>hasuraInsert</code>, <code>hasuraUpdate</code>, or a signed <code>webhookRequest</code>.</p>
+        <span class="pico">testInvocation · recordingPlugin · memorySink · memoryBatchStore · capturedLogger</span>
+      </div>
+      <div class="feat">
+        <h3><span class="ic">◆</span> <code>eventkit-flow check</code> in CI</h3>
+        <p>The one gate. It regenerates the flow doc and fails if the committed file drifted. You wrote the doc once, CI keeps it true. And <code>simulateChain(&hellip;)</code> lets a test prove a two-hop chain rejoins its correlation id, so the reverse-integration handoff is covered without a vendor in the loop.</p>
+        <span class="pico">eventkit-flow check · simulateChain</span>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:28px">
+      <p class="eyebrow">What it reads like</p>
+<pre style="margin:0"><span class="k">import</span> { testInvocation, detectorContract, hasuraInsert } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/testing'</span>;
+<span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources'</span>;
+<span class="k">import</span> { appointmentReady } <span class="k">from</span> <span class="s">'./appointment.ready'</span>;
+
+<span class="c">// Layer 1 — the detector, over a table. The MANUAL suppress case is added for you.</span>
+<span class="k">await</span> detectorContract(hasuraEvent, appointmentReady, {
+  fires:      [hasuraInsert(<span class="s">'appointments'</span>, { status: <span class="s">'ready'</span> })],
+  suppresses: [hasuraInsert(<span class="s">'appointments'</span>, { status: <span class="s">'pending'</span> })],
+});
+
+<span class="c">// Layer 3 — a full run through the real kit.</span>
+<span class="k">const</span> t = <span class="k">await</span> testInvocation(kit, hasuraInsert(<span class="s">'appointments'</span>, { status: <span class="s">'ready'</span> }));
+expect(t.firedEvents).toEqual([<span class="s">'appointment.ready'</span>]);
+expect(t.job(<span class="s">'sendOfferSMS'</span>)?.status).toBe(<span class="s">'completed'</span>);</pre>
+      <p style="font-size:13px;color:var(--faint);margin:12px 0 0">Everything here drives the real runtime. No mock of <code>run()</code>, no stubbed <code>job()</code> shape. If the harness compiles against your kit, the kit is real.</p>
+    </div>
+  </div>
+</section>
+
 <!-- ============ API REFERENCE ============ -->
 <section class="tint" id="reference">
   <div class="wrap">

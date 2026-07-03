@@ -183,6 +183,9 @@ async function runOne<TResult>(
     ctx.trackingToken = trackingToken ?? defaultToken;
 
     if (signal.aborted) {
+      // Framework-level (invocation) log so the drop is visible in the log stream
+      // (onLog → Grafana), not only via onError — §11.3 onLog breadth.
+      invocation.log.warn(`Job '${jobName}' cancelled before start (invocation budget expired)`, { jobName, status: 'cancelled' });
       return finish(base, 'cancelled', { attempt, startedAt, start });
     }
 
@@ -205,6 +208,12 @@ async function runOne<TResult>(
       }
       const status: JobExecutionStatus =
         err instanceof JobTimeoutError ? 'timed_out' : signal.aborted ? 'cancelled' : 'failed';
+      // A timeout / budget cancellation is an invocation-level event, not just a job
+      // failure: surface it on the framework log stream (onLog → Grafana) so it's visible
+      // even when no onError-consuming plugin is registered (§11.3 onLog breadth).
+      if (status === 'timed_out' || status === 'cancelled') {
+        invocation.log.warn(`Job '${jobName}' ${status}`, { jobName, attempt, status });
+      }
       const isLastAttempt = attempt >= maxAttempts;
       const retryable = status === 'failed' && !isLastAttempt;
 

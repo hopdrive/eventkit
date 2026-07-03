@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "Mutation testing (testing-strategy.md §20). Runs NIGHTLY and is NON-GATING: `thresholds.break: null` means a low mutation score never fails the build — it's a signal about test strength, not a merge gate. Scoped to the runtime/ + core/ backbone, where surviving mutants matter most.",
+  "packageManager": "npm",
+  "testRunner": "vitest",
+  "reporters": ["progress", "clear-text", "html"],
+  "coverageAnalysis": "perTest",
+  "mutate": [
+    "src/core/**/*.ts",
+    "src/runtime/**/*.ts",
+    "!src/**/*.test.ts",
+    "!src/**/__tests__/**",
+    "!src/**/__type-tests__/**",
+    "!src/**/__examples__/**",
+    "!src/**/*.d.ts"
+  ],
+  "thresholds": { "high": 85, "low": 65, "break": null }
+}

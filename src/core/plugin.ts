@@ -106,7 +106,26 @@ export interface EventKitPlugin {
   formatRejection?(rejection: HandlerShortCircuit): unknown;
   /** Platform answers before jobs finish (background/202-early); see `PlatformAdapter.deferredResponse`. */
   deferredResponse?: boolean;
+  /**
+   * How the framework treats an unhandled PROCESSING crash (a detector or `prepare`
+   * throw — not a `resolve`/`respond` throw, which is a deliberate reply). A SOURCE may
+   * declare this to pick the retry contract that suits its transport (ADR-038):
+   *   - `'ack'` (framework default): the crash stays in `events[].error`, the invocation
+   *      still returns 200, and the transport does NOT retry. Right for Hasura event
+   *      triggers, where a poison row must not retry forever.
+   *   - `'signalRetry'`: the crash is escalated to a top-level `result.error` → 500, so
+   *      an at-least-once sender (a vendor webhook) retries. A `resolve`/`respond`
+   *      response, if one was produced, still wins (that reply is intentional).
+   * The webhook source defaults to `'signalRetry'`.
+   */
+  crashPolicy?: CrashPolicy;
 }
+
+/**
+ * How a source wants an unhandled detector/`prepare` crash to map to the transport's
+ * retry contract (ADR-038). See `EventKitPlugin.crashPolicy`.
+ */
+export type CrashPolicy = 'ack' | 'signalRetry';
 
 /**
  * A source adapter (§7). The distinguishing Shape-3 capabilities of a `'source'`

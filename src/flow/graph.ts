@@ -6,12 +6,20 @@
 //   • toFlowYaml(kit)   — the human-readable, diff-friendly committed document,
 //                         event-centric, with a @generated banner.
 // All three are pure: they run nothing on the kit but a read-only registry walk.
-import type { EventKit, FlowEdge, FlowNode, KitDescription } from '../core/index.js';
+import type { EventKit, FlowEdge, FlowNode, JobEffect, KitDescription, KitJobDescription } from '../core/index.js';
 import { toYaml } from './yaml.js';
 
 /** The structural snapshot of a built kit. */
 export function describeKit(kit: EventKit): KitDescription {
   return kit.describe();
+}
+
+/** Identify the kit's place in the org topology — reserved for a future cross-kit aggregator (ADR-037). */
+export interface FlowOrigin {
+  /** The repo this kit lives in (e.g. `'db-appointments'`). */
+  repo?: string;
+  /** The function/deployment this kit is the handler for (e.g. `'appointments-event'`). */
+  function?: string;
 }
 
 const SOURCE_ID = 'source';
@@ -20,15 +28,50 @@ const jobId = (event: string, job: string): string => `job:${event}:${job}`;
 const sideEffectId = (job: string, effect: string): string => `sideEffect:${job}:${effect}`;
 
 /**
+ * Shared node-id builders. Every producer of a flow graph — the generator here, and the
+ * proto-Compare check that overlays observed runtime records — MUST derive ids the same
+ * way, or the observed-vs-expected overlay won't line up (console-expected-flows.md §4).
+ */
+export const flowNodeId = {
+  source: SOURCE_ID,
+  event: eventId,
+  job: jobId,
+  sideEffect: sideEffectId,
+} as const;
+
+/** Stable label for a declared effect (`db-write:moves`, `api-call:uber`, or the bare type). */
+const effectLabel = (e: JobEffect): string => {
+  if (e.type === 'db-write' && typeof (e as { table?: unknown }).table === 'string') return `db-write:${(e as { table: string }).table}`;
+  if (e.type === 'api-call' && typeof (e as { vendor?: unknown }).vendor === 'string') return `api-call:${(e as { vendor: string }).vendor}`;
+  return String(e.type);
+};
+
+/** Read a job's declared effects from the `metadata.effects` array (ADR-037). */
+function jobEffects(j: KitJobDescription): JobEffect[] {
+  const raw = j.metadata?.['effects'];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((e): e is JobEffect => !!e && typeof e === 'object' && typeof (e as { type?: unknown }).type === 'string');
+}
+
+/**
  * A `{ nodes, edges }` graph in the manifest vocabulary: one `source` node, an
  * `event` node per registered event (edge source→event), a `job` node per job
- * (edge event→job), and a `sideEffect` node for any job declaring
- * `metadata.sideEffect` (edge job→sideEffect). Node ids are derived from
- * event/job names (never file paths), so they are stable across refactors (§14).
+ * (edge event→job), and a `sideEffect` node per declared effect (edge job→sideEffect).
+ * Node ids are derived from event/job names (never file paths), so they are stable
+ * across refactors (§14). Effects come from `metadata.effects` (`{type:'db-write',table}`
+ * / `{type:'api-call',vendor}` — ADR-037) or the legacy `metadata.sideEffect` string.
+ * Pass `origin` to stamp the source node with the reserved `repo`/`function` topology.
  */
-export function toFlowGraph(kit: EventKit): { nodes: FlowNode[]; edges: FlowEdge[] } {
+export function toFlowGraph(kit: EventKit, origin: FlowOrigin = {}): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const d = kit.describe();
-  const nodes: FlowNode[] = [{ id: SOURCE_ID, kind: 'source', sourceFunction: d.source.name }];
+  const sourceNode: FlowNode = { id: SOURCE_ID, kind: 'source', sourceFunction: d.source.name };
+  if (origin.repo !== undefined || origin.function !== undefined) {
+    sourceNode.metadata = {
+      ...(origin.repo !== undefined ? { repo: origin.repo } : {}),
+      ...(origin.function !== undefined ? { function: origin.function } : {}),
+    };
+  }
+  const nodes: FlowNode[] = [sourceNode];
   const edges: FlowEdge[] = [];
 
   for (const ev of d.events) {
@@ -44,16 +87,54 @@ export function toFlowGraph(kit: EventKit): { nodes: FlowNode[]; edges: FlowEdge
       // continueOnFailure:false marks a job the run treats as required (stops the batch).
       edges.push(j.continueOnFailure === false ? { from: evId, to: jId, required: true } : { from: evId, to: jId });
 
-      const effect = j.metadata?.['sideEffect'];
-      if (typeof effect === 'string' && effect) {
-        const seId = sideEffectId(j.name, effect);
-        nodes.push({ id: seId, kind: 'sideEffect', metadata: { sideEffect: effect } });
+      // New structured effects (ADR-037) → node metadata { effect }.
+      for (const effect of jobEffects(j)) {
+        const seId = sideEffectId(j.name, effectLabel(effect));
+        nodes.push({ id: seId, kind: 'sideEffect', metadata: { effect } });
+        edges.push({ from: jId, to: seId });
+      }
+      // Legacy `metadata.sideEffect` string → node metadata { sideEffect } (unchanged shape).
+      const legacy = j.metadata?.['sideEffect'];
+      if (typeof legacy === 'string' && legacy) {
+        const seId = sideEffectId(j.name, legacy);
+        nodes.push({ id: seId, kind: 'sideEffect', metadata: { sideEffect: legacy } });
         edges.push({ from: jId, to: seId });
       }
     }
   }
 
   return { nodes, edges };
+}
+
+/**
+ * A Mermaid `flowchart` of the kit's structure (source → event → job → sideEffect),
+ * diff-readable in a PR and renderable inline in GitHub/docs. Node ids are sanitized
+ * (Mermaid-safe), labels carry the human name. Not a full HTML emitter (out of scope).
+ */
+export function toFlowMermaid(kit: EventKit, origin: FlowOrigin = {}): string {
+  const { nodes, edges } = toFlowGraph(kit, origin);
+  const safe = (id: string): string => 'n_' + id.replace(/[^A-Za-z0-9_]/g, '_');
+  const esc = (s: string): string => s.replace(/"/g, '&quot;');
+  // node shape by kind: source [( )], event [ ], job ( ), sideEffect { }
+  const effectLabelOf = (n: FlowNode): string | undefined => {
+    if (n.metadata?.['effect']) return effectLabel(n.metadata['effect'] as JobEffect);
+    if (typeof n.metadata?.['sideEffect'] === 'string') return n.metadata['sideEffect'] as string;
+    return undefined;
+  };
+  const shape = (n: FlowNode): string => {
+    const label = esc(n.eventName ?? n.jobName ?? effectLabelOf(n) ?? n.sourceFunction ?? n.id);
+    switch (n.kind) {
+      case 'source': return `${safe(n.id)}([${label}])`;
+      case 'event': return `${safe(n.id)}["${label}"]`;
+      case 'job': return `${safe(n.id)}("${label}")`;
+      case 'sideEffect': return `${safe(n.id)}{{"${label}"}}`;
+      default: return `${safe(n.id)}["${label}"]`;
+    }
+  };
+  const lines = ['flowchart TD'];
+  for (const n of nodes) lines.push(`  ${shape(n)}`);
+  for (const e of edges) lines.push(`  ${safe(e.from)} --> ${safe(e.to)}`);
+  return lines.join('\n') + '\n';
 }
 
 const BANNER = [
@@ -70,12 +151,15 @@ const BANNER = [
  * The committed, human-readable flow document. Event-centric and deterministic so
  * a PR diff reads naturally. Pass a `title` to label the doc (e.g. the function name).
  */
-export function toFlowYaml(kit: EventKit, opts: { title?: string } = {}): string {
+export function toFlowYaml(kit: EventKit, opts: { title?: string } & FlowOrigin = {}): string {
   const d = kit.describe();
 
   const kitBlock: Record<string, unknown> = {
     source: { name: d.source.name, type: d.source.type },
   };
+  // Reserved topology (ADR-037) — present only when supplied, so existing docs don't churn.
+  if (opts.repo !== undefined) kitBlock['repo'] = opts.repo;
+  if (opts.function !== undefined) kitBlock['function'] = opts.function;
   if (d.platform) kitBlock['platform'] = d.platform;
   kitBlock['plugins'] = d.plugins;
 

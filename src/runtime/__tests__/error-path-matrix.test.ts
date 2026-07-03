@@ -228,3 +228,89 @@ describe('error-path chaos matrix (ADR-033)', () => {
     });
   }
 });
+
+// =============================================================================
+// Crash-policy: 'signalRetry' (ADR-038)
+// =============================================================================
+// The matrix above pins the framework DEFAULT ('ack'): a detector/prepare crash
+// stays in events[].error, the invocation still returns 200 (result.error unset),
+// and an at-least-once sender does NOT retry. A source that carries at-least-once
+// semantics (webhook) flips crashPolicy to 'signalRetry': the SAME processing crash
+// is escalated to a top-level framework error → 500 → the sender retries, AND a loud
+// error log is emitted (Grafana visibility) on top of the onError route (Sentry).
+// A deliberate resolve/respond reply is NOT a crash — it still maps to its client
+// status. A job failure is not a processing crash either — it stays a 200.
+describe("crash-policy 'signalRetry' (ADR-038)", () => {
+  const signalRetrySource = () => {
+    const src = fakeSource();
+    src.crashPolicy = 'signalRetry';
+    return src;
+  };
+
+  const hasEscalationLog = (recorder: RecordingPlugin) =>
+    recorder.calls.some(
+      c => c.hook === 'onLog' && (c.args[0] as { level?: string; message?: string })?.level === 'error'
+        && String((c.args[0] as { message?: string })?.message ?? '').includes('escalated'),
+    );
+
+  it('detector crash → framework 500 (ok:false, result.error set) + loud error log', async () => {
+    const recorder = recordingPlugin();
+    const mod = defineEvent({ name: 'test.detcrash', detector: () => { throw BOOM; }, jobs: [job(() => 'x', { name: 'j' })] });
+    const kit = createEventKit(signalRetrySource()).use(recorder.plugin).registerEvents([mod]);
+
+    const result = await kit.handle({ hello: 'world' });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBeDefined();
+    expect(result.resolved?.error).toBeUndefined();
+    expect(recorder.errors.length).toBeGreaterThan(0); // onError (Sentry) still routed
+    expect(hasEscalationLog(recorder)).toBe(true); // loud log (Grafana)
+  });
+
+  it('prepare crash → framework 500 (ok:false, result.error set)', async () => {
+    const recorder = recordingPlugin();
+    const mod = defineEvent({
+      name: 'test.prepcrash',
+      detector: () => true,
+      prepare: () => { throw BOOM; },
+      jobs: [job(() => 'x', { name: 'j' })],
+    });
+    const kit = createEventKit(signalRetrySource()).use(recorder.plugin).registerEvents([mod]);
+
+    const result = await kit.handle({ hello: 'world' });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBeDefined();
+    expect(result.resolved?.error).toBeUndefined();
+    expect(hasEscalationLog(recorder)).toBe(true);
+  });
+
+  it('resolve throw is NOT escalated — the deliberate client reply still wins', async () => {
+    const recorder = recordingPlugin();
+    const mod = defineEvent({
+      name: 'test.resolvecrash',
+      detector: () => true,
+      jobs: [job(() => 'ok', { name: 'marker' })],
+      resolve: () => { throw new ClientError(422, 'nope'); },
+    });
+    const kit = createEventKit(signalRetrySource()).use(recorder.plugin).registerEvents([mod]);
+
+    const result = await kit.handle({ hello: 'world' });
+
+    expect(result.error).toBeUndefined(); // not a framework 500
+    expect(result.resolved?.error).toBeDefined(); // client status still mapped
+    expect(hasEscalationLog(recorder)).toBe(false);
+  });
+
+  it('job failure is NOT escalated — a business failure stays a 200 (own retry)', async () => {
+    const recorder = recordingPlugin();
+    const mod = defineEvent({ name: 'test.jobcrash', detector: () => true, jobs: [job(() => { throw BOOM; }, { name: 'j' })] });
+    const kit = createEventKit(signalRetrySource()).use(recorder.plugin).registerEvents([mod]);
+
+    const result = await kit.handle({ hello: 'world' });
+
+    expect(result.ok).toBe(false); // job failed
+    expect(result.error).toBeUndefined(); // but not a framework 500
+    expect(hasEscalationLog(recorder)).toBe(false);
+  });
+});
