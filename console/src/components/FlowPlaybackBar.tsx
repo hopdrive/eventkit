@@ -6,10 +6,15 @@
 // 60fps updates re-render only this small component, never the diagram, so the
 // canvas animations (edge dashes, node spinners, activity sweeps) keep running.
 
-import React, { useEffect, useReducer } from 'react';
-import { PlayIcon, PauseIcon, XMarkIcon, ArrowPathIcon } from '@heroicons/react/20/solid';
+import React, { useEffect, useReducer, useState } from 'react';
+import { PlayIcon, PauseIcon, XMarkIcon, ArrowPathIcon, MinusIcon, PlusIcon } from '@heroicons/react/20/solid';
 import { formatDuration } from '../utils/formatDuration';
-import type { FlowPlayback } from '../hooks/useFlowPlayback';
+import { BASE_MS, MIN_SPEED, MAX_SPEED, type FlowPlayback } from '../hooks/useFlowPlayback';
+
+// Preset chips lean slow: chains execute in millisecond bursts, so the useful
+// range is mostly below 1× (1× = whole chain in ~10s of wall time).
+const SPEED_PRESETS = [0.05, 0.1, 0.25, 0.5, 1, 2, 4];
+const fmtSpeed = (s: number) => `${Number(s.toFixed(2))}×`;
 
 interface FlowPlaybackBarProps {
   playback: FlowPlayback;
@@ -20,6 +25,7 @@ interface FlowPlaybackBarProps {
 const FlowPlaybackBar: React.FC<FlowPlaybackBarProps> = ({ playback, drawerOpen }) => {
   const { playing, total, speed, revealed, totalCount } = playback;
   const [, tick] = useReducer((x: number) => x + 1, 0);
+  const [speedOpen, setSpeedOpen] = useState(false);
 
   useEffect(() => {
     if (!playing) return;
@@ -85,13 +91,80 @@ const FlowPlaybackBar: React.FC<FlowPlaybackBarProps> = ({ playback, drawerOpen 
           {formatDuration(Math.round(time))} <span className='text-gray-400 dark:text-gray-500'>/ {formatDuration(Math.round(total))}</span>
         </span>
 
-        <button
-          onClick={playback.cycleSpeed}
-          className='px-1.5 py-0.5 rounded text-xs font-medium tabular-nums text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
-          title='Playback speed (1× replays the whole run in ~10s)'
-        >
-          {speed}×
-        </button>
+        {/* Speed control: button opens a popover with the current value, a
+            fine-grained −/slider/+ row, and preset chips. */}
+        <div className='relative'>
+          <button
+            onClick={() => setSpeedOpen(o => !o)}
+            className={`px-1.5 py-0.5 rounded text-xs font-medium tabular-nums border ${
+              speedOpen
+                ? 'text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-500/60 bg-blue-50 dark:bg-blue-500/10'
+                : 'text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+            title='Playback speed (1× replays the whole run in ~10s)'
+          >
+            {fmtSpeed(speed)}
+          </button>
+
+          {speedOpen && (
+            <>
+              {/* click-away catcher */}
+              <div className='fixed inset-0 z-40' onClick={() => setSpeedOpen(false)} />
+              <div className='absolute bottom-full right-0 mb-2 z-50 w-72 rounded-lg bg-white/95 dark:bg-gray-800/95 border border-gray-200 dark:border-gray-700 shadow-lg backdrop-blur p-3'>
+                <p className='text-[10px] font-semibold tracking-wider uppercase text-gray-400 dark:text-gray-500'>
+                  Playback speed
+                </p>
+                <p className='mt-1 text-center text-lg font-semibold tabular-nums text-gray-900 dark:text-white'>
+                  {fmtSpeed(speed)}
+                </p>
+                <div className='mt-2 flex items-center gap-2'>
+                  <button
+                    onClick={() => playback.setSpeed(speed - 0.05)}
+                    className='p-1 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                    title='Slower'
+                  >
+                    <MinusIcon className='h-4 w-4' />
+                  </button>
+                  <input
+                    type='range'
+                    min={MIN_SPEED}
+                    max={MAX_SPEED}
+                    step={0.05}
+                    value={speed}
+                    onChange={e => playback.setSpeed(Number(e.target.value))}
+                    className='flex-1 h-1.5 cursor-pointer accent-blue-600'
+                    aria-label='Playback speed'
+                  />
+                  <button
+                    onClick={() => playback.setSpeed(speed + 0.05)}
+                    className='p-1 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                    title='Faster'
+                  >
+                    <PlusIcon className='h-4 w-4' />
+                  </button>
+                </div>
+                <div className='mt-3 flex flex-wrap gap-1.5 justify-center'>
+                  {SPEED_PRESETS.map(p => (
+                    <button
+                      key={p}
+                      onClick={() => playback.setSpeed(p)}
+                      className={`px-2 py-0.5 rounded-full text-xs font-medium tabular-nums ${
+                        speed === p
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                      }`}
+                    >
+                      {fmtSpeed(p)}
+                    </button>
+                  ))}
+                </div>
+                <p className='mt-2 text-center text-[10px] text-gray-400 dark:text-gray-500 tabular-nums'>
+                  whole run in {formatDuration(Math.round(BASE_MS / speed))} of wall time
+                </p>
+              </div>
+            </>
+          )}
+        </div>
 
         <span
           className='text-[11px] text-gray-400 dark:text-gray-500 tabular-nums whitespace-nowrap'

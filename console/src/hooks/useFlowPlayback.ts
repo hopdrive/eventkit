@@ -15,8 +15,12 @@ import type { Edge, Node } from 'reactflow';
 // spinners, activity sweeps) the replay exists to show. Now the diagram only
 // re-renders when a node crosses a reveal/running boundary; the transport bar
 // runs its own tiny rAF ticker to keep the scrubber moving.
-const BASE_MS = 10_000;
-const SPEEDS = [0.5, 1, 2, 4];
+export const BASE_MS = 10_000;
+// Chains execute in ms bursts, so slow-motion is the primary use: default to
+// 0.25× (whole chain in ~40s) and allow down to 0.05× for frame-by-frame study.
+const DEFAULT_SPEED = 0.25;
+export const MIN_SPEED = 0.05;
+export const MAX_SPEED = 4;
 const EMPTY = new Set<string>();
 
 const nodeDurationMs = (n: Node): number => {
@@ -55,7 +59,7 @@ export interface FlowPlayback {
   exit: () => void;
   togglePlay: () => void;
   seek: (ms: number) => void;
-  cycleSpeed: () => void;
+  setSpeed: (s: number) => void;
 }
 
 export const useFlowPlayback = (nodes: Node[], edges: Edge[]): FlowPlayback => {
@@ -92,7 +96,7 @@ export const useFlowPlayback = (nodes: Node[], edges: Edge[]): FlowPlayback => {
 
   const [active, setActive] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(1);
+  const [speed, setSpeedState] = useState(DEFAULT_SPEED);
   const timeRef = useRef(0);
   const [sets, setSets] = useState<{ revealed: Set<string>; running: Set<string>; waiting: Set<string> }>({
     revealed: EMPTY,
@@ -191,8 +195,8 @@ export const useFlowPlayback = (nodes: Node[], edges: Edge[]): FlowPlayback => {
     },
     [total, syncSets]
   );
-  const cycleSpeed = useCallback(
-    () => setSpeed(s => SPEEDS[(SPEEDS.indexOf(s) + 1) % SPEEDS.length]),
+  const setSpeed = useCallback(
+    (s: number) => setSpeedState(Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(s * 100) / 100))),
     []
   );
 
@@ -211,7 +215,7 @@ export const useFlowPlayback = (nodes: Node[], edges: Edge[]): FlowPlayback => {
     exit,
     togglePlay,
     seek,
-    cycleSpeed,
+    setSpeed,
   };
 };
 
