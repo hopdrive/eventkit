@@ -6,9 +6,9 @@ import { Node, Edge, MarkerType } from 'reactflow';
 // vertical room per node, so nothing can overlap regardless of fan-out shape.
 const HORIZONTAL_SPACING = 450; // space between node columns
 const NODE_H: Record<'invocation' | 'event' | 'job', number> = {
-  invocation: 124,
-  event: 92,
-  job: 88,
+  invocation: 84,
+  event: 84,
+  job: 102, // chained jobs carry a footer line
 };
 const V_GAP = 48; // even, consistent padding between vertically adjacent nodes
 const ROOT_GAP = 140; // extra separation between independent root chains
