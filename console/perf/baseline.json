@@ -1,0 +1,239 @@
+{
+  "date": "2026-07-02T12:14:44.742Z",
+  "gitSha": "6e3c629",
+  "appUrl": "http://localhost:4173",
+  "seedCounts": {
+    "invocations": 200000,
+    "event_executions": 2799564,
+    "job_executions": 798904
+  },
+  "throttle": {
+    "cpu": "4x slowdown",
+    "network": "latency=40ms, download=1.6Mbps, upload=0.75Mbps (Fast-3G-ish)"
+  },
+  "scenarios": [
+    {
+      "name": "cold-load-overview",
+      "runs": [
+        {
+          "ms": 4696.493708,
+          "gqlCount": 8,
+          "bytes": 98215
+        },
+        {
+          "ms": 4607.276375,
+          "gqlCount": 8,
+          "bytes": 98118
+        },
+        {
+          "ms": 4736.082250000001,
+          "gqlCount": 8,
+          "bytes": 98082
+        }
+      ],
+      "medianMs": 4696.493708,
+      "medianGqlCount": 8,
+      "medianBytes": 98118
+    },
+    {
+      "name": "cold-load-invocations",
+      "runs": [
+        {
+          "ms": 2443.8291670000017,
+          "gqlCount": 6,
+          "bytes": 8589
+        },
+        {
+          "ms": 2435.2880829999995,
+          "gqlCount": 6,
+          "bytes": 8584
+        },
+        {
+          "ms": 2445.204125,
+          "gqlCount": 6,
+          "bytes": 8584
+        }
+      ],
+      "medianMs": 2443.8291670000017,
+      "medianGqlCount": 6,
+      "medianBytes": 8584
+    },
+    {
+      "name": "search-keystrokes",
+      "runs": [
+        {
+          "ms": 4967.350375000002,
+          "gqlCount": 6,
+          "bytes": 9785,
+          "note": "gqlCount = requests fired during typing (debounce metric)"
+        },
+        {
+          "ms": 3900.735708,
+          "gqlCount": 6,
+          "bytes": 9747,
+          "note": "gqlCount = requests fired during typing (debounce metric)"
+        },
+        {
+          "ms": 3846.0580829999963,
+          "gqlCount": 6,
+          "bytes": 9747,
+          "note": "gqlCount = requests fired during typing (debounce metric)"
+        }
+      ],
+      "medianMs": 3900.735708,
+      "medianGqlCount": 6,
+      "medianBytes": 9747,
+      "note": "gqlCount = requests fired during typing (debounce metric)"
+    },
+    {
+      "name": "search-correlation",
+      "runs": [
+        {
+          "ms": 4780.692041999995,
+          "gqlCount": 6,
+          "bytes": 1235
+        },
+        {
+          "ms": 3907.2831249999945,
+          "gqlCount": 6,
+          "bytes": 1251
+        },
+        {
+          "ms": 3902.108666,
+          "gqlCount": 6,
+          "bytes": 1228
+        }
+      ],
+      "medianMs": 3907.2831249999945,
+      "medianGqlCount": 6,
+      "medianBytes": 1235
+    },
+    {
+      "name": "facet-status-failed",
+      "runs": [
+        {
+          "ms": 110.01925000001211,
+          "gqlCount": 0,
+          "bytes": 0,
+          "note": "client-side filter over the already-fetched page (P1/U3 — no server round trip today)"
+        },
+        {
+          "ms": 108.70266699999047,
+          "gqlCount": 0,
+          "bytes": 0,
+          "note": "client-side filter over the already-fetched page (P1/U3 — no server round trip today)"
+        },
+        {
+          "ms": 109.10204199999862,
+          "gqlCount": 0,
+          "bytes": 0,
+          "note": "client-side filter over the already-fetched page (P1/U3 — no server round trip today)"
+        }
+      ],
+      "medianMs": 109.10204199999862,
+      "medianGqlCount": 0,
+      "medianBytes": 0,
+      "note": "client-side filter over the already-fetched page (P1/U3 — no server round trip today)"
+    },
+    {
+      "name": "paginate",
+      "runs": [
+        {
+          "ms": 206.13791700000002,
+          "gqlCount": 0,
+          "bytes": 0,
+          "note": "client-side pagination over the already-fetched page"
+        },
+        {
+          "ms": 216.03325000000768,
+          "gqlCount": 0,
+          "bytes": 0,
+          "note": "client-side pagination over the already-fetched page"
+        },
+        {
+          "ms": 205.53187500000058,
+          "gqlCount": 0,
+          "bytes": 0,
+          "note": "client-side pagination over the already-fetched page"
+        }
+      ],
+      "medianMs": 206.13791700000002,
+      "medianGqlCount": 0,
+      "medianBytes": 0,
+      "note": "client-side pagination over the already-fetched page"
+    },
+    {
+      "name": "drawer-open",
+      "runs": [
+        {
+          "ms": 152.1264999999985,
+          "gqlCount": 0,
+          "bytes": 0
+        },
+        {
+          "ms": 166.6748329999973,
+          "gqlCount": 0,
+          "bytes": 0
+        },
+        {
+          "ms": 151.11420799999905,
+          "gqlCount": 0,
+          "bytes": 0
+        }
+      ],
+      "medianMs": 152.1264999999985,
+      "medianGqlCount": 0,
+      "medianBytes": 0
+    },
+    {
+      "name": "flow-render",
+      "runs": [
+        {
+          "ms": 2518.9580840000126,
+          "gqlCount": 4,
+          "bytes": 6889
+        },
+        {
+          "ms": 2514.3042080000014,
+          "gqlCount": 4,
+          "bytes": 6885
+        },
+        {
+          "ms": 2553.1421249999985,
+          "gqlCount": 4,
+          "bytes": 6885
+        }
+      ],
+      "medianMs": 2518.9580840000126,
+      "medianGqlCount": 4,
+      "medianBytes": 6885
+    },
+    {
+      "name": "hidden-tab-poll",
+      "runs": [
+        {
+          "ms": 30000,
+          "gqlCount": 2,
+          "bytes": 157,
+          "note": "gqlCount = GraphQL requests fired during a 30s emulated-hidden window (target: 0)"
+        },
+        {
+          "ms": 30000,
+          "gqlCount": 2,
+          "bytes": 157,
+          "note": "gqlCount = GraphQL requests fired during a 30s emulated-hidden window (target: 0)"
+        },
+        {
+          "ms": 30000,
+          "gqlCount": 2,
+          "bytes": 180,
+          "note": "gqlCount = GraphQL requests fired during a 30s emulated-hidden window (target: 0)"
+        }
+      ],
+      "medianMs": 30000,
+      "medianGqlCount": 2,
+      "medianBytes": 157,
+      "note": "gqlCount = GraphQL requests fired during a 30s emulated-hidden window (target: 0)"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+# Bundled DEMO flow doc for the EventKit Console (matches the local perf-seed's
+# event/job names so Compare mode has real observed data to overlay).
+# Real consumer repos commit these via `eventkit-flow generate` (ADR-032).
+generator: "@hopdrive/eventkit/flow"
+schema: 1
+title: event-handlers (demo)
+kit:
+  source:
+    name: source-hasura-event
+    type: database
+  platform: platform-netlify
+  plugins: [loop-guard, observability]
+events:
+  - name: move.pickup.started
+    description: Driver began the pickup leg
+    jobs:
+      - name: runAR
+      - name: runARV2
+        retries: 2
+      - name: publishGenericWebhook
+        metadata:
+          sideEffect: partner-webhook
+      - name: publishEventLog
+  - name: move.pickup.successful
+    jobs:
+      - name: runAR
+      - name: publishGenericWebhook
+        metadata:
+          sideEffect: partner-webhook
+  - name: move.delivery.successful
+    jobs:
+      - name: runAR
+      - name: runARV2
+      - name: runDriverPay
+  - name: move.cancel.succeeded
+    jobs:
+      - name: publishGenericWebhook
+        metadata:
+          sideEffect: partner-webhook
+      - name: publishEventLog
+  - name: appointment.ready
+    description: Appointment ready for driver offers
+    jobs:
+      - name: sendOfferSMS
+        metadata:
+          sideEffect: twilio-sms
+      - name: sendAppointmentOfferedEmailToOrg
+  - name: move.driver-actionable
+    description: Deliberately-never-seeded event — demonstrates expected_missing
+    jobs:
+      - name: sendDriverSilentPushNotification
+        metadata:
+          sideEffect: push-notification

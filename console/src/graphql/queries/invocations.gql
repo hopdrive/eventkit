@@ -1,0 +1,183 @@
+# Slim server-side list query (perf fix P1/P5 — see docs/planning/console-migration-plan.md §4.3).
+# No source_event_payload (was ~6KB/row → 7MB per page load) and no per-row aggregate
+# sub-selects: the counters are the denormalized invocation columns the plugins already
+# write. Detected event names stay — selective join via the (invocation_id) index.
+# Pagination, sorting, facets, and search all arrive server-side through $where/$order_by.
+query InvocationsList(
+  $limit: Int = 50
+  $offset: Int = 0
+  $where: invocations_bool_exp = {}
+  $order_by: [invocations_order_by!] = { created_at: desc }
+) {
+  invocations(limit: $limit, offset: $offset, where: $where, order_by: $order_by) {
+    id
+    created_at
+    source_function
+    source_table
+    source_operation
+    source_system
+    source_job_id
+    correlation_id
+    source_user_email
+    total_duration_ms
+    events_detected_count
+    total_jobs_run
+    total_jobs_succeeded
+    total_jobs_failed
+    status
+    error_message
+    event_executions(where: { detected: { _eq: true } }, limit: 6) {
+      id
+      event_name
+    }
+  }
+
+}
+
+# Count split from the rows query (perf round 3): an exact COUNT over a broad search
+# match (e.g. 45k rows) costs seconds, while the LIMIT-50 rows return in <1s. The
+# table renders rows immediately and the count streams in when this resolves.
+query InvocationsCount($where: invocations_bool_exp = {}) {
+  invocations_aggregate(where: $where) {
+    aggregate {
+      count
+    }
+  }
+}
+
+query InvocationDetail($id: uuid!) {
+  invocations_by_pk(id: $id) {
+    id
+    created_at
+    updated_at
+    correlation_id
+    source_function
+    source_table
+    source_operation
+    source_system
+    source_type
+    source_event_id
+    source_event_payload
+    source_event_time
+    source_user_email
+    source_user_role
+    total_duration_ms
+    events_detected_count
+    total_jobs_run
+    total_jobs_succeeded
+    total_jobs_failed
+    auto_load_modules
+    event_modules_directory
+    status
+    error_message
+    error_stack
+    context_data
+
+    event_executions {
+      id
+      created_at
+      updated_at
+      correlation_id
+      event_name
+      event_module_path
+      detected
+      detection_duration_ms
+      detection_error
+      detection_error_stack
+      handler_duration_ms
+      handler_error
+      handler_error_stack
+      jobs_count
+      jobs_succeeded
+      jobs_failed
+      status
+
+      job_executions {
+        id
+        created_at
+        updated_at
+        correlation_id
+        job_name
+        job_function_name
+        job_options
+        duration_ms
+        status
+        result
+        error_message
+        error_stack
+      }
+    }
+  }
+}
+
+# Grouped search (perf fix P2/P3 + UX U1 — plan §4.1). Five perspectives, every
+# predicate on an indexed column; the JSONB payload-cast scan is GONE. Record
+# (table:id) search returns via the source_record_id column (plan §6.2, Phase C5);
+# until then table:id input matches source_table + the correlation/event paths.
+# $exactCorrelation carries the raw term for correlation-id equality when the
+# input looks like one; $prefix is "term%" (btree-friendly); $infix is "%term%".
+query GroupedSearch(
+  $exactCorrelation: String!
+  $prefix: String!
+  $infix: String!
+  $isCorrelationLike: Boolean!
+) {
+  correlation_matches: invocations(
+    where: { correlation_id: { _eq: $exactCorrelation } }
+    order_by: { created_at: desc }
+    limit: 5
+  ) @include(if: $isCorrelationLike) {
+    id
+    correlation_id
+    source_function
+    created_at
+    status
+    events_detected_count
+  }
+
+  function_matches: invocations(
+    where: {
+      _or: [
+        { source_function: { _ilike: $infix } }
+        { source_user_email: { _ilike: $prefix } }
+      ]
+    }
+    order_by: { created_at: desc }
+    limit: 5
+  ) {
+    id
+    correlation_id
+    source_function
+    source_user_email
+    created_at
+    status
+    events_detected_count
+  }
+
+  event_matches: event_executions(
+    where: { event_name: { _ilike: $infix }, detected: { _eq: true } }
+    order_by: { created_at: desc }
+    limit: 6
+  ) {
+    id
+    event_name
+    correlation_id
+    invocation_id
+    created_at
+    status
+  }
+
+  job_matches: job_executions(
+    where: { job_name: { _ilike: $infix } }
+    order_by: { created_at: desc }
+    limit: 6
+  ) {
+    id
+    job_name
+    correlation_id
+    invocation_id
+    created_at
+    status
+    duration_ms
+  }
+}

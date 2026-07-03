@@ -32,6 +32,7 @@ exports[`golden-trace observability records (schema contract) > emits invocation
     "source_event_time": "<source_event_time>",
     "source_function": "unknown",
     "source_system": "fake",
+    "source_type": "application",
     "status": "failed",
     "total_duration_ms": "<total_duration_ms>",
     "total_jobs_failed": 1,

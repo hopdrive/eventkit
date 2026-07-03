@@ -1,0 +1,118 @@
+// Job detail drawer — glance-first, zero tabs (see drawer/primitives.tsx for the
+// shared design decisions). Everything that explains "what happened when it ran"
+// is visible without a click: status, duration, error, result. Logs mount lazily.
+
+import React from 'react';
+import { Node } from 'reactflow';
+import { DrawerShell, StatusChip, Fact, FactGrid, ErrorPanel, Collapsible, JsonBlock, NodeRow } from './drawer/primitives';
+import { formatDuration } from '../utils/formatDuration';
+import { formatRelativeTime } from '../utils/formatTime';
+import { createGrafanaService } from '../services/GrafanaService';
+import LogsViewer from './LogsViewer';
+
+interface JobDetailDrawerProps {
+  node: Node | null;
+  isOpen: boolean;
+  onClose: () => void;
+  /** Swap the drawer to another canvas node (cross-navigation). */
+  onOpenNodeId?: (nodeId: string) => void;
+  /** Return to the previously-viewed node (present when a navigation trail exists). */
+  onBack?: () => void;
+  /** Invocation nodes on the canvas this job's write triggered (edges job -> invocation). */
+  triggeredInvocations?: Node[];
+}
+
+const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({ node, isOpen, onClose, onBack, onOpenNodeId, triggeredInvocations = [] }) => {
+  if (!isOpen || !node || node.type !== 'job') return null;
+  const d = node.data ?? {};
+  const jobExecutionId = String(node.id).replace('job-', '');
+  const started = d.createdAt ? new Date(d.createdAt) : undefined;
+  const hasResult = d.result !== undefined && d.result !== null;
+
+  return (
+    <DrawerShell
+      kindLabel='Job'
+      kindClass='text-purple-600 dark:text-purple-400'
+      title={d.jobName ?? 'job'}
+      statusChip={<StatusChip status={d.status} />}
+      factStrip={
+        <span>
+          {formatDuration(d.duration ?? 0)}
+          {started && (
+            <>
+              {' · '}
+              <span title={started.toLocaleString()}>{formatRelativeTime(d.createdAt)}</span>
+            </>
+          )}
+          {d.functionName && d.functionName !== d.jobName ? ` · fn ${d.functionName}` : ''}
+        </span>
+      }
+      correlationId={d.correlationId}
+      onClose={onClose}
+      onBack={onBack}
+    >
+      <ErrorPanel message={d.error} stack={d.errorStack} />
+
+      <FactGrid>
+        <Fact label='Execution id' mono span2>
+          {jobExecutionId}
+        </Fact>
+        <Fact label='Duration'>{formatDuration(d.duration ?? 0)}</Fact>
+        <Fact label='Started'>{started ? started.toLocaleString() : '—'}</Fact>
+        {d.isSourceJob && (
+          <Fact label='Role' span2>
+            Source job — its DB write triggered the invocation to its right.
+          </Fact>
+        )}
+      </FactGrid>
+
+      {triggeredInvocations.length > 0 && (
+        <div className='space-y-1.5'>
+          <div className='text-xs font-semibold text-gray-700 dark:text-gray-200 uppercase tracking-wide'>
+            Triggered invocations ({triggeredInvocations.length})
+          </div>
+          <div className='text-[11px] text-gray-400 -mt-0.5'>
+            This job's write caused these downstream invocations.
+          </div>
+          {triggeredInvocations.map(inv => (
+            <NodeRow
+              key={inv.id}
+              label={inv.data?.sourceFunction ?? inv.id}
+              sub={`${formatDuration(inv.data?.duration ?? 0)} · ${inv.data?.eventsCount ?? 0} events`}
+              status={inv.data?.status}
+              onClick={onOpenNodeId ? () => onOpenNodeId(inv.id) : undefined}
+            />
+          ))}
+        </div>
+      )}
+
+      {hasResult ? (
+        <div>
+          <div className='text-xs font-semibold text-gray-700 dark:text-gray-200 uppercase tracking-wide mb-1.5'>
+            Result
+          </div>
+          <JsonBlock data={d.result} />
+        </div>
+      ) : (
+        <div className='text-xs text-gray-400'>No recorded result output.</div>
+      )}
+
+      <Collapsible title='Logs' hint='Grafana Loki · loads on open'>
+        {() => {
+          const grafanaService = createGrafanaService();
+          const scopeId = d.scopeId || `${d.correlationId}-${d.jobName}`;
+          return (
+            <LogsViewer
+              queryFn={() => grafanaService.queryJobLogs(scopeId, jobExecutionId, 15)}
+              autoRefresh={d.status === 'running'}
+              isJobRunning={d.status === 'running'}
+              refreshInterval={5000}
+            />
+          );
+        }}
+      </Collapsible>
+    </DrawerShell>
+  );
+};
+
+export default JobDetailDrawer;
