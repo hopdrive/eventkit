@@ -178,10 +178,23 @@ export function loopGuard(config: LoopGuardConfig = {}): EventKitPlugin {
       const v = fromMetadata(row);
       if (v) out.correlationId = v;
     }
-    // Strategy 4: session variables.
+    // Strategy 4: session variables. A session variable can carry a FULL token (the
+    // transient header channel: `x-hasura-*` headers on the originating mutation land
+    // in the event's session_variables without persisting to the row) — parse it like
+    // the write field so sourceJobId/hopDepth survive the hop. A bare id still chains.
     if (!out.correlationId && extractFromSession) {
       const v = fromSession(getSession(envelope));
-      if (v) out.correlationId = v;
+      if (v) {
+        const parsed = codec.parse(v);
+        if (parsed) {
+          out.correlationId = parsed.correlationId;
+          if (parsed.jobExecutionId) out.sourceJobId = parsed.jobExecutionId;
+          if (parsed.hopDepth !== undefined) out.hopDepth = parsed.hopDepth;
+          out.sourceTrackingToken = v;
+        } else {
+          out.correlationId = v;
+        }
+      }
     }
 
     return out;

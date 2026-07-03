@@ -113,7 +113,14 @@ export function correlationResolver<K = unknown>(config: CorrelationResolverConf
       let sourceJobId = resolved.sourceJobId;
       if (resolved.trackingToken) {
         meta['sourceTrackingToken'] = resolved.trackingToken;
-        if (!sourceJobId) sourceJobId = codec.getJobExecutionId(resolved.trackingToken) ?? undefined;
+        const parsed = codec.parse(resolved.trackingToken);
+        if (!sourceJobId) sourceJobId = parsed?.jobExecutionId;
+        // Continue the token's hop counter (ADR-034) across the vendor round trip.
+        // loop-guard ran BEFORE this plugin, saw no inbound token, and set the depth as
+        // if this were a fresh root — overwrite it so a resolver-recovered hop counts
+        // and `haltAtDepth` can't be evaded by bouncing a chain off a vendor. Harmless
+        // when depth tracking is off (loop-guard then never reads `hopDepth`).
+        if (parsed?.hopDepth !== undefined) meta['hopDepth'] = parsed.hopDepth + 1;
       }
       if (sourceJobId) meta['sourceJobId'] = sourceJobId;
 
