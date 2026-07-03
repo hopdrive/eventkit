@@ -21,6 +21,7 @@ import 'reactflow/dist/style.css';
 import JobDetailDrawer from './JobDetailDrawer';
 import EventDetailDrawer from './EventDetailDrawer';
 import FlowBreadcrumb from './FlowBreadcrumb';
+import FlowStatsPill from './FlowStatsPill';
 import { compareFlow } from '../flowdoc/compare';
 import { loadBundledDocs, loadUploadedDocs, saveUploadedDoc } from '../flowdoc/store';
 import type { FlowDoc } from '../flowdoc/types';
@@ -600,6 +601,9 @@ const FlowDiagramContent = () => {
         />
       </ReactFlow>
       )}
+
+      {/* Compact chain stats (replaces the old page-header KPI tiles) */}
+      <FlowStatsPill invocations={invocations} nodes={displayData.nodes as Node[]} />
 
       {/* Path breadcrumb: origin → … → selected node, follows every selection change */}
       <FlowBreadcrumb

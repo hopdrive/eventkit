@@ -17,7 +17,6 @@ import Analytics from './components/Analytics';
 const FlowDiagram = React.lazy(() => import('./components/FlowDiagram'));
 import Settings from './components/Settings';
 import CorrelationSearch from './components/CorrelationSearch';
-import FlowHeader from './components/FlowHeader';
 import { PollingProvider, usePolling } from './contexts/PollingContext';
 import { useSystemStatus } from './hooks/useSystemStatus';
 import './styles/globals.css';
@@ -216,14 +215,11 @@ function Layout({
 
       {/* Main Content */}
       <div className='flex-1 flex flex-col overflow-hidden'>
-        {/* Header */}
+        {/* Header — none on the flow page: the canvas gets the full height and its
+            chain stats render as a compact in-canvas overlay (FlowStatsPill). */}
+        {!isFlowPage && (
         <header className='bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700'>
           <div className='px-6 py-4'>
-            {isFlowPage ? (
-              /* Flow Page Header - Show Summary */
-              <FlowHeader />
-            ) : (
-              /* Other Pages Header - Show Search and Time Range */
               <div className='flex items-center justify-between'>
                 {/* Search */}
                 <div className='flex-1 max-w-2xl'>
@@ -253,9 +249,9 @@ function Layout({
                   </div>
                 </div>
               </div>
-            )}
           </div>
         </header>
+        )}
 
         {/* Page Content */}
         <main className='flex-1 overflow-auto bg-gray-50 dark:bg-gray-900'>
