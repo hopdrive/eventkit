@@ -39,10 +39,14 @@ describe('payload builders + testInvocation', () => {
     expect(t.job('notify')?.status).toBe('completed');
     expect(t.job('notify')?.output).toBe('sent');
     expect(t.ok).toBe(true);
-    // observability records are captured (the schema contract)
-    expect(t.records.invocations).toHaveLength(1);
-    expect(t.records.jobs).toHaveLength(1);
-    expect(t.records.jobs[0]!.job_name ?? t.records.jobs[0]!.jobName).toBeDefined();
+    // observability records are captured (the schema contract). Records may be re-flushed
+    // idempotently (eager persist at job start), so dedupe by id before counting distinct rows.
+    const distinctById = <T extends { id: string }>(rows: T[]): T[] => [...new Map(rows.map(r => [r.id, r])).values()];
+    const invocations = distinctById(t.records.invocations);
+    const jobs = distinctById(t.records.jobs);
+    expect(invocations).toHaveLength(1);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]!.job_name ?? jobs[0]!.jobName).toBeDefined();
   });
 
   it('hasuraUpdate with updatedBy stamps the loop-guard field on the new row', async () => {

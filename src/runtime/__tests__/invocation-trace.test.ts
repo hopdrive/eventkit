@@ -79,11 +79,15 @@ describe('golden-trace observability records (schema contract)', () => {
 
     const result = await kit.handle({ hi: 1 });
 
-    // One flush, one batch (buffered per invocation — never per-job on the hot path).
-    expect(mem.batches).toHaveLength(1);
-    const inv = mem.invocations()[0];
-    const events = mem.events();
-    const jobs = mem.jobs();
+    // Records buffer per invocation and may be re-flushed idempotently (eager persist at
+    // job start). Dedupe by id, taking the LAST occurrence (final status), so the golden
+    // shape is asserted on the settled records regardless of how many times they re-flush.
+    const lastById = <T extends { id: string }>(rows: T[]): T[] => [...new Map(rows.map(r => [r.id, r])).values()];
+    const invocations = lastById(mem.invocations());
+    expect(invocations).toHaveLength(1); // exactly one distinct invocation
+    const inv = invocations[0];
+    const events = lastById(mem.events());
+    const jobs = lastById(mem.jobs());
 
     // Invocation record: counts reflect one detected event, two jobs, one failure.
     expect(inv.events_detected_count).toBe(1);

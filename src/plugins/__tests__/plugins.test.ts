@@ -293,7 +293,10 @@ describe('observability', () => {
       job(() => 'ok', { name: 'good', metadata: { tier: 1 } }),
       job(() => { throw new Error('x'); }, { name: 'bad' }),
     ]);
-    const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b) }).registerEvents([mod]);
+    // persistJobsAtStart:false isolates the flush-cadence invariant this test pins
+    // (exactly one batch per invocation); the eager-persist default is covered by its
+    // own focused test below.
+    const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b), persistJobsAtStart: false }).registerEvents([mod]);
 
     await kit.handle('go');
     await kit.handle('go');
@@ -320,6 +323,30 @@ describe('observability', () => {
     expect(good.job_options).toEqual({ tier: 1 }); // serializable metadata captured
     expect(good.result).toBe('ok');
     expect(b.jobs.find(j => j.job_name === 'bad')!.error_message).toBe('x');
+  });
+
+  it('persistJobsAtStart (default) makes the running job row durable before the job body', async () => {
+    const batches: ObservabilityBatch[] = [];
+    const mod = defineFakeEvent('thing.happened', () => true, [
+      job(() => 'ok', { name: 'good', metadata: { tier: 1 } }),
+    ]);
+    // Default (option omitted → true): an eager idempotent flush fires at job START, so the
+    // job's row is durable BEFORE the job body runs (and can spawn child invocations).
+    const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => void batches.push(structuredClone(b)) }).registerEvents([mod]);
+    await kit.handle('go');
+
+    // More than the single invocation-end flush happened — the eager persist(s) upsert too.
+    expect(batches.length).toBeGreaterThan(1);
+    // A batch flushed BEFORE the terminal one carries the job row already at status 'running'.
+    const terminal = batches[batches.length - 1]!;
+    const eager = batches.slice(0, -1).find(b => b.jobs.some(j => j.job_name === 'good' && j.status === 'running'));
+    expect(eager).toBeTruthy();
+    // Same job id across the eager persist and the terminal flush — an idempotent upsert, not a duplicate row.
+    const eagerJob = eager!.jobs.find(j => j.job_name === 'good')!;
+    const finalJob = terminal.jobs.find(j => j.job_name === 'good')!;
+    expect(eagerJob.id).toBe(finalJob.id);
+    // The job settles to 'completed' by the terminal flush.
+    expect(finalJob.status).toBe('completed');
   });
 
   it('captures source attributes from envelope.meta (Hasura) and the prior-job link', async () => {
@@ -475,7 +502,9 @@ describe('observability/graphql-sink', () => {
     });
     const batches: ObservabilityBatch[] = [];
     const mod = defineFakeEvent('thing.happened', () => true, [job(() => 'ok', { name: 'good' })]);
-    const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => { batches.push(b); return sink(b); } }).registerEvents([mod]);
+    // persistJobsAtStart:false so exactly one flush happens — this test verifies the
+    // single-flush FK ordering (invocations → event_executions → job_executions).
+    const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => { batches.push(b); return sink(b); }, persistJobsAtStart: false }).registerEvents([mod]);
     await kit.handle('go');
 
     // invocations first, then event_executions, then job_executions (FK order)

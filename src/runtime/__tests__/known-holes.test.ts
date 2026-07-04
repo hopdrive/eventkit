@@ -134,10 +134,13 @@ describe('concurrency + warm-instance soak (race()/warm-lambda guards)', () => {
     const [a, b] = await Promise.all([kit.handle({ n: 1 }), kit.handle({ n: 2 })]);
 
     expect(a.invocationId).not.toBe(b.invocationId);
-    const corrs = mem.invocations().map(r => r.correlation_id);
+    // Records may be re-flushed idempotently (eager persist at job start); dedupe by
+    // invocation id so we count DISTINCT invocations, not re-flushes.
+    const invocations = [...new Map(mem.invocations().map(r => [r.id, r])).values()];
+    const corrs = invocations.map(r => r.correlation_id);
     expect(corrs).toHaveLength(2);
     expect(new Set(corrs).size).toBe(2); // no shared/leaked correlation across the overlap
-    // each invocation recorded exactly its own single event
+    // each flushed batch carries exactly its own single event (no cross-talk / leak)
     expect(mem.batches.every(batch => batch.events.length === 1)).toBe(true);
   });
 
@@ -148,10 +151,12 @@ describe('concurrency + warm-instance soak (race()/warm-lambda guards)', () => {
 
     for (let i = 0; i < 50; i++) await kit.handle({ n: i });
 
-    // One batch per invocation, each carrying exactly one invocation record — the buffer
-    // is flushed AND cleared every time, so nothing accumulates across warm invocations.
-    expect(mem.batches).toHaveLength(50);
-    expect(mem.invocations()).toHaveLength(50);
+    // 50 DISTINCT invocations — the buffer is flushed AND cleared every time, so nothing
+    // accumulates across warm invocations. (Records may be re-flushed idempotently by the
+    // eager persist at job start, so dedupe invocation records by id before counting.)
+    const invocations = [...new Map(mem.invocations().map(r => [r.id, r])).values()];
+    expect(invocations).toHaveLength(50);
+    // Every flushed batch carries exactly one event and one job — no leak across invocations.
     expect(mem.batches.every(batch => batch.events.length === 1 && batch.jobs.length === 1)).toBe(true);
   });
 });

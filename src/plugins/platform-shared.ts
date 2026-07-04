@@ -77,6 +77,40 @@ export const requestMeta = (event: unknown): Record<string, unknown> => {
   return meta;
 };
 
+// A Web `Request` body is a one-shot stream, and the v2 adapters need BOTH the
+// parsed body (payload for detectors) AND the exact bytes (`rawBody` for HMAC
+// signature verification). So `extractV2Payload` reads the body ONCE as text,
+// caches the exact string keyed by the request (WeakMap — no mutation of the
+// Request, GC-friendly), and returns the parsed JSON; `v2Meta` then exposes the
+// cached bytes as `meta.rawBody`. The runtime calls extractPayload before
+// buildRequest with the same request instance, so the cache is populated in time.
+const V2_RAW_BODY = new WeakMap<object, string>();
+
+/** Read a v2 Web `Request` body once: cache exact bytes for `rawBody`, return parsed JSON (or the raw string if not JSON, or undefined for an empty body). */
+export const extractV2Payload = async (request: unknown): Promise<unknown> => {
+  const req = request as { text?: () => Promise<string>; json?: () => Promise<unknown> } | undefined;
+  if (req && typeof req.text === 'function') {
+    const raw = await req.text();
+    if (request && typeof request === 'object') V2_RAW_BODY.set(request, raw);
+    if (!raw) return undefined;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw; // non-JSON body — hand the source the raw string
+    }
+  }
+  if (req && typeof req.json === 'function') return req.json();
+  return req;
+};
+
+/** RequestContext.meta for a v2 `Request`: headers + query + the `rawBody` cached by `extractV2Payload` (needed for HMAC verify). */
+export const v2Meta = (request: unknown): Record<string, unknown> => {
+  const meta: Record<string, unknown> = { headers: extractHeaders(request), query: queryOf(request) };
+  const raw = request && typeof request === 'object' ? V2_RAW_BODY.get(request) : undefined;
+  if (raw !== undefined) meta['rawBody'] = raw;
+  return meta;
+};
+
 /** Serialize a `resolve` success body: a string passes through, anything else is JSON. */
 const outputBody = (output: unknown): string => (typeof output === 'string' ? output : JSON.stringify(output ?? null));
 

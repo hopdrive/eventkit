@@ -120,6 +120,18 @@ export interface ObservabilityConfig {
   /** Periodic mid-invocation upsert cadence (ms) for the live Console view. Off by default. */
   flushIntervalMs?: number;
   /**
+   * Persist each job's `job_execution` row (status `running`) at job START, before the
+   * job body runs, rather than only at the next flush/invocation end. Default true.
+   *
+   * WHY: a job's own DB writes can chain into CHILD invocations (in separate processes)
+   * that reference this job as their `source_job_id`. If the job row isn't durable yet,
+   * that FK fails and the sink drops the link (graceful-degrade) — orphaning the child as
+   * a false second "origin". The runtime awaits onJobStart before the job body, so an
+   * eager persist here guarantees the parent job row exists before its side effects fire.
+   * Set false only for perf-sensitive telemetry where lineage accuracy is not required.
+   */
+  persistJobsAtStart?: boolean;
+  /**
    * Record an event row for EVERY detector evaluation, including those that did not
    * fire (`detected: false`, status `not_detected`) — matching the legacy plugin and
    * the Console's detected/undetected counts. Default true. Set false to record only
@@ -145,6 +157,7 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
     throw new Error('observability() requires a `sink` function to flush records (e.g. graphqlSink(...)).');
   }
   const captureSourcePayload = config.captureSourcePayload !== false;
+  const persistJobsAtStart = config.persistJobsAtStart !== false;
   const captureJobMetadata = config.captureJobMetadata !== false;
   const captureErrorStacks = config.captureErrorStacks !== false;
   const recordUndetectedEvents = config.recordUndetectedEvents !== false;
@@ -277,7 +290,7 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
       rec.updated_at = new Date().toISOString();
     },
 
-    onJobStart(ctx: JobContext) {
+    async onJobStart(ctx: JobContext) {
       const buf = buffers.get(ctx.invocationId);
       if (!buf) return;
       const now = new Date().toISOString();
@@ -298,6 +311,11 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
       if (eventId) rec.event_execution_id = eventId;
       if (captureJobMetadata && ctx.job.metadata) rec.job_options = safeSerialize(ctx.job.metadata, serOpts);
       buf.jobs.set(ctx.job.id, rec);
+      // Make this job's row (and its invocation) durable BEFORE the job body runs, so a
+      // child invocation the job spawns via DB writes can resolve its source_job_id FK to
+      // this row instead of being orphaned as a false origin. The runtime awaits onJobStart
+      // before invoking the job fn, so this flush completes first. Idempotent (sink upserts).
+      if (persistJobsAtStart) await flush(ctx.invocationId, false);
     },
 
     onJobEnd(ctx: JobContext, execution: JobExecution) {
