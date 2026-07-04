@@ -26,3 +26,9 @@ signature verification always failed on v2. The adapters now read the Web `Reque
 text, cache the exact bytes (WeakMap, no mutation of the Request), return the parsed JSON as the
 payload, and expose the bytes as `request.meta.rawBody`. Backward-compatible (rawBody was simply
 absent before); JSON parsing tolerates a non-JSON body (returns the raw string).
+
+**Drop the `uuid` dependency** (surfaced by the event-handlers migration) — the runtime used
+it only for v4 generation, and uuid v14 is ESM-only: the CJS build carried a nested copy that
+`require()` refuses at runtime (ERR_REQUIRE_ESM under netlify dev) and Jest consumers cannot
+parse without a moduleNameMapper. `crypto.randomUUID()` (built into Node ≥20, browsers, and
+workers) replaces it; eventkit now has zero runtime dependencies.

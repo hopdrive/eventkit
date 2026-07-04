@@ -214,9 +214,7 @@
     "registry": "https://registry.npmjs.org/",
     "access": "public"
   },
-  "dependencies": {
-    "uuid": "^14.0.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.4",
     "@changesets/cli": "^2.27.0",
