@@ -705,7 +705,7 @@ module.exports.handler = <span class="k">async</span> (eventName, hasuraEvent) =
       </div>
     </div>
 
-      <p style="margin:14px 0 0;font-size:13.5px;color:var(--muted);max-width:84ch"><b style="color:var(--brass-2)">Tip:</b> a job in the array is just a function reference. You only wrap it with <code>job(fn, { ... })</code> when you need to override settings for that one job, like <code>retries</code>, <code>timeoutMs</code>, <code>metadata</code>, or per-job <code>input</code>. Pass those as the options object, the second argument to <code>job()</code>.</p>
+      <p style="margin:14px 0 0;font-size:13.5px;color:var(--muted);max-width:84ch"><b style="color:var(--brass-2)">Tip:</b> a job in the array is just a function reference. Its settings can live on the function itself as a declarative <code>config</code> property (write it with <code>defineJob(fn, config)</code> in the job&rsquo;s own file &mdash; ADR-043). You only wrap it with <code>job(fn, { ... })</code> when you need to override a setting for that one event, like <code>retries</code>, <code>timeoutMs</code>, <code>metadata</code>, or per-job <code>input</code>. A property passed to <code>job()</code> wins; the module config covers the rest.</p>
 
     <!-- RULE: no conditional jobs -->
     <div style="margin-top:18px;border:1px solid var(--hair);border-left:4px solid var(--rose);border-radius:13px;padding:22px 24px;background:var(--surface)">
@@ -750,8 +750,28 @@ module.exports.handler = <span class="k">async</span> (eventName, hasuraEvent) =
             <li><b><code>tags</code></b> — labels for filtering &amp; grouping in the trace.</li>
             <li><b><code>input</code></b> — live request-scoped data (a static object or a pure <code>(ctx) =&gt; …</code> mapper); merges <i>highest</i>, over <code>prepare</code> and plugin baselines.</li>
             <li><b><code>metadata</code></b> — serializable annotations, persisted by Batch and recorded by Observability.</li>
+            <li><b><code>replaySafe</code></b> — declare whether this job can be rerun freely (<code>true</code>), would do damage if repeated (<code>false</code>), or is undeclared (leave it off). The Console reads it to decide how loudly to warn before a selective replay (ADR-042). It never changes runtime behavior.</li>
           </ul>
         </div>
+      </div>
+      <div class="payoff" style="margin-top:16px">
+        <span class="pk">One interface, two places to write it</span>
+        <div>That list is the <b>whole</b> settings surface for a job: <code>name</code>, <code>timeoutMs</code>, <code>retries</code>, <code>tags</code>, <code>input</code>, <code>metadata</code>, <code>replaySafe</code>. One TypeScript interface, <code>JobOptions</code>, and you can write it in two places (ADR-043). <b>Declaratively on the job module itself</b>, as a <code>config</code> property on the exported function. This is the Netlify Functions v2 idea: everything about the job lives in the job&rsquo;s own file. Or <b>at the call site</b>, as the second argument to <code>job(fn, opts)</code>. The rule is simple: a property passed to <code>job()</code> wins; the module&rsquo;s <code>config</code> fills in anything the call site didn&rsquo;t set. Per property, no deep merging.
+<pre style="margin:12px 0 0">// jobs/callRide.ts — everything about the job in one place
+<span class="k">export const</span> callRide = defineJob(<span class="k">async</span> (ctx) =&gt; {
+  <span class="c">// ...book the ride...</span>
+}, {
+  name: <span class="s">'callRide'</span>,
+  retries: <span class="s">1</span>,
+  timeoutMs: <span class="s">20000</span>,
+  replaySafe: <span class="k">false</span>,   <span class="c">// books a real vendor ride</span>
+});
+
+<span class="c">// events/ridehail.pending.ts — the module registers it bare...</span>
+jobs: [callRide]                          <span class="c">// uses the module config as-is</span>
+<span class="c">// ...or overrides just one property for this event</span>
+jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">// retries: 3 wins; everything else from config</span></pre>
+        <code>defineJob(fn, config)</code> is sugar: it attaches <code>config</code> to the function and returns it, with full input typing. Plain <code>myJob.config = { ... }</code> works too. The config is read when the job is registered, and <code>kit.describe()</code> reports the merged result, so flow docs and the Console always show what will actually run.</div>
       </div>
       <div class="payoff" style="background:var(--now-soft);border-color:#CDD5D4;margin-top:16px">
         <span class="pk" style="color:var(--now)">Planned · not in this release</span>
@@ -1367,7 +1387,7 @@ kit.registerEvents(events);</pre>
 
     <div style="margin-top:38px">
       <h3 style="font-size:22px;letter-spacing:-.01em">The plugin board &mdash; all 13, in one place</h3>
-      <p style="color:var(--muted);max-width:80ch;margin:6px 0 20px">Everything that registers on a kit is a plugin, and there are <b>13 prebuilt</b>: <b>4 sources</b> (the ingress, one per kit), the <b>5 cross-cutting plugins</b> (they fire along the per-invocation hook lifecycle), and <b>4 platform adapters</b> (the request/response envelope your function deploys into). The board plots each one by <b>when it acts</b> across a single invocation. Sources at the ingress, the cross-cutting five along the middle, platforms wrapping the whole run. <b>Pick any lane to open its detail.</b> The five cross-cutting plugins have their full spec inline below. Sources and platforms show a short summary and link up to their own subsections (with flow diagrams) above.<br><br>Where each cross-cutting plugin lives follows one rule (ADR-024). If a plugin&rsquo;s behavior is fully determined by injected <i>config</i>, it ships <b>built-in</b> inside <code>@hopdrive/eventkit</code>. All five do, loop-guard included (the <code>updated_by</code> field is <i>config</i>, not a hardcoded convention). A plugin only leaves core if it imports a HopDrive SDK, knows a domain table, or hardcodes a cross-service agreement. HopDrive&rsquo;s leftover layer is just config presets, not logic.</p>
+      <p style="color:var(--muted);max-width:80ch;margin:6px 0 20px">Everything that registers on a kit is a plugin, and there are <b>13 prebuilt</b>: <b>4 sources</b> (the ingress, one per kit), the <b>5 cross-cutting plugins</b> (they fire along the per-invocation hook lifecycle), and <b>4 platform adapters</b> (the request/response envelope your function deploys into). The board plots each one by <b>when it acts</b> across a single invocation. Sources at the ingress, the cross-cutting five along the middle, platforms wrapping the whole run. <b>Pick any lane to open its detail.</b> The five cross-cutting plugins have their full spec inline below. Sources and platforms show a short summary and link up to their own subsections (with flow diagrams) above.<br><br>Where each cross-cutting plugin lives follows one rule (ADR-024). If a plugin&rsquo;s behavior is fully determined by injected <i>config</i>, it ships <b>built-in</b> inside <code>@hopdrive/eventkit</code>. All five do, loop-guard included (it reads a source-supplied <code>tokenCandidates</code> list, not a hardcoded field — the <code>updated_by</code> convention is the Hasura source&rsquo;s <i>config</i>). A plugin only leaves core if it imports a HopDrive SDK, knows a domain table, or hardcodes a cross-service agreement. HopDrive&rsquo;s leftover layer is just config presets, not logic.</p>
       <p style="color:var(--muted);max-width:80ch;margin:-8px 0 20px">This is what keeps the I/O plugins generic: each one owns its <i>logic</i> (observability owns the record hierarchy + buffering, batch owns the durable lifecycle, the transports own log/error shaping) but takes its <i>destination</i> as an <b>injected seam</b> — a <code>sink</code> for observability, a <code>store</code> for batch, an injected <code>logger</code> (or direct Loki) for grafana, a <code>send</code> for sentry. The plugin never knows whether it&rsquo;s talking to Hasura, an HTTP collector, the <code>sdk-server-logger</code> queue, or a test spy; the destination + its secrets arrive as config, and <b>no plugin imports a HopDrive SDK</b> — the app injects it (e.g. <code>getLogger()</code> into the grafana bridge). EventKit ships a built-in <code>graphqlSink</code> (and a <code>graphqlBatchJobStore</code> is planned) so HopDrive wires them in one line, while staying trivially testable and swappable.</p>
 
       <noscript><style>.plugdetail .pspec[hidden]{display:block !important;animation:none;}.plugdetail .pspec{margin:0 0 16px;}.plugboard{display:none;}</style></noscript>
@@ -1559,24 +1579,24 @@ module.exports = {
       <!-- TrackingToken -->
       <div class="pspec guard" id="ps-loopguard" data-plugin="loopguard" role="tabpanel" aria-label="loopGuard plugin" hidden>
         <div class="pspec-top"><span class="nm">loopGuard()</span><span class="home">eventkit /plugins</span><span class="req">config-driven</span></div>
-        <div class="reg"><span class="k">kit</span>.use(loopGuard, { field: <span class="s">'updated_by'</span>, serviceId: <span class="s">'event-handlers'</span>, codec: { separator: <span class="s">'|'</span>, validateCorrelationId: <span class="k">true</span> } });</div>
-        <p class="pspec-lead">Loop prevention. Stops the system from re-triggering on its <b>own</b> database writes. That&rsquo;s the defense against event storms. <b>It&rsquo;s generic, not HopDrive-specific (ADR-024).</b> The field it reads (<code>updated_by</code>), the token separator, and the service id are all <i>config</i>, so it ships built-in and HopDrive just passes <code>field:'updated_by'</code>. The legacy codec it ports imports nothing HopDrive.</p>
-        <p style="margin:-8px 0 16px;font-size:13.5px;color:var(--brass-2)"><b>Was →</b> an app-side <code>onPreConfigure</code> hook that <i>mutated the payload by reference</i>. Now it&rsquo;s a built-in, config-driven plugin: <code>augmentEnvelope</code> writes the inbound token into <code>envelope.meta</code> (no mutation) and the outbound <code>ctx.trackingToken</code> is a core seam. <b>The payload mutation is gone</b> — the biggest correctness win of the model.</p>
+        <div class="reg"><span class="k">kit</span>.use(loopGuard, hopdriveLoopGuard({ serviceId: <span class="s">'event-handlers'</span>, warnAtDepth: <span class="s">8</span>, haltAtDepth: <span class="s">12</span> }));   <span class="c">// preset pins the pipe codec + validation</span></div>
+        <p class="pspec-lead">Loop prevention. Stops the system from re-triggering on its <b>own</b> writes. That&rsquo;s the defense against event storms. <b>It&rsquo;s truly generic now (ADR-039).</b> It doesn&rsquo;t know <code>updated_by</code> or any field — the <b>source</b> owns inbound token discovery and hands loopGuard an ordered <code>envelope.meta.tokenCandidates</code> list. loopGuard just parses the first candidate that decodes as a token. Only the codec and service id are config; the legacy codec it ports imports nothing HopDrive.</p>
+        <p style="margin:-8px 0 16px;font-size:13.5px;color:var(--brass-2)"><b>Was →</b> an app-side <code>onPreConfigure</code> hook that <i>mutated the payload by reference</i>. Now it&rsquo;s a built-in, config-driven plugin: it reads the source-supplied <code>tokenCandidates</code> (no mutation) and the outbound <code>ctx.trackingToken</code> is a core seam. <b>The payload mutation is gone</b> — the biggest correctness win of the model. A hop ceiling (<code>haltAtDepth</code>) suppresses dispatch and reports a branded <code>LoopDetectedError</code> (ADR-041) at <code>severity:'warn'</code>; the HTTP response stays 200.</p>
         <div class="pspec-cols">
           <div>
             <h4>Expected behavior</h4>
             <ul>
-              <li><b>Inbound (the plugin&rsquo;s job):</b> reads the configured <code>field</code> (<code>updated_by</code>) into <code>envelope.meta.sourceTrackingToken</code>; detectors/handlers may read it to suppress self-triggered work.</li>
-              <li><b>Outbound is already in core:</b> the runtime exposes a deterministic <code>ctx.trackingToken</code> (<code>source.correlationId.jobId</code>) that jobs stamp into their writes — the plugin only adds the inbound read (and may override the token codec).</li>
-              <li>The next invocation recognizes that write as system-originated and can break the loop.</li>
+              <li><b>Inbound (the plugin&rsquo;s job):</b> iterates <code>envelope.meta.tokenCandidates</code> (set by the source) and lifts the first that decodes into <code>correlationId</code> / <code>sourceJobId</code> / <code>hopDepth</code>; a bare correlation id (UUID or 32-hex, ADR-040) chains as an id only.</li>
+              <li><b>Outbound is already in core:</b> the runtime exposes a deterministic <code>ctx.trackingToken</code> (<code>source.correlationId.jobId</code>) that jobs stamp into their writes — <code>hasuraChainedClient</code> attaches it as <code>x-hasura-tracking-token</code> automatically.</li>
+              <li>The next invocation recognizes that write as system-originated and can break the loop — or hard-stop at <code>haltAtDepth</code>.</li>
             </ul>
           </div>
           <div>
             <h4>Core hooks &amp; API it uses</h4>
             <div class="hooks">
-              <span class="hk">augmentEnvelope</span><span class="hk">configureInvocation</span><span class="hk">augmentJobContext</span>
+              <span class="hk">configureInvocation</span><span class="hk">augmentJobContext</span>
             </div>
-            <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Reads the configured field, writes <code>envelope.meta.sourceTrackingToken</code> via <code>augmentEnvelope</code>; may override the codec via <code>augmentJobContext</code>. Config: <code>{ field, codec, serviceId }</code>. No secret.</p>
+            <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Lifts <code>envelope.meta.tokenCandidates</code> into correlation state via <code>configureInvocation</code>; may override the codec via <code>augmentJobContext</code>. Config: <code>{ serviceId, codec, warnAtDepth, haltAtDepth, candidates? }</code>. No secret.</p>
             <div class="gain"><b>You get:</b> storm protection as infrastructure — no per-handler boilerplate, and the same correlation token threads cleanly into observability.</div>
           </div>
         </div>
@@ -2086,12 +2106,16 @@ kit.registerEvents(modules[] | record): EventKit</div>
           <p>Built-in observability <code>sink</code> that bulk-upserts to the canonical observability tables over Hasura GraphQL.</p>
         </div>
         <div class="refentry">
+          <div class="rsig">hasuraChainedClient({ endpoint, headers?, timeoutMs? }) <span class="refbadge shipped">shipped</span></div>
+          <p>Contributes <code>ctx.input.gql</code> (ADR-020 seam) — a fetch-based GraphQL client that auto-attaches <code>ctx.trackingToken</code> as <code>x-hasura-tracking-token</code> so writes chain. Returns parsed <code>data</code>, throws <code>GraphqlRequestError</code> on errors. Handler-supplied <code>input</code> keys win.</p>
+        </div>
+        <div class="refentry">
           <div class="rsig">batch({ store, logFlush? }) <span class="refbadge shipped">shipped</span></div>
           <p>Registration-emergent durability; <code>requires:['source:hasura']</code>. Injects the <code>batch_jobs</code> row&rsquo;s input, persists lifecycle via the injected <code>store.update(id, fields)</code>. A built-in <code>graphqlBatchJobStore</code> is <span class="refbadge planned">planned</span> — provide your own <code>store</code> meanwhile.</p>
         </div>
         <div class="refentry">
-          <div class="rsig">loopGuard({ field?, serviceId?, codec?, read? }) <span class="refbadge shipped">shipped</span></div>
-          <p>Reads the inbound provenance field (HopDrive: <code>updated_by</code>) into <code>envelope.meta</code>; outbound <code>ctx.trackingToken</code> is a core seam. Also exports <code>createTokenCodec</code>.</p>
+          <div class="rsig">loopGuard({ serviceId?, codec?, warnAtDepth?, haltAtDepth?, candidates? }) <span class="refbadge shipped">shipped</span></div>
+          <p>Generic (ADR-039): lifts the source-supplied <code>meta.tokenCandidates</code> into correlation state; outbound <code>ctx.trackingToken</code> is a core seam. <code>haltAtDepth</code> suppresses dispatch with a branded <code>LoopDetectedError</code> (ADR-041). Preset: <code>hopdriveLoopGuard({ serviceId })</code>. Codec lives in core (<code>createTokenCodec</code>).</p>
         </div>
         <div class="refentry">
           <div class="rsig">grafana({ logger | grafana, source?, minLevel?, flush? }) <span class="refbadge shipped">shipped</span></div>

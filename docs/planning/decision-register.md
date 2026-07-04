@@ -49,6 +49,8 @@ live prompts. Where a decision has shipped, the code (not a blank line) is the s
 - **D37** → **ADR-039** chain-concern placement: codec → core, inbound token discovery → sources (`meta.tokenCandidates`), `loopGuard` goes truly generic, `ctx.input.gql` paved road via the ADR-020 seam, `hopdriveLoopGuard` preset finally ships. From the chaining E2E proof + placement audit.
 - **D38** → **ADR-040** correlation id = UUID **or** 32-hex dashless (Hasura trace-id roots); trace adoption stays.
 - **D39** → **ADR-041** loop halts elevate: branded `LoopDetectedError` via `onError`, durable halted marker on the invocation record, `warnAtDepth` reports non-fatal.
+- **D40** → **ADR-042** selective replay: `x-eventkit-replay-*` headers on a byte-identical re-POST; unselected jobs finish `'skipped'` ("rerun job not selected"); filter on `request.meta[JOB_FILTER_KEY]` via the opt-in `replayControls()`; `replaySafe` tri-state declaration read by the Console; selection only narrows.
+- **D41** → **ADR-043** declarative job config: ONE `JobOptions` interface, writable as `fn.config` on the job module (`defineJob` sugar) AND per call site; `job(fn, opts)` merges per-property, call-site wins.
 
 ---
 
@@ -460,6 +462,18 @@ Confirm the optional set: `description, tags, owner, flowHints, deprecated, rela
 **Origin:** Rob, reviewing hop depth after the chaining POC ("we could have a runaway job infinite chain and we will want to know about it and stop it from the core package while also raising exceptions").
 **Decision:** ✅ **RESOLVED 2026-07-02 (ADR-041).** Brand it and record it: `LoopDetectedError` (correlation id, depth, ceiling, serviceId, source) reported through `onError` with phase `'chain-guard'`; the invocation record gains `error_message` + `context_data.halted = { depth, ceiling }`; `warnAtDepth` also reports the branded error non-fatally through `onError` (early alarm while the chain still runs); HTTP stays 200 (never invite a retry of a loop). Grafana picks this up via its existing `onError` subscription; a Sentry plugin becomes a trivial `onError` subscriber.
 **Blast radius:** `core/errors.ts` (`LoopDetectedError`, brand-checked like `ClientError`); kit.ts suppress path; `loopGuard` warn path; observability record enrichment; chaos-matrix rows for halted invocations.
+
+### D40. Selective replay — rerun chosen jobs of a recorded invocation [added 2026-07-03]
+**Question:** an operator looking at a recorded invocation (one job failed, siblings succeeded) has no way to rerun JUST the failed job — full replay re-fires every side effect, and there is no honest record of "we chose not to run these."
+**Origin:** Rob ("choose specific jobs to rerun from a detected event… skipped jobs have a skipped response with a reason of 'rerun job not selected'").
+**Decision:** ✅ **RESOLVED 2026-07-03 (ADR-042).** Replay = byte-identical re-POST + `x-eventkit-replay-of`/`-jobs` headers; core `JOB_FILTER_KEY` on `request.meta` (contributed by the opt-in `replayControls()` via `configureInvocation`; auto-persisted into `context_data`); `runOne` finishes unselected jobs `'skipped'` with both job hooks emitted (first producer of the reserved status — `ctx.skip()` stays `'completed'`+conditionNotMet, the pair is API); malformed directive → branded ClientError 400; selection only narrows (no auth/verify/suppress bypass); lineage rejoins via the re-sent original token (replay = sibling, same correlation id) with fresh-root fallback; `JobOptions.replaySafe?: boolean` (tri-state, advisory) drives the Console warning ladder. Full design + Console UX: `selective-replay-spec.md`.
+**Blast radius:** `core/job-filter.ts`; `run.ts` gate; `replayControls` plugin; obs `execution.metadata` persistence (closes the ADR-035 reason gap) + `replaySafe` stamp; **observability job-status CHECK widening** (sink default maps `skipped→failed` against the legacy constraint — schema prerequisite); Console relay + ReplayModal (in `console/`).
+
+### D41. Declarative job-module config — settings live with the job, overridable at the call site [added 2026-07-03]
+**Question:** job settings (`retries`, `timeoutMs`, `replaySafe`, …) can only be written at the registration site (`job(fn, opts)`), away from the job's own file — and there was no single documented interface enumerating every job setting.
+**Origin:** Rob ("expand the job module definition to include the config declared in the module, like Netlify Functions v2… options passed to job() override the module config property of the same name").
+**Decision:** ✅ **RESOLVED 2026-07-03 (ADR-043).** ONE interface — `JobOptions` (`name`, `timeoutMs`, `retries`, `tags`, `input`, `metadata`, `replaySafe`) — writable in two places: declaratively as `fn.config` on the exported job function (`defineJob(fn, config)` typed sugar; config travels WITH the function since eventkit only ever receives function references), and per call site via `job(fn, opts)`. Merge inside `job()`: per-property shallow, call-site wins, `undefined`-valued call-site keys count as not passed, no deep merge. Name resolution `opts.name || fn.config.name || fn.name || 'anonymous'`. ADR-031 banned-key guard applies to the merged bag. `describe()` reports effective options.
+**Blast radius:** `core/job.ts` (`replaySafe`, `defineJob`, `ConfiguredJobFunction`, merge in `job()`); register guard; `describe()`; guide "Controlling how the jobs run" + reference sections; selective-replay spec §4.1 (replaySafe declarable at module level).
 
 ## Decision dependency map (what unblocks what)
 
