@@ -7,7 +7,16 @@
 // canvas animations (edge dashes, node spinners, activity sweeps) keep running.
 
 import React, { useEffect, useReducer, useState } from 'react';
-import { PlayIcon, PauseIcon, XMarkIcon, ArrowPathIcon, MinusIcon, PlusIcon } from '@heroicons/react/20/solid';
+import {
+  PlayIcon,
+  PauseIcon,
+  XMarkIcon,
+  ArrowPathIcon,
+  MinusIcon,
+  PlusIcon,
+  InformationCircleIcon,
+  ViewfinderCircleIcon,
+} from '@heroicons/react/20/solid';
 import { formatDuration } from '../utils/formatDuration';
 import { BASE_MS, MIN_SPEED, MAX_SPEED, SPEED_PRESETS, type FlowPlayback } from '../hooks/useFlowPlayback';
 
@@ -20,7 +29,7 @@ interface FlowPlaybackBarProps {
 }
 
 const FlowPlaybackBar: React.FC<FlowPlaybackBarProps> = ({ playback, drawerOpen }) => {
-  const { playing, total, speed, revealed, totalCount } = playback;
+  const { playing, total, speed, revealed, totalCount, follow } = playback;
   const [, tick] = useReducer((x: number) => x + 1, 0);
   const [speedOpen, setSpeedOpen] = useState(false);
 
@@ -60,7 +69,7 @@ const FlowPlaybackBar: React.FC<FlowPlaybackBarProps> = ({ playback, drawerOpen 
       }`}
     >
       <div className='flex items-center gap-3 px-3 py-2 rounded-lg bg-white/95 dark:bg-gray-800/95 border border-gray-200 dark:border-gray-700 shadow-lg backdrop-blur'>
-        {/* Playing indicator */}
+        {/* Playing indicator + what-this-is tooltip */}
         <span className='flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-gray-500 dark:text-gray-400'>
           <span
             className={`w-1.5 h-1.5 rounded-full ${
@@ -68,6 +77,12 @@ const FlowPlaybackBar: React.FC<FlowPlaybackBarProps> = ({ playback, drawerOpen 
             }`}
           />
           REPLAY
+          <span
+            className='cursor-help'
+            title='Visual playback of recorded history: each node lights up at the real timestamp it fired (time-scaled to your chosen speed) and stays busy for its recorded duration. Nothing is executed again — this reviews what already happened.'
+          >
+            <InformationCircleIcon className='h-3.5 w-3.5 text-gray-400 dark:text-gray-500' />
+          </span>
         </span>
 
         <button
@@ -179,6 +194,24 @@ const FlowPlaybackBar: React.FC<FlowPlaybackBarProps> = ({ playback, drawerOpen 
           )}
         </div>
 
+        {/* Camera-follow toggle: pan to each batch of newly revealed nodes */}
+        <button
+          onClick={playback.toggleFollow}
+          aria-pressed={follow}
+          className={`p-1 rounded-md ${
+            follow
+              ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10'
+              : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+          }`}
+          title={
+            follow
+              ? 'Following newly revealed nodes — click to stop (C)'
+              : 'Follow newly revealed nodes: pan the view to each step as it appears (C)'
+          }
+        >
+          <ViewfinderCircleIcon className='h-4 w-4' />
+        </button>
+
         <span
           className='text-[11px] text-gray-400 dark:text-gray-500 tabular-nums whitespace-nowrap'
           title='Nodes revealed so far'
@@ -196,7 +229,7 @@ const FlowPlaybackBar: React.FC<FlowPlaybackBarProps> = ({ playback, drawerOpen 
       </div>
       {/* Passive hotkey hint: small enough to ignore, present enough to teach. */}
       <p className='mt-1 text-center text-[10px] text-gray-400 dark:text-gray-500 select-none'>
-        Space play/pause · ← → step · ↑ ↓ speed · Esc exit
+        Space play/pause · ← → step · ↑ ↓ speed · C follow · Esc exit
       </p>
     </div>
   );

@@ -205,6 +205,9 @@ export const useFlowHotkeys = (options: FlowHotkeyOptions): void => {
         case '.':
           if (o.playback.active) o.playback.step(1);
           return;
+        case 'c':
+          if (o.playback.active) o.playback.toggleFollow();
+          return;
       }
 
       const dir = NAV_KEYS[e.key];

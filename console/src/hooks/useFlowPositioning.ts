@@ -91,11 +91,21 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
     const nodes: PositionedNode[] = [];
     const edges: Edge[] = [];
 
-    const detectedOf = (inv: Invocation) => (inv.event_executions || []).filter(e => e.detected);
+    // Siblings read chronologically top→bottom: a fan-out (one monolithic job
+    // chaining many invocations) becomes a visual timeline of what fired first.
+    // Both passes MUST iterate in this same order — measuring and placement walk
+    // the same DFS, and the visited-set bookkeeping depends on it.
+    const byCreatedAt = <T extends { created_at: string }>(items: T[]): T[] =>
+      [...items].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+    const detectedOf = (inv: Invocation) => byCreatedAt((inv.event_executions || []).filter(e => e.detected));
+    const jobsOf = (event: EventExecution) => byCreatedAt(event.job_executions || []);
     const resolveTriggered = (job: JobExecution): Invocation[] =>
-      (job.triggered_invocations || [])
-        .map(ref => invocations.find(inv => inv.id === ref.id))
-        .filter((inv): inv is Invocation => Boolean(inv));
+      byCreatedAt(
+        (job.triggered_invocations || [])
+          .map(ref => invocations.find(inv => inv.id === ref.id))
+          .filter((inv): inv is Invocation => Boolean(inv))
+      );
 
     // ── Pass 1: measure subtree band heights ────────────────────────────────
     // The visited set mirrors placement order exactly (same DFS from the same
@@ -115,7 +125,7 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
       return band;
     };
     const measureEvent = (event: EventExecution): number => {
-      const childSum = (event.job_executions || []).reduce((sum, j) => sum + measureJob(j), 0);
+      const childSum = jobsOf(event).reduce((sum, j) => sum + measureJob(j), 0);
       const band = Math.max(NODE_H.event + verticalGap, childSum);
       eventBand.set(event.id, band);
       return band;
@@ -127,8 +137,8 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
       return band;
     };
 
-    const rootInvocations = invocations.filter(inv => !inv.source_job_id);
-    const childInvocations = invocations.filter(inv => inv.source_job_id);
+    const rootInvocations = byCreatedAt(invocations.filter(inv => !inv.source_job_id));
+    const childInvocations = byCreatedAt(invocations.filter(inv => inv.source_job_id));
     rootInvocations.forEach(measureInvocation);
     childInvocations.forEach(inv => {
       if (!measured.has(inv.id)) measureInvocation(inv);
@@ -147,7 +157,7 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
       const centerY = bandTop + band / 2;
 
       const events = invocation.event_executions || [];
-      const detectedEvents = events.filter(e => e.detected);
+      const detectedEvents = detectedOf(invocation); // sorted — same order the measure pass used
       const undetectedEvents = events.filter(e => !e.detected);
 
       nodes.push({
@@ -248,7 +258,7 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
         });
 
         // Jobs: same banding, centered on the event.
-        const jobs = event.job_executions || [];
+        const jobs = jobsOf(event);
         const jobsTotal = jobs.reduce((s, j) => s + (jobBand.get(j.id) ?? 0), 0);
         let jobCursor = eCenter - jobsTotal / 2;
         const jobX = eventX + horizontalSpacing;

@@ -471,11 +471,40 @@ const FlowDiagramContent = () => {
 
   const startReplay = () => {
     playback.start();
-    // Show the whole chain before it lights up.
-    setTimeout(() => {
-      reactFlowInstance?.fitView({ padding: 0.2, duration: 400, maxZoom: 1.5, minZoom: 0.1 });
-    }, 50);
+    // Show the whole chain before it lights up — unless follow mode will
+    // immediately chase the first reveal anyway (competing camera moves).
+    if (!playback.follow) {
+      setTimeout(() => {
+        reactFlowInstance?.fitView({ padding: 0.2, duration: 400, maxZoom: 1.5, minZoom: 0.1 });
+      }, 50);
+    }
   };
+
+  // Follow mode: the camera chases the reveal wavefront. Each boundary crossing
+  // pans to the centroid of the nodes that just appeared (a burst reveals
+  // siblings together, so the centroid frames the burst) at a readable zoom.
+  // Flipping follow on mid-replay snaps to whatever is running right now.
+  const prevRevealedRef = useRef<Set<string>>(new Set());
+  const prevFollowRef = useRef(false);
+  useEffect(() => {
+    const prev = prevRevealedRef.current;
+    const followTurnedOn = playback.follow && !prevFollowRef.current;
+    prevRevealedRef.current = playback.revealed;
+    prevFollowRef.current = playback.follow;
+    if (!playback.active || !playback.follow || !reactFlowInstance) return;
+    let targetIds = [...playback.revealed].filter(id => !prev.has(id));
+    if (targetIds.length === 0 && followTurnedOn) targetIds = [...playback.running];
+    if (targetIds.length === 0) return;
+    const ids = new Set(targetIds);
+    const targets = reactFlowInstance.getNodes().filter(n => ids.has(n.id));
+    if (targets.length === 0) return;
+    const cx = targets.reduce((s, n) => s + n.position.x + (n.width ?? 240) / 2, 0) / targets.length;
+    const cy = targets.reduce((s, n) => s + n.position.y + (n.height ?? 70) / 2, 0) / targets.length;
+    const zoom = Math.min(Math.max(reactFlowInstance.getZoom(), 0.75), 1.5);
+    const drawerShift = drawerOpen && selectedNode ? 600 / 2 / zoom : 0;
+    reactFlowInstance.setCenter(cx + drawerShift, cy, { zoom, duration: 350 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playback.active, playback.follow, playback.revealed, playback.running, reactFlowInstance]);
 
   // Drawer cross-navigation: swap the open drawer to any canvas node by id, pan the
   // canvas to it, and hand the event drawer its job nodes so its rows are one-click jumps.
@@ -544,9 +573,18 @@ const FlowDiagramContent = () => {
       setDrawerHistory([]);
       centerOnNode(selectedNode, { drawer: true, keepZoom: true });
     },
-    onCloseDrawer: handleDrawerClose,
+    // Esc backs all the way out (same as clicking the pane): close the drawer,
+    // drop the selection, and zoom back out to the whole flow.
+    onCloseDrawer: () => {
+      handleDrawerClose();
+      setSelectedNode(null);
+      reactFlowInstance?.fitView({ padding: 0.2, duration: 500, maxZoom: 1.5, minZoom: 0.1 });
+    },
     onDrawerBack: handleDrawerBack,
-    onClearSelection: () => setSelectedNode(null),
+    onClearSelection: () => {
+      setSelectedNode(null);
+      reactFlowInstance?.fitView({ padding: 0.2, duration: 500, maxZoom: 1.5, minZoom: 0.1 });
+    },
     onStartReplay: startReplay,
     onFitView: () => reactFlowInstance?.fitView({ padding: 0.2, duration: 500, maxZoom: 1.5, minZoom: 0.1 }),
     onZoom: dir =>
@@ -589,7 +627,7 @@ const FlowDiagramContent = () => {
           <button
             onClick={startReplay}
             className='inline-flex items-center gap-1.5 px-2.5 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
-            title='Replay this chain in the order it actually executed (R)'
+            title='Replay this chain in the order it actually executed (R) — a visualization of the recorded timestamps; nothing is re-run'
           >
             <PlayIcon className='h-3.5 w-3.5 text-blue-600 dark:text-blue-400' />
             Replay
