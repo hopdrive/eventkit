@@ -133,6 +133,37 @@ Three rules keep every event chain deterministic and analyzable:
 row, helper closures). Input merges lowest to highest: plugin baselines, then `prepare`,
 then per-job `input`.
 
+## Kit-level `prepare` → `ctx.provided`
+
+Module `prepare` only reaches *one event's* jobs. When several events (and their detectors)
+on a function need the **same** live dependency built **once per request** — a GraphQL
+executor, an authenticated vendor client, a resolved tenant config — declare a **kit-level
+`prepare`** as a reserved key on `createEventKit`'s config:
+
+```ts
+import { createFetchExecutor } from '@hopdrive/sdk-core';
+
+const kit = createEventKit(hasuraEvent, {
+  // runs ONCE per invocation (after normalize, before detection)
+  prepare: () => ({ executor: createFetchExecutor({ url, adminSecret }) }),
+})
+  .use(netlifyV2Platform)
+  .registerEvents(events);
+
+// available as the SAME instance on every detector, module prepare, and job:
+//   detector: (ctx) => ctx.provided.executor && ctx.columnChanged('status')
+//   job:      (ctx) => ctx.provided.executor.mutate(UpdateLane, { ... })
+```
+
+- **Scope:** once per **invocation** → `ctx.provided` on **every** detector, module
+  `prepare`, and job. (Module `prepare` is once per **event** → `ctx.input`; per-job `input`
+  is once per **job**.)
+- **Request-scoped, never serialized.** Unlike `envelope.meta` (persisted to observability),
+  `provided` is the right home for a **live** object. Defaults to `{}` when unset.
+- Also runs under `dryRun` (so detectors reading `ctx.provided` behave identically) — keep it
+  cheap. A throw aborts the invocation cleanly (reported as phase `prepare`); no jobs run.
+- Replaces the need to hand-roll an `augmentJobContext` plugin for shared refs.
+
 ## Jobs (`job()`)
 
 A job in the `jobs` array is just a function reference, and the runtime wraps it for you.

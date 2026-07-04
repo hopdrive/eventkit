@@ -103,6 +103,13 @@ export interface JobContext<
   event: DetectedEvent<TPayload, TMeta>;
   envelope: EventEnvelope<TPayload, TMeta>;
   input: TInput;
+  /**
+   * Request-scoped shared refs from the kit-level `prepare`
+   * (`createEventKit(source, { prepare })`); `{}` if none. The SAME object the detector and
+   * module `prepare` saw. Distinct from `input`: `provided` is invocation-wide shared refs
+   * (an executor, a vendor client), `input` is this job's own mapped/prepared data.
+   */
+  provided: Record<string, unknown>;
   /** Deterministic outbound provenance token jobs stamp into `updated_by` (§13). */
   trackingToken: string;
   job: {

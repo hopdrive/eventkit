@@ -55,6 +55,8 @@ export type {
   RequestContext,
   InvocationContext,
   KitContext,
+  KitPrepareContext,
+  KitPrepareFunction,
 } from './context.js';
 
 // ── Jobs ──────────────────────────────────────────────────────────────────

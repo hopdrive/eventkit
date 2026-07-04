@@ -121,6 +121,7 @@ export function buildDetectorContextFor<TCtx = DetectorContext>(
     sourceType: envelope.sourceType,
     log: { debug() {} },
     metadata: {},
+    provided: {},
   };
   const ctx = source.buildDetectorContext ? source.buildDetectorContext(envelope, base) : base;
   return ctx as TCtx;
@@ -161,6 +162,7 @@ export function buildHandlerContextFor<TCtx = HandlerContext>(
     sourceType: envelope.sourceType,
     log: noopLogger,
     metadata: {},
+    provided: {},
   };
   const ext = source.buildHandlerContext ? source.buildHandlerContext(envelope, base) : undefined;
   return (ext ? { ...base, ...(ext as Record<string, unknown>) } : base) as TCtx;

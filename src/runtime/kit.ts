@@ -37,6 +37,8 @@ import {
   type InvocationResult,
   type JobExecution,
   type JobInputContext,
+  type KitPrepareContext,
+  type KitPrepareFunction,
   type PluginFactory,
   type RequestContext,
   type ResolvedError,
@@ -75,9 +77,38 @@ class Kit implements EventKit {
   private readonly moduleNames = new Set<string>();
   private validated = false;
   private readyPromise?: Promise<void>;
+  private readonly kitPrepare: KitPrepareFunction | undefined;
 
   constructor(source: EventKitPlugin | PluginFactory, config?: unknown) {
-    this.pm = new PluginManager(source, (config as Record<string, unknown>) ?? {});
+    // `prepare` is a RESERVED kit-level key on the config object: a once-per-invocation
+    // context provider (createEventKit(source, { prepare })). Peel it off so it never
+    // reaches the source plugin's own config, and store it for runKitPrepare().
+    const cfg = (config as Record<string, unknown>) ?? {};
+    const { prepare, ...sourceConfig } = cfg;
+    if (prepare !== undefined && typeof prepare !== 'function') {
+      throw new Error('createEventKit: `prepare` must be a function if provided.');
+    }
+    this.kitPrepare = prepare as KitPrepareFunction | undefined;
+    this.pm = new PluginManager(source, sourceConfig);
+  }
+
+  /**
+   * Run the kit-level `prepare` ONCE for this invocation (after normalize, before
+   * detection). Its result becomes `ctx.provided` on every detector, module `prepare`,
+   * and job. Returns `{}` when no kit `prepare` is configured.
+   */
+  private async runKitPrepare(invocation: InvocationContext): Promise<Record<string, unknown>> {
+    if (!this.kitPrepare) return {};
+    const base: KitPrepareContext = {
+      invocationId: invocation.invocationId,
+      correlationId: invocation.correlationId,
+      envelope: invocation.envelope,
+      source: invocation.source,
+      sourceType: invocation.sourceType,
+      log: invocation.log,
+      signal: invocation.signal,
+    };
+    return (await this.kitPrepare(base)) ?? {};
   }
 
   use(plugin: EventKitPlugin | PluginFactory, config?: unknown): EventKit {
@@ -310,6 +341,7 @@ class Kit implements EventKit {
       startedAt,
       signal: controller.signal,
       log: createHandlerLogger({ invocationId, correlationId, scope: 'invocation' }, entry => void this.pm.onLog(entry)),
+      provided: {},
     };
     if (req.sourceFunction !== undefined) invocation.sourceFunction = req.sourceFunction;
 
@@ -349,6 +381,20 @@ class Kit implements EventKit {
         correlationId,
         severity: 'warn',
       });
+    }
+
+    // Kit-level prepare (once per invocation, before detection). Its output rides on
+    // `ctx.provided` for every detector, module `prepare`, and job. A failure here aborts
+    // the invocation cleanly (reported as phase 'prepare'); the `finally` still records + flushes.
+    try {
+      invocation.provided = await this.runKitPrepare(invocation);
+    } catch (err) {
+      await this.pm.reportError(err, 'prepare', { invocationId, correlationId });
+      invocation.log.error('Kit prepare failed; invocation aborted', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      result = { ok: false, invocationId, events: [], durationMs: Date.now() - start, error: serializeError(err) };
+      return result;
     }
 
     const detected = await this.detect(envelope, invocation);
@@ -455,9 +501,12 @@ class Kit implements EventKit {
       startedAt: new Date(),
       signal: new AbortController().signal,
       log: createHandlerLogger({ invocationId, correlationId, scope: 'dry-run' }, entry => void this.pm.onLog(entry)),
+      provided: {},
     };
 
-    // Detection only — no dispatch, so no prepare/job/resolve/respond runs.
+    // Kit-level prepare runs in dryRun too, so detectors that read `ctx.provided` behave
+    // identically. (Module `prepare` / jobs / resolve still do NOT run — detection only.)
+    invocation.provided = await this.runKitPrepare(invocation);
     const detected = await this.detect(envelope, invocation);
     const jobNamesOf = (module: EventModule): string[] =>
       (module.jobs ?? []).map(entry => String((entry as { name?: unknown }).name ?? 'anonymous'));
@@ -501,6 +550,7 @@ class Kit implements EventKit {
           entry => void this.pm.onLog(entry),
         ),
         metadata: {},
+        provided: invocation.provided,
       };
       const ctx = this.pm.buildDetectorContext(envelope, base);
 
@@ -595,6 +645,7 @@ class Kit implements EventKit {
         ),
         metadata: {},
         signal: invocation.signal,
+        provided: invocation.provided,
       };
       const ctx = this.pm.buildHandlerContext(envelope, base);
 
