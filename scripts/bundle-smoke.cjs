@@ -17,22 +17,22 @@ const ROOT = path.join(__dirname, '..');
 
 // Every subpath declared in package.json `exports` (except the root, imported by name).
 const SUBPATHS = [
-  '@hopdrive/eventkit',
-  '@hopdrive/eventkit/core',
-  '@hopdrive/eventkit/sources',
-  '@hopdrive/eventkit/plugins',
-  '@hopdrive/eventkit/sources/hasura',
-  '@hopdrive/eventkit/sources/webhook',
-  '@hopdrive/eventkit/plugins/batch',
-  '@hopdrive/eventkit/plugins/observability',
-  '@hopdrive/eventkit/plugins/observability/graphql-sink',
-  '@hopdrive/eventkit/plugins/loop-guard',
-  '@hopdrive/eventkit/plugins/correlation-resolver',
-  '@hopdrive/eventkit/plugins/transports/grafana',
-  '@hopdrive/eventkit/plugins/transports/sentry',
-  '@hopdrive/eventkit/platforms',
-  '@hopdrive/eventkit/testing',
-  '@hopdrive/eventkit/flow',
+  'eventkit',
+  'eventkit/core',
+  'eventkit/sources',
+  'eventkit/plugins',
+  'eventkit/sources/hasura',
+  'eventkit/sources/webhook',
+  'eventkit/plugins/batch',
+  'eventkit/plugins/observability',
+  'eventkit/plugins/observability/graphql-sink',
+  'eventkit/plugins/loop-guard',
+  'eventkit/plugins/correlation-resolver',
+  'eventkit/plugins/transports/grafana',
+  'eventkit/plugins/transports/sentry',
+  'eventkit/platforms',
+  'eventkit/testing',
+  'eventkit/flow',
 ];
 
 function assertBuilt() {
@@ -42,13 +42,13 @@ function assertBuilt() {
   }
 }
 
-// Build a sandbox that resolves "@hopdrive/eventkit" to this package via a
+// Build a sandbox that resolves "eventkit" to this package via a
 // node_modules symlink, so esbuild resolves exactly as a consumer would.
 function makeSandbox() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eventkit-smoke-'));
-  const scope = path.join(dir, 'node_modules', '@hopdrive');
-  fs.mkdirSync(scope, { recursive: true });
-  fs.symlinkSync(ROOT, path.join(scope, 'eventkit'), 'dir');
+  const nm = path.join(dir, 'node_modules');
+  fs.mkdirSync(nm, { recursive: true });
+  fs.symlinkSync(ROOT, path.join(nm, 'eventkit'), 'dir');
   return dir;
 }
 

@@ -1,4 +1,4 @@
-# @hopdrive/eventkit
+# eventkit
 
 Source-agnostic business-event execution framework. It's the successor to
 `@hopdrive/hasura-event-detector`. Hasura becomes one *source adapter* among many
@@ -18,14 +18,14 @@ them, and (optionally) makes them durable.
 ## Install
 
 ```bash
-npm install @hopdrive/eventkit
+npm install eventkit
 ```
 
 > Not published to npm yet (see status above) — the command above is how you'll install it
 > once it ships. Until then, consume it via a local file link / workspace.
 
 Dual ESM/CJS, TypeScript types included. Import the **family barrels** —
-`@hopdrive/eventkit/sources`, `/platforms`, `/plugins` — for clean, few-line imports;
+`eventkit/sources`, `/platforms`, `/plugins` — for clean, few-line imports;
 the package is `sideEffects`-free, so a function only bundles the sources/plugins it
 actually names. (Granular subpaths like `/plugins/observability` remain available for the
 tightest possible bundle.)
@@ -33,10 +33,10 @@ tightest possible bundle.)
 ## Quick start
 
 ```ts
-import { createEventKit, defineEvent, job } from '@hopdrive/eventkit';
-import { hasuraEvent } from '@hopdrive/eventkit/sources';
-import { netlifyPlatform } from '@hopdrive/eventkit/platforms';
-import { observability, graphqlSink } from '@hopdrive/eventkit/plugins';
+import { createEventKit, defineEvent, job } from 'eventkit';
+import { hasuraEvent } from 'eventkit/sources';
+import { netlifyPlatform } from 'eventkit/platforms';
+import { observability, graphqlSink } from 'eventkit/plugins';
 import { sendOfferSMS, notifyOrg } from './jobs';
 import { initSdk } from './lib/sdk';
 
@@ -221,14 +221,14 @@ platform-agnostic `{ status, body }` to short-circuit (auth or method) and the a
 
 ## Testing
 
-From `@hopdrive/eventkit/testing`:
+From `eventkit/testing`:
 
 - `fakeSource(opts?)`. A minimal in-memory source for unit tests.
 - `defineFakeEvent(name, detector, jobs, opts?)`. Assemble a module without a real source.
 - `buildDetectorContextFor(...)` / `buildHandlerContextFor(...)`. Exercise a detector or job
   against any source's context.
 
-## Flow docs (`@hopdrive/eventkit/flow` + `eventkit-flow`)
+## Flow docs (`eventkit/flow` + `eventkit-flow`)
 
 Modules are declarative. The `jobs` are a static array with no hidden conditional
 branches, so we can read a kit's whole structure without running anything.
@@ -239,7 +239,7 @@ turn it into a committed YAML doc of **how events actually flow through the syst
 keeps it honest.
 
 ```ts
-import { toFlowYaml, toFlowGraph, describeKit } from '@hopdrive/eventkit/flow';
+import { toFlowYaml, toFlowGraph, describeKit } from 'eventkit/flow';
 
 toFlowYaml(kit);   // → the human-readable committed doc (see docs/flow.example.yaml)
 toFlowGraph(kit);  // → { nodes, edges } in the FlowNode/FlowEdge manifest vocabulary (React Flow / manifest diffing)

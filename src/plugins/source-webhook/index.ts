@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/sources/webhook
+// eventkit/sources/webhook
 // =============================================================================
 // Inbound vendor webhooks (§7.1) — Stripe, Twilio, Dealerware, and the reverse-
 // integration repos. `sourceType: 'webhook'`. Configured per vendor:

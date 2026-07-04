@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/plugins/loop-guard — hopdriveLoopGuard preset (ADR-039.6)
+// eventkit/plugins/loop-guard — hopdriveLoopGuard preset (ADR-039.6)
 // =============================================================================
 // The shared HopDrive preset the RFC promised (§13) but never built. It pins the
 // wire format so a repo can't drift or typo it: separator `'|'` and

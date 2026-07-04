@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/plugins/observability
+// eventkit/plugins/observability
 // =============================================================================
 // First-class observability (§13). A PURE lifecycle observer that buffers an
 // Invocation → Event → Job record hierarchy per invocation and flushes it via an
@@ -26,8 +26,8 @@ import type {
 import { safeSerialize } from './serialize.js';
 
 // Re-export the built-in GraphQL sink so the plugin + its default sink import from
-// ONE path: `import { observability, graphqlSink } from '@hopdrive/eventkit/plugins/observability'`.
-// (Also available standalone at `@hopdrive/eventkit/plugins/observability/graphql-sink`.)
+// ONE path: `import { observability, graphqlSink } from 'eventkit/plugins/observability'`.
+// (Also available standalone at `eventkit/plugins/observability/graphql-sink`.)
 export { graphqlSink, type GraphqlSinkConfig, type StatusMap } from './graphql-sink.js';
 
 const newId = (): string =>

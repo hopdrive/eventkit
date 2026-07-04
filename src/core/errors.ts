@@ -150,7 +150,7 @@ function safeStringify(value: unknown): string {
 // is unreliable there — same reason ADR-026 duck-types `.status`). `Symbol.for`
 // returns the identical symbol from every copy, and symbols are skipped by
 // JSON.stringify / object spread, so the brand never leaks into a serialized record.
-const CLIENT_ERROR_BRAND = Symbol.for('@hopdrive/eventkit/ClientError');
+const CLIENT_ERROR_BRAND = Symbol.for('eventkit/ClientError');
 
 /**
  * Map the outcome to a specific HTTP status. For status-contract webhook vendors
@@ -208,7 +208,7 @@ export class ActionError extends Error {
 // Brand-checked like ClientError (a registry Symbol survives bundled module copies).
 // The detail rides `.data` so the existing serializeError carries it into
 // SerializedError.data with zero extra wiring.
-const LOOP_DETECTED_ERROR_BRAND = Symbol.for('@hopdrive/eventkit/LoopDetectedError');
+const LOOP_DETECTED_ERROR_BRAND = Symbol.for('eventkit/LoopDetectedError');
 
 /** The halted-chain detail carried on `LoopDetectedError.data` (and its readonly fields). */
 export interface LoopDetectedDetail {

@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/testing — payload builders (ADR-036, testing-strategy.md §2)
+// eventkit/testing — payload builders (ADR-036, testing-strategy.md §2)
 // =============================================================================
 // Construct the exact raw payload each source expects, so a consumer test reads
 // like the domain ("an appointment row went to 'ready'") instead of hand-assembling
@@ -112,7 +112,7 @@ export function hasuraActionPayload(
 // ── Webhook request builder ──────────────────────────────────────────────────
 
 /** Brand so `testInvocation` recognizes a built webhook request (body + request.meta). */
-const WEBHOOK_REQUEST = Symbol.for('@hopdrive/eventkit/testing/webhookRequest');
+const WEBHOOK_REQUEST = Symbol.for('eventkit/testing/webhookRequest');
 
 export interface WebhookRequestInit {
   vendor?: string;

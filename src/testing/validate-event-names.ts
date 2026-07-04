@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/testing — event-name ↔ filename validator
+// eventkit/testing — event-name ↔ filename validator
 // =============================================================================
 // A test-time check that each event module's declared `name` exactly matches its
 // file name (the ADR-025 / one-module-per-file convention, e.g. `appointment.ready.ts`
@@ -170,7 +170,7 @@ export function findEventNameMismatches(options: ValidateEventNamesOptions): Eve
  * Assert every event module's `name` matches its filename. Throws a single error
  * listing all offenders (so one test covers the whole tree). Drop into a test:
  *
- *   import { assertEventNamesMatchFilenames } from '@hopdrive/eventkit/testing';
+ *   import { assertEventNamesMatchFilenames } from 'eventkit/testing';
  *   it('event names match filenames', () =>
  *     assertEventNamesMatchFilenames({ dir: 'functions' }));
  */

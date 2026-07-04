@@ -1,0 +1,60 @@
+name: Release
+
+# Changesets-driven release automation (mirrors the sdk repo's publish flow).
+#
+# On every push to main this runs the changesets action, which does ONE of two
+# things depending on whether unreleased changesets exist in .changeset/:
+#
+#   1. Changesets present  -> open/update a "chore: version packages" PR that
+#      consumes them, bumps the version in package.json, and writes CHANGELOG.md.
+#      Merging that PR is the human gate on the next release.
+#   2. No changesets left (the version PR was just merged) -> run `npm run release`
+#      (build + bundle smoke + `changeset publish`) to publish to npm and cut a
+#      matching GitHub Release. Versions are never bumped or published by hand.
+#
+# One manual prerequisite: an npm automation token stored as the repo secret
+# NPM_TOKEN (Settings > Secrets and variables > Actions). Use an "Automation"
+# token so it bypasses 2FA in CI. The package is unscoped + public, so publish
+# targets registry.npmjs.org per package.json "publishConfig".
+
+on:
+  push:
+    branches: [main]
+
+# Never let two release runs race the version PR / publish.
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit the version bump, push tags, create releases
+      pull-requests: write # open/update the "chore: version packages" PR
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          # Writes an .npmrc wiring NODE_AUTH_TOKEN to this registry, so
+          # `changeset publish` authenticates against npm.
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci
+
+      - name: Create Release Pull Request or Publish to npm
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          version: npm run version # `changeset version` — bump + changelog for the PR
+          publish: npm run release # build + smoke + `changeset publish`
+          title: 'chore: version packages'
+          commit: 'chore: version packages'
+          createGithubReleases: true
+        env:
+          # Lets the action open the version PR and create GitHub Releases.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Consumed by the setup-node .npmrc for the actual `npm publish`.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          HUSKY: '0'

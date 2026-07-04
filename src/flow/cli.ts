@@ -1,6 +1,6 @@
 // CLI backend for the `eventkit-flow` bin. Intentionally NOT re-exported from the
 // `./flow` barrel — it uses node builtins and is only loaded by the bin, so library
-// consumers of `@hopdrive/eventkit/flow` never pull `node:fs` into their bundle.
+// consumers of `eventkit/flow` never pull `node:fs` into their bundle.
 //
 //   eventkit-flow generate --kit <module> [--out <file>] [--export <name>] [--title <s>]
 //   eventkit-flow check    --kit <module>  --out <file>  [--export <name>] [--title <s>]

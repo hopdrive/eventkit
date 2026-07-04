@@ -1,10 +1,10 @@
 // =============================================================================
-// @hopdrive/eventkit — netlifyV2Platform
+// eventkit — netlifyV2Platform
 // =============================================================================
 // Modern Netlify v2 `(Request, Context)` → Web `Response`; bucket B (computed
 // deadline) unless a v2 context is confirmed to expose a live countdown (D21).
 // A platform plugin (`provides: ['platform']`, §11.0/§9.8). Imported via
-// `@hopdrive/eventkit/platforms`.
+// `eventkit/platforms`.
 import type { HandlerShortCircuit, InvocationResult, PlatformAdapter, RequestContext } from '../../core/index.js';
 import { computedDeadline, env, extractHeaders, httpResponse, queryOf } from '../platform-shared.js';
 

@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit — source-hasura-cron
+// eventkit — source-hasura-cron
 // =============================================================================
 // The `hasuraCron` source plugin — Hasura scheduled (cron) triggers (ADR-023).
 // `provides: ['source']`; folder name === plugin `name` (`source-hasura-cron`).
