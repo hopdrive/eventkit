@@ -71,6 +71,7 @@ exports[`published API surface (value exports per subpath) > matches the frozen 
     "lambdaPlatform",
     "netlifyBackgroundPlatform",
     "netlifyPlatform",
+    "netlifyV2BackgroundPlatform",
     "netlifyV2Platform",
   ],
   "./plugins": [
