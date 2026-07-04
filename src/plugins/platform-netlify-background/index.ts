@@ -1,10 +1,10 @@
 // =============================================================================
-// @hopdrive/eventkit — netlifyBackgroundPlatform
+// eventkit — netlifyBackgroundPlatform
 // =============================================================================
 // Netlify Background Functions: ~15-min budget, returns 202 immediately (the return
 // body is ignored by the platform). Bucket A with a long budget; powers the live
 // batch_jobs watch view (§12.6). A platform plugin (`provides: ['platform']`,
-// §11.0/§9.8). Imported via `@hopdrive/eventkit/platforms`.
+// §11.0/§9.8). Imported via `eventkit/platforms`.
 import type { PlatformAdapter, RequestContext } from '../../core/index.js';
 import { computedDeadline, env, extractHttpBody, httpRejection, nativeCountdown, type LambdaContext } from '../platform-shared.js';
 

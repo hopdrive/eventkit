@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/core — frozen public contracts
+// eventkit/core — frozen public contracts
 // =============================================================================
 // The complete public type surface (the §9/§11 RFC interfaces plus the helper
 // types the RFC left loose) lives here. Runtime values exported are the pure

@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/testing
+// eventkit/testing
 // =============================================================================
 // Test helpers for exercising detectors, jobs, prepare, and plugins without a real
 // source/platform (§20). `fakeSource` is a minimal in-memory SourceAdapter: it wraps

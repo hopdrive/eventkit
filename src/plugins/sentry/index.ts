@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/plugins/transports/sentry
+// eventkit/plugins/transports/sentry
 // =============================================================================
 // Generic error transport (ADR-024). Forwards `onError` to Sentry using the REAL
 // ingest protocol: the default sender derives the envelope endpoint + X-Sentry-Auth

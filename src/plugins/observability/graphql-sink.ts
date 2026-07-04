@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/plugins/observability/graphql-sink
+// eventkit/plugins/observability/graphql-sink
 // =============================================================================
 // The built-in observability sink: bulk-upserts an ObservabilityBatch to the
 // canonical Hasura observability tables (invocations / event_executions /

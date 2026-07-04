@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/sources/hasura — hasuraChainedClient (ADR-039.4)
+// eventkit/sources/hasura — hasuraChainedClient (ADR-039.4)
 // =============================================================================
 // The eventkit-native paved road for OUTBOUND token injection. Chain placement
 // (ADR-039) puts each concern in its layer: EventKit provides the token

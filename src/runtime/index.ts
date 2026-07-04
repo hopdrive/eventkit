@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit runtime
+// eventkit runtime
 // =============================================================================
 // The runtime layer: createEventKit(). Depends on core (types + pure utilities) but
 // core never depends back on it. The root package re-exports createEventKit. The job

@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/flow
+// eventkit/flow
 // =============================================================================
 // Flow-documentation generators (§14–§16). Turn a built kit into a structural
 // description, a manifest-vocabulary graph, or a committed YAML document. Pure —

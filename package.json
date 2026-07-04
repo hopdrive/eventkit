@@ -1,6 +1,6 @@
 {
-  "name": "@hopdrive/eventkit",
-  "version": "0.1.0",
+  "name": "hopdrive-eventkit",
+  "version": "0.2.0",
   "description": "Source-agnostic business-event execution framework. The successor to @hopdrive/hasura-event-detector.",
   "type": "module",
   "main": "dist/cjs/index.js",
@@ -196,7 +196,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "changeset": "changeset",
-    "version": "changeset version",
+    "version": "changeset version && npm install --package-lock-only --ignore-scripts",
     "release": "npm run build && npm run smoke:bundle && changeset publish",
     "prepare": "npm run build",
     "attw": "attw --pack . --profile node16",
@@ -211,7 +211,8 @@
   "author": "HopDrive Engineering",
   "license": "ISC",
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com/hopdrive"
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
   },
   "dependencies": {
     "uuid": "^14.0.0"

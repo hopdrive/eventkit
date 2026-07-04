@@ -1,7 +1,7 @@
 # Changesets
 
 This folder is managed by [Changesets](https://github.com/changesets/changesets). It tracks
-intended version bumps and changelog entries for `@hopdrive/eventkit`.
+intended version bumps and changelog entries for `eventkit`.
 
 While EventKit is pre-1.0 and unpublished, changesets still give us a clean, reviewable
 record of what changed in each phase. The flow:

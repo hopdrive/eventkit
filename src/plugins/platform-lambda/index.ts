@@ -1,8 +1,8 @@
 // =============================================================================
-// @hopdrive/eventkit — lambdaPlatform
+// eventkit — lambdaPlatform
 // =============================================================================
 // Raw AWS Lambda `(event, context)`; bucket A (native countdown). A platform
-// plugin (`provides: ['platform']`, §11.0/§9.8). Imported via `@hopdrive/eventkit/platforms`.
+// plugin (`provides: ['platform']`, §11.0/§9.8). Imported via `eventkit/platforms`.
 import type { InvocationResult, PlatformAdapter, RequestContext } from '../../core/index.js';
 import { env, extractHttpBody, httpRejection, httpResponse, nativeCountdown, requestMeta, type LambdaContext } from '../platform-shared.js';
 

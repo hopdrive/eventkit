@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/sources/webhook — verify presets (D33)
+// eventkit/sources/webhook — verify presets (D33)
 // =============================================================================
 // Generic, reusable signature/token checks for `webhook({ verify })`, so each repo
 // stops hand-rolling the same handful of schemes. Every preset returns a synchronous

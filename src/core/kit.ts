@@ -164,7 +164,7 @@ export interface EventKit {
   /**
    * Read-only structural snapshot of the kit: its source, platform, plugins, and
    * every registered event with its static job set (§14–§16). Pure — resolves
-   * plugins but runs nothing. Feeds the flow generator (`@hopdrive/eventkit/flow`).
+   * plugins but runs nothing. Feeds the flow generator (`eventkit/flow`).
    */
   describe(): KitDescription;
 }

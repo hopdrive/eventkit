@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/plugins/loop-guard
+// eventkit/plugins/loop-guard
 // =============================================================================
 // Truly generic loop guard (ADR-039.3). It owns POLICY, not payload anatomy:
 // SOURCES surface ordered inbound tracking-token candidates on

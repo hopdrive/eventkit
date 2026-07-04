@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/plugins/transports/grafana
+// eventkit/plugins/transports/grafana
 // =============================================================================
 // A log BRIDGE (ADR-024). It forwards framework + job logs to a log sink; it does
 // NOT own Grafana/Loki plumbing unless you ask it to. Two mutually-exclusive modes:

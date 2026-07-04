@@ -400,7 +400,7 @@
     <div class="fromto reveal">
       <span class="old">@hopdrive/hasura-event-detector</span>
       <span class="arrow">→</span>
-      <span class="new">@hopdrive/eventkit</span>
+      <span class="new">eventkit</span>
     </div>
 
     <div class="pipe-frame reveal">
@@ -561,10 +561,10 @@
         </div>
         <div class="pane becomes">
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">register-style, once</span></div>
-<pre><span class="k">import</span> { createEventKit } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
-<span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources'</span>;
-<span class="k">import</span> { netlifyPlatform } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/platforms'</span>;
-<span class="k">import</span> { observability, graphqlSink, batch, loopGuard, grafana } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins'</span>;
+<pre><span class="k">import</span> { createEventKit } <span class="k">from</span> <span class="s">'eventkit'</span>;
+<span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'eventkit/sources'</span>;
+<span class="k">import</span> { netlifyPlatform } <span class="k">from</span> <span class="s">'eventkit/platforms'</span>;
+<span class="k">import</span> { observability, graphqlSink, batch, loopGuard, grafana } <span class="k">from</span> <span class="s">'eventkit/plugins'</span>;
 <span class="k">import</span> { getLogger } <span class="k">from</span> <span class="s">'@hopdrive/sdk-server-logger'</span>;   <span class="c">// app-side; injected into the bridge</span>
 <span class="k">import</span> { batchJobStore } <span class="k">from</span> <span class="s">'../~lib/batchJobStore'</span>;   <span class="c">// app-side store.update(id,fields); built-in graphqlBatchJobStore is planned</span>
 <span class="k">import</span> auth <span class="k">from</span> <span class="s">'../~lib/functionAuth'</span>;
@@ -627,7 +627,7 @@ module.exports.detector = <span class="k">async</span> (eventName, hasuraEvent) 
         </div>
         <div class="pane becomes">
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">eventkit</span></div>
-<pre><span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources/hasura'</span>;
+<pre><span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'eventkit/sources/hasura'</span>;
 <span class="k">import type</span> { AppointmentRow } <span class="k">from</span> <span class="s">'./types'</span>;
 
 <span class="k">export const</span> detector = hasuraEvent.detector<span class="k">&lt;AppointmentRow&gt;</span>((ctx) =&gt; {
@@ -682,7 +682,7 @@ module.exports.handler = <span class="k">async</span> (eventName, hasuraEvent) =
         </div>
         <div class="pane becomes">
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">defineEvent — declarative</span></div>
-<pre><span class="k">import</span> { defineEvent, job } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
+<pre><span class="k">import</span> { defineEvent, job } <span class="k">from</span> <span class="s">'eventkit'</span>;
 <span class="k">import</span> { detector } <span class="k">from</span> <span class="s">'./appointment.ready.detector'</span>;   <span class="c">// the switch from §01</span>
 <span class="k">import</span> { initSdk } <span class="k">from</span> <span class="s">'../~lib/sdk'</span>;
 <span class="k">import</span> { sendOfferSMS, sendAppointmentOfferedEmailToOrg } <span class="k">from</span> <span class="s">'./jobs'</span>;
@@ -846,8 +846,8 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
         <div class="pane becomes">
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">webhook source adapter</span></div>
 <pre><span class="c">// events/acertus.order.created.ts</span>
-<span class="k">import</span> { defineEvent, job, ClientError } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
-<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources'</span>;
+<span class="k">import</span> { defineEvent, job, ClientError } <span class="k">from</span> <span class="s">'eventkit'</span>;
+<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'eventkit/sources'</span>;
 <span class="k">import</span> { publishEventLog, createOrderFromVendor } <span class="k">from</span> <span class="s">'./jobs'</span>;
 <span class="k">import type</span> { AcertusOrder } <span class="k">from</span> <span class="s">'./types'</span>;
 
@@ -879,10 +879,10 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
       <p class="cmp-note" style="margin-top:14px"><b style="color:var(--brass-2)">Signature verification happens in one place: the source&rsquo;s <code>verify</code> function.</b> You pass it to <code>createEventKit(webhook, { verify })</code>. It runs <b>once</b> per request, before <code>normalize()</code>, and puts the result on <code>ctx.signatureVerified</code>. It does <i>not</i> re-run for each event module. So the detector&rsquo;s <code>signatureVerified &amp;&amp; …</code> is just a cheap boolean read of that one result, not a second check. On purpose, <code>verify</code> never throws. A forged request still gets normalized, it&rsquo;s just flagged, and the detector is what decides not to fire on it. That keeps the call explicit and visible per event.</p>
       <p class="cmp-note" style="margin-top:10px"><b>Why not <code>handler({ before })</code>?</b> <code>before</code> runs <i>before</i> <code>normalize()</code>, on the raw platform args, so it can&rsquo;t see <code>ctx.signatureVerified</code>. Using it for signatures would mean re-doing the HMAC by hand. Keep <code>before</code> for cheap request-level gates that don&rsquo;t need the parsed envelope, like the HTTP method or a missing auth header. <b>So the rule is simple:</b> signatures go in <code>verify</code> (once, in the source), and the forged-request guard goes in the detector via <code>signatureVerified</code>. The endpoint itself is the same register-style shape as a <code>db-*</code> function. The platform adapter maps the module&rsquo;s <code>resolve</code>/<code>respond</code> (or a thrown <code>ClientError</code>) onto the HTTP response:</p>
       <p class="cmp-note" style="margin-top:10px"><b style="color:var(--brass-2)">Or skip the per-detector guard entirely (ADR-030).</b> If <i>every</i> event on an endpoint needs a valid signature, pass <code>rejectUnverified: true</code> to the source: <code>createEventKit(webhook, { vendor, verify, rejectUnverified: true })</code>. Now a failed <code>verify</code> gets rejected with <b>401</b> before any module runs (pass <code>{ status, message }</code> to change that, say <code>403</code>), so no detector needs <code>signatureVerified &amp;&amp;</code> at all. The trade-off: it&rsquo;s a hard block <i>before</i> the request becomes an event, so there&rsquo;s <b>no Invocation record</b>, just a framework <code>warn</code>. Keep the default (<code>verify</code> flags it, the detector declines) when you want the forged attempt recorded for security telemetry. Reach for <code>rejectUnverified</code> when you just want it gone with no boilerplate.</p>
-<pre style="border-radius:12px;border:1px solid var(--hair);max-width:720px"><span class="k">import</span> { createEventKit } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
-<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources'</span>;
-<span class="k">import</span> { netlifyV2Platform } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/platforms'</span>;
-<span class="k">import</span> { observability, graphqlSink } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins'</span>;
+<pre style="border-radius:12px;border:1px solid var(--hair);max-width:720px"><span class="k">import</span> { createEventKit } <span class="k">from</span> <span class="s">'eventkit'</span>;
+<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'eventkit/sources'</span>;
+<span class="k">import</span> { netlifyV2Platform } <span class="k">from</span> <span class="s">'eventkit/platforms'</span>;
+<span class="k">import</span> { observability, graphqlSink } <span class="k">from</span> <span class="s">'eventkit/plugins'</span>;
 <span class="k">import</span> { acertusSignature } <span class="k">from</span> <span class="s">'./security'</span>;
 <span class="k">import</span> events <span class="k">from</span> <span class="s">'./events'</span>;
 
@@ -981,8 +981,8 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
         <div class="pane becomes">
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">hasuraAction source adapter</span></div>
 <pre><span class="c">// events/cancelAppointment.ts</span>
-<span class="k">import</span> { defineEvent, ActionError } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
-<span class="k">import</span> { hasuraAction } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources/hasura'</span>;
+<span class="k">import</span> { defineEvent, ActionError } <span class="k">from</span> <span class="s">'eventkit'</span>;
+<span class="k">import</span> { hasuraAction } <span class="k">from</span> <span class="s">'eventkit/sources/hasura'</span>;
 <span class="k">import</span> { cancelAppointment, notifyCustomer } <span class="k">from</span> <span class="s">'./jobs'</span>;
 
 <span class="k">export const</span> detector = hasuraAction.detector((ctx) =&gt; ctx.actionName === <span class="s">'cancelAppointment'</span>);
@@ -1004,9 +1004,9 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
       </div>
       <p class="cmp-note" style="margin-top:16px"><b style="color:var(--brass-2)">Why this is the security win.</b> Hasura is already the gate in front of every table and column: roles, row/column permissions, JWT or webhook auth. An Action rides that <i>same</i> model. You declare which roles can call <code>cancelAppointment</code> in Hasura&rsquo;s metadata, and Hasura enforces it before forwarding <code>{ action, input, session_variables, request_query }</code> to your function. So client-invokable privileged logic stops being N snowflake endpoints that each re-derive who the caller is and what they&rsquo;re allowed to do. It&rsquo;s one place to reason about access, one audit surface, and the function gets verified <code>session_variables</code> (<code>role</code> / <code>userId</code> / <code>email</code>) instead of a token it has to trust. Bespoke <code>app-*</code> endpoints get converted to actions over time (security via RBAC, downstream effects traced by correlation id), not lifted as raw HTTP.</p>
       <p class="cmp-note" style="margin-top:14px">There&rsquo;s no dedicated &ldquo;action platform&rdquo;: the request/response contract <i>composes</i> onto whichever generic platform adapter you already register. <code>resolve</code>&rsquo;s return becomes a <b>2xx</b> + the output JSON; a thrown <code>ActionError(message, code?)</code> becomes a <b>4xx</b> + <code>{ message, extensions:{ code? } }</code> &mdash; the exact GraphQL-error shape Hasura surfaces to the client.</p>
-<pre style="border-radius:12px;border:1px solid var(--hair);max-width:720px"><span class="k">import</span> { createEventKit } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
-<span class="k">import</span> { hasuraAction } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources/hasura'</span>;
-<span class="k">import</span> { netlifyV2Platform } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/platforms'</span>;
+<pre style="border-radius:12px;border:1px solid var(--hair);max-width:720px"><span class="k">import</span> { createEventKit } <span class="k">from</span> <span class="s">'eventkit'</span>;
+<span class="k">import</span> { hasuraAction } <span class="k">from</span> <span class="s">'eventkit/sources/hasura'</span>;
+<span class="k">import</span> { netlifyV2Platform } <span class="k">from</span> <span class="s">'eventkit/platforms'</span>;
 <span class="k">import</span> events <span class="k">from</span> <span class="s">'./events'</span>;
 
 <span class="k">const</span> kit = createEventKit(<span class="hl">hasuraAction</span>)            <span class="c">// the source; Hasura RBAC sits in front of it</span>
@@ -1035,7 +1035,7 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
       <div class="minicard">
         <h3>Entirely independent from core</h3>
         <ul>
-          <li>A plugin imports only <b>public types</b> from <code>@hopdrive/eventkit</code> — never internals (scheduler, dispatch, retry loop).</li>
+          <li>A plugin imports only <b>public types</b> from <code>eventkit</code> — never internals (scheduler, dispatch, retry loop).</li>
           <li>Core has <b>zero knowledge</b> of any specific plugin; it just calls hooks in registration order.</li>
           <li>Plugins are <b>versioned and tested independently</b> — all five prebuilt ones ship in the eventkit repo (<code>/plugins/*</code>); a HopDrive or third-party package is only needed for an SDK-coupled extra.</li>
           <li>They <b>self-correlate</b> from the IDs already on the context (invocation, envelope, job execution) and never require a job or handler to pass them an object — so <b>jobs stay plugin-agnostic</b>. A job runs identically whether or not a plugin is loaded.</li>
@@ -1122,7 +1122,7 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
       <div class="cmp" style="grid-template-columns:1fr">
         <div class="pane becomes">
           <div class="pane-head"><span class="tagdot"></span>plugins/slack-alerts.ts</div>
-<pre><span class="k">import type</span> { EventKitPlugin, ErrorContext } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
+<pre><span class="k">import type</span> { EventKitPlugin, ErrorContext } <span class="k">from</span> <span class="s">'eventkit'</span>;
 
 <span class="c">// a plugin is just a factory returning the hooks it cares about</span>
 <span class="k">export function</span> slackAlerts(config: { webhookUrl: <span class="k">string</span> }): EventKitPlugin {
@@ -1387,7 +1387,7 @@ kit.registerEvents(events);</pre>
 
     <div style="margin-top:38px">
       <h3 style="font-size:22px;letter-spacing:-.01em">The plugin board &mdash; all 13, in one place</h3>
-      <p style="color:var(--muted);max-width:80ch;margin:6px 0 20px">Everything that registers on a kit is a plugin, and there are <b>13 prebuilt</b>: <b>4 sources</b> (the ingress, one per kit), the <b>5 cross-cutting plugins</b> (they fire along the per-invocation hook lifecycle), and <b>4 platform adapters</b> (the request/response envelope your function deploys into). The board plots each one by <b>when it acts</b> across a single invocation. Sources at the ingress, the cross-cutting five along the middle, platforms wrapping the whole run. <b>Pick any lane to open its detail.</b> The five cross-cutting plugins have their full spec inline below. Sources and platforms show a short summary and link up to their own subsections (with flow diagrams) above.<br><br>Where each cross-cutting plugin lives follows one rule (ADR-024). If a plugin&rsquo;s behavior is fully determined by injected <i>config</i>, it ships <b>built-in</b> inside <code>@hopdrive/eventkit</code>. All five do, loop-guard included (it reads a source-supplied <code>tokenCandidates</code> list, not a hardcoded field — the <code>updated_by</code> convention is the Hasura source&rsquo;s <i>config</i>). A plugin only leaves core if it imports a HopDrive SDK, knows a domain table, or hardcodes a cross-service agreement. HopDrive&rsquo;s leftover layer is just config presets, not logic.</p>
+      <p style="color:var(--muted);max-width:80ch;margin:6px 0 20px">Everything that registers on a kit is a plugin, and there are <b>13 prebuilt</b>: <b>4 sources</b> (the ingress, one per kit), the <b>5 cross-cutting plugins</b> (they fire along the per-invocation hook lifecycle), and <b>4 platform adapters</b> (the request/response envelope your function deploys into). The board plots each one by <b>when it acts</b> across a single invocation. Sources at the ingress, the cross-cutting five along the middle, platforms wrapping the whole run. <b>Pick any lane to open its detail.</b> The five cross-cutting plugins have their full spec inline below. Sources and platforms show a short summary and link up to their own subsections (with flow diagrams) above.<br><br>Where each cross-cutting plugin lives follows one rule (ADR-024). If a plugin&rsquo;s behavior is fully determined by injected <i>config</i>, it ships <b>built-in</b> inside <code>eventkit</code>. All five do, loop-guard included (it reads a source-supplied <code>tokenCandidates</code> list, not a hardcoded field — the <code>updated_by</code> convention is the Hasura source&rsquo;s <i>config</i>). A plugin only leaves core if it imports a HopDrive SDK, knows a domain table, or hardcodes a cross-service agreement. HopDrive&rsquo;s leftover layer is just config presets, not logic.</p>
       <p style="color:var(--muted);max-width:80ch;margin:-8px 0 20px">This is what keeps the I/O plugins generic: each one owns its <i>logic</i> (observability owns the record hierarchy + buffering, batch owns the durable lifecycle, the transports own log/error shaping) but takes its <i>destination</i> as an <b>injected seam</b> — a <code>sink</code> for observability, a <code>store</code> for batch, an injected <code>logger</code> (or direct Loki) for grafana, a <code>send</code> for sentry. The plugin never knows whether it&rsquo;s talking to Hasura, an HTTP collector, the <code>sdk-server-logger</code> queue, or a test spy; the destination + its secrets arrive as config, and <b>no plugin imports a HopDrive SDK</b> — the app injects it (e.g. <code>getLogger()</code> into the grafana bridge). EventKit ships a built-in <code>graphqlSink</code> (and a <code>graphqlBatchJobStore</code> is planned) so HopDrive wires them in one line, while staying trivially testable and swappable.</p>
 
       <noscript><style>.plugdetail .pspec[hidden]{display:block !important;animation:none;}.plugdetail .pspec{margin:0 0 16px;}.plugboard{display:none;}</style></noscript>
@@ -1784,8 +1784,8 @@ module.exports = {
         <div class="pane becomes">
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">detector + declarative jobs</span></div>
 <pre><span class="c">// events/spark.appointment.created.ts</span>
-<span class="k">import</span> { defineEvent } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
-<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources'</span>;
+<span class="k">import</span> { defineEvent } <span class="k">from</span> <span class="s">'eventkit'</span>;
+<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'eventkit/sources'</span>;
 <span class="k">import</span> { upsertAppointmentFromSpark } <span class="k">from</span> <span class="s">'../resolve'</span>;
 <span class="k">import</span> { syncSchedulerConfig } <span class="k">from</span> <span class="s">'../jobs'</span>;
 <span class="k">import type</span> { SparkAppointment } <span class="k">from</span> <span class="s">'../types'</span>;
@@ -1854,7 +1854,7 @@ kit.registerEvents(events);
     <div class="feats" style="grid-template-columns:repeat(3,1fr)">
       <div class="feat obs">
         <h3><span class="ic">◆</span> Generated flow docs <span class="refbadge shipped">shipped</span></h3>
-        <p>A module declares its jobs as a <b>static array</b> with no hidden branches, so we can read the whole structure without running anything. <code>kit.describe()</code> walks the registered kit. <code>@hopdrive/eventkit/flow</code> writes it out as a committed YAML doc of <b>how events flow through the system</b>. Regenerate it in an npm script, and the <code>eventkit-flow check</code> gate keeps it honest in CI.</p>
+        <p>A module declares its jobs as a <b>static array</b> with no hidden branches, so we can read the whole structure without running anything. <code>kit.describe()</code> walks the registered kit. <code>eventkit/flow</code> writes it out as a committed YAML doc of <b>how events flow through the system</b>. Regenerate it in an npm script, and the <code>eventkit-flow check</code> gate keeps it honest in CI.</p>
         <span class="pico">kit.describe() · toFlowYaml / toFlowGraph · eventkit-flow generate | check</span>
       </div>
       <div class="feat phased">
@@ -1890,9 +1890,9 @@ kit.registerEvents(events);
       </div>
       <div>
         <p class="eyebrow" style="margin-bottom:12px">The committed doc: <code>db-rideshares.flow.yaml</code></p>
-<pre style="margin:0"><span class="c"># @generated by @hopdrive/eventkit/flow — DO NOT EDIT BY HAND.
+<pre style="margin:0"><span class="c"># @generated by eventkit/flow — DO NOT EDIT BY HAND.
 # CI gate: eventkit-flow check --kit ./src/eventkit.js --out …</span>
-generator: <span class="s">"@hopdrive/eventkit/flow"</span>
+generator: <span class="s">"eventkit/flow"</span>
 kit:
   source: { name: source-hasura-event, type: database }
   plugins: [loop-guard, correlation-resolver]
@@ -1917,7 +1917,7 @@ events:
 <span class="c">// package.json "scripts"</span>
 <span class="s">"flow:gen"</span>:   <span class="s">"eventkit-flow generate --kit ./src/eventkit.js --out architecture/db-rideshares.flow.yaml"</span>,
 <span class="s">"flow:check"</span>: <span class="s">"eventkit-flow check    --kit ./src/eventkit.js --out architecture/db-rideshares.flow.yaml"</span></pre>
-      <p style="font-size:13px;color:var(--faint);margin:12px 0 0">Point <code>--kit</code> at a module that exports an <code>EventKit</code>, and pass <code>--export &lt;name&gt;</code> if it isn&rsquo;t the default or <code>kit</code> export. Want a programmatic hook instead? <code>toFlowYaml(kit)</code>, <code>toFlowGraph(kit)</code>, and <code>describeKit(kit)</code> all come from <code>@hopdrive/eventkit/flow</code>.</p>
+      <p style="font-size:13px;color:var(--faint);margin:12px 0 0">Point <code>--kit</code> at a module that exports an <code>EventKit</code>, and pass <code>--export &lt;name&gt;</code> if it isn&rsquo;t the default or <code>kit</code> export. Want a programmatic hook instead? <code>toFlowYaml(kit)</code>, <code>toFlowGraph(kit)</code>, and <code>describeKit(kit)</code> all come from <code>eventkit/flow</code>.</p>
     </div>
   </div>
 </section>
@@ -1928,7 +1928,7 @@ events:
     <div class="sec-head narrow">
       <p class="eyebrow">How you test it</p>
       <h2>Test your modules, not a mock of the runtime</h2>
-      <p class="sec-sub">The old way was mocking <code>run()</code> and <code>job()</code>, and those mocks drifted from the real thing until the tests were lying to you. So the test helpers ship in the package, at <code>@hopdrive/eventkit/testing</code>, and they run your modules through the <b>real</b> runtime. Same version as the code they test, so they can never skew. It&rsquo;s a versioned public surface, held to the same stability bar as everything else.</p>
+      <p class="sec-sub">The old way was mocking <code>run()</code> and <code>job()</code>, and those mocks drifted from the real thing until the tests were lying to you. So the test helpers ship in the package, at <code>eventkit/testing</code>, and they run your modules through the <b>real</b> runtime. Same version as the code they test, so they can never skew. It&rsquo;s a versioned public surface, held to the same stability bar as everything else.</p>
     </div>
 
     <p style="font-size:14.5px;color:var(--muted);max-width:70ch;margin:0 0 22px;line-height:1.6">Think of a consumer&rsquo;s tests as four layers, widest at the bottom. Most of your tests are tiny detector checks. One snapshot pins each kit&rsquo;s shape. A handful of full runs prove the wiring. And CI keeps the flow doc honest. You lean on the first layer and barely touch the last.</p>
@@ -1958,8 +1958,8 @@ events:
 
     <div class="callout" style="margin-top:28px">
       <p class="eyebrow">What it reads like</p>
-<pre style="margin:0"><span class="k">import</span> { testInvocation, detectorContract, hasuraInsert } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/testing'</span>;
-<span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources'</span>;
+<pre style="margin:0"><span class="k">import</span> { testInvocation, detectorContract, hasuraInsert } <span class="k">from</span> <span class="s">'eventkit/testing'</span>;
+<span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'eventkit/sources'</span>;
 <span class="k">import</span> { appointmentReady } <span class="k">from</span> <span class="s">'./appointment.ready'</span>;
 
 <span class="c">// Layer 1 — the detector, over a table. The MANUAL suppress case is added for you.</span>
@@ -1989,12 +1989,12 @@ expect(t.job(<span class="s">'sendOfferSMS'</span>)?.status).toBe(<span class="s
     <div class="refgroup">
       <h3>Import map</h3>
       <p class="ghint">Import a whole family from its barrel — one path per family, tree-shaken (the package is <code>sideEffects</code>-free, so naming a symbol only bundles that symbol). Granular subpaths (<code>/plugins/batch</code>, <code>/sources/hasura</code>, …) exist if you ever want them, but the barrels are the day-to-day style.</p>
-<pre><span class="k">import</span> { createEventKit, defineEvent, job, ClientError, ActionError } <span class="k">from</span> <span class="s">'@hopdrive/eventkit'</span>;
-<span class="k">import</span> { hasuraEvent, hasuraCron, hasuraAction, webhook } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/sources'</span>;
-<span class="k">import</span> { observability, graphqlSink, batch, loopGuard, grafana, sentry } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/plugins'</span>;
-<span class="k">import</span> { lambdaPlatform, netlifyPlatform, netlifyV2Platform, netlifyBackgroundPlatform } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/platforms'</span>;
-<span class="k">import</span> { fakeSource, defineFakeEvent } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/testing'</span>;
-<span class="k">import</span> { describeKit, toFlowYaml, toFlowGraph } <span class="k">from</span> <span class="s">'@hopdrive/eventkit/flow'</span>;   <span class="c">// flow docs (ADR-032)</span></pre>
+<pre><span class="k">import</span> { createEventKit, defineEvent, job, ClientError, ActionError } <span class="k">from</span> <span class="s">'eventkit'</span>;
+<span class="k">import</span> { hasuraEvent, hasuraCron, hasuraAction, webhook } <span class="k">from</span> <span class="s">'eventkit/sources'</span>;
+<span class="k">import</span> { observability, graphqlSink, batch, loopGuard, grafana, sentry } <span class="k">from</span> <span class="s">'eventkit/plugins'</span>;
+<span class="k">import</span> { lambdaPlatform, netlifyPlatform, netlifyV2Platform, netlifyBackgroundPlatform } <span class="k">from</span> <span class="s">'eventkit/platforms'</span>;
+<span class="k">import</span> { fakeSource, defineFakeEvent } <span class="k">from</span> <span class="s">'eventkit/testing'</span>;
+<span class="k">import</span> { describeKit, toFlowYaml, toFlowGraph } <span class="k">from</span> <span class="s">'eventkit/flow'</span>;   <span class="c">// flow docs (ADR-032)</span></pre>
     </div>
 
     <div class="refgroup">
@@ -2027,7 +2027,7 @@ kit.registerEvents(modules[] | record): EventKit</div>
       </div>
       <div class="refentry">
         <div class="rsig">kit.describe(): KitDescription <span class="refbadge shipped">shipped</span></div>
-        <p>A read-only snapshot of the structure: source, platform, plugins, and every registered event with its <b>static</b> job set. It&rsquo;s pure. It resolves plugins but runs no detector, no <code>prepare</code>, no job, no hook. This is what feeds the flow generator (<code>@hopdrive/eventkit/flow</code>) and the <code>eventkit-flow</code> CLI. See <a href="#reference-flow" style="color:var(--brass)">Flow docs</a> below and the &ldquo;Generated flow docs&rdquo; section above.</p>
+        <p>A read-only snapshot of the structure: source, platform, plugins, and every registered event with its <b>static</b> job set. It&rsquo;s pure. It resolves plugins but runs no detector, no <code>prepare</code>, no job, no hook. This is what feeds the flow generator (<code>eventkit/flow</code>) and the <code>eventkit-flow</code> CLI. See <a href="#reference-flow" style="color:var(--brass)">Flow docs</a> below and the &ldquo;Generated flow docs&rdquo; section above.</p>
       </div>
     </div>
 
@@ -2142,7 +2142,7 @@ kit.registerEvents(modules[] | record): EventKit</div>
 
     <div class="refgroup">
       <h3>Core types</h3>
-      <p class="ghint">The runtime vocabulary. All exported from the root / <code>@hopdrive/eventkit/core</code>.</p>
+      <p class="ghint">The runtime vocabulary. All exported from the root / <code>eventkit/core</code>.</p>
       <div class="refcols">
         <div class="refentry"><div class="rsig">EventEnvelope</div><p>Normalized inbound signal: <code>id</code>, <code>source</code>, <code>sourceType</code>, <code>receivedAt</code>, <code>correlationId</code>, <code>payload</code>, <code>meta</code>, <code>raw?</code>.</p></div>
         <div class="refentry"><div class="rsig">DetectedEvent</div><p>A fired business event: <code>name</code>, ids, <code>detectedAt</code>, <code>detectorDurationMs</code>, <code>envelope</code>.</p></div>
@@ -2159,7 +2159,7 @@ kit.registerEvents(modules[] | record): EventKit</div>
 
     <div class="refgroup">
       <h3>Testing &amp; utilities</h3>
-      <p class="ghint">From <code>@hopdrive/eventkit/testing</code> and the root.</p>
+      <p class="ghint">From <code>eventkit/testing</code> and the root.</p>
       <ul class="rfields" style="max-width:84ch">
         <li><b><code>fakeSource(opts?)</code></b> — minimal in-memory source; exposes the raw <code>payload</code> on both contexts.</li>
         <li><b><code>defineFakeEvent(name, detector, jobs, opts?)</code></b> — assemble a module for tests without a real source.</li>
@@ -2171,7 +2171,7 @@ kit.registerEvents(modules[] | record): EventKit</div>
 
     <div class="refgroup" id="reference-flow">
       <h3>Flow docs <span class="refbadge shipped">shipped</span></h3>
-      <p class="ghint">From <code>@hopdrive/eventkit/flow</code>. Turn a built kit into a committed document of how events flow through the system. This is the &ldquo;generator verifies structure&rdquo; half of Expected/Observed/Compare (ADR-032). It&rsquo;s pure, just a read-only registry walk, and it&rsquo;s accurate because modules are declarative. There&rsquo;s also a bin, <code>eventkit-flow</code>, for npm scripts and CI drift-gating.</p>
+      <p class="ghint">From <code>eventkit/flow</code>. Turn a built kit into a committed document of how events flow through the system. This is the &ldquo;generator verifies structure&rdquo; half of Expected/Observed/Compare (ADR-032). It&rsquo;s pure, just a read-only registry walk, and it&rsquo;s accurate because modules are declarative. There&rsquo;s also a bin, <code>eventkit-flow</code>, for npm scripts and CI drift-gating.</p>
       <ul class="rfields" style="max-width:84ch">
         <li><b><code>describeKit(kit): KitDescription</code></b>. The raw structural snapshot (same as <code>kit.describe()</code>): source, platform, plugins, and every event with its static job set.</li>
         <li><b><code>toFlowYaml(kit, { title? }): string</code></b>. The human-readable committed doc. Event-centric, with a <code>@generated</code> banner, and stable so it diffs cleanly.</li>

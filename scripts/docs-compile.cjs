@@ -1,7 +1,7 @@
 // =============================================================================
 // docs-compile gate (testing-strategy.md §20)
 // =============================================================================
-// Kills the doc-drift defect class: every `import { … } from '@hopdrive/eventkit…'`
+// Kills the doc-drift defect class: every `import { … } from 'eventkit…'`
 // in README.md and docs/guide.html must reference exports that ACTUALLY EXIST in the
 // built package. A renamed or removed export whose doc snippet wasn't updated fails
 // CI here with a readable diff, instead of a consumer discovering it at copy-paste time.
@@ -19,7 +19,7 @@ const ROOT = path.join(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const DOC_FILES = ['README.md', 'docs/guide.html'];
 
-// Map a bare specifier (e.g. '@hopdrive/eventkit/plugins') to its built CJS entry.
+// Map a bare specifier (e.g. 'eventkit/plugins') to its built CJS entry.
 function entryFor(specifier) {
   const subpath = specifier === pkg.name ? '.' : './' + specifier.slice(pkg.name.length + 1);
   const entry = pkg.exports?.[subpath];

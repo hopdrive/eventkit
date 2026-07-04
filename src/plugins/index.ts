@@ -1,15 +1,15 @@
 // =============================================================================
-// @hopdrive/eventkit/plugins
+// eventkit/plugins
 // =============================================================================
 // Aggregate barrel for ALL observer/transform plugins — import the whole family
 // from one path: `import { observability, graphqlSink, batch, loopGuard,
-// grafana, sentry } from '@hopdrive/eventkit/plugins'`. Tree-shakeable (the
+// grafana, sentry } from 'eventkit/plugins'`. Tree-shakeable (the
 // package is sideEffects-free), so naming only the plugins you register doesn't
 // bundle the rest. For the tightest bundle you can still import the granular
-// subpath (`@hopdrive/eventkit/plugins/observability`, etc.).
+// subpath (`eventkit/plugins/observability`, etc.).
 //
-// (Sources and platforms have their own family barrels: `@hopdrive/eventkit/sources`
-// and `@hopdrive/eventkit/platforms`.)
+// (Sources and platforms have their own family barrels: `eventkit/sources`
+// and `eventkit/platforms`.)
 export * from './observability/index.js';
 export * from './observability/graphql-sink.js';
 export * from './batch/index.js';

@@ -1,4 +1,4 @@
-// Dual ESM + CJS build for @hopdrive/eventkit.
+// Dual ESM + CJS build for eventkit.
 //
 // Strategy (deliberately matching the proven @hopdrive/hasura-event-detector setup,
 // minus tsc-alias): source files use explicit `.js`-extension relative imports, so

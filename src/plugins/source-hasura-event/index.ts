@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit — source-hasura-event
+// eventkit — source-hasura-event
 // =============================================================================
 // The `hasuraEvent` source plugin — Hasura DB event triggers (ADR-023).
 // `provides: ['source']`; folder name === plugin `name` (`source-hasura-event`).

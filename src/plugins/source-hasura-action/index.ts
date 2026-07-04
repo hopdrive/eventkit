@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit — source-hasura-action
+// eventkit — source-hasura-action
 // =============================================================================
 // The `hasuraAction` request/response source plugin — Hasura Actions (§7.2, ADR-026).
 // `provides: ['source']`; folder name === plugin `name` (`source-hasura-action`).

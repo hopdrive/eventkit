@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/testing — recording instruments (ADR-036)
+// eventkit/testing — recording instruments (ADR-036)
 // =============================================================================
 // Capture what actually happened in a REAL invocation, so tests assert against the
 // runtime, not a mock of it. `recordingPlugin` observes every notification hook;

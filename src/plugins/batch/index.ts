@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/plugins/batch
+// eventkit/plugins/batch
 // =============================================================================
 // Durability plugin (§12, ADR-015/020). Durability is EMERGENT from registering
 // this plugin — there is NO core `durable` flag. Registered only in the

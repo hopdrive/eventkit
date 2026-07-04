@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/plugins/correlation-resolver
+// eventkit/plugins/correlation-resolver
 // =============================================================================
 // Reconnects a chain across an external vendor round-trip (ADR-028, §13). When an
 // inbound signal (a vendor webhook) carries only the VENDOR's own id — not our

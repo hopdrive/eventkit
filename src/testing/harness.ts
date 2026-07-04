@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit/testing — recording harness, doubles, assertions (ADR-036)
+// eventkit/testing — recording harness, doubles, assertions (ADR-036)
 // =============================================================================
 // The consumer-facing test surface. Everything here drives the REAL runtime and
 // reads what actually happened — never a mock of it (the legacy failure mode was

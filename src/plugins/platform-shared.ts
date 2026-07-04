@@ -1,5 +1,5 @@
 // =============================================================================
-// @hopdrive/eventkit — platform adapter shared helpers
+// eventkit — platform adapter shared helpers
 // =============================================================================
 // Helpers common to the platform flavors (lambda / netlify / netlify-background /
 // netlify-v2). Each platform lives in its own folder (§11.0, ADR-027) and imports

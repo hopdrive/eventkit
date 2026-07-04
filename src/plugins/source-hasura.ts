@@ -1,8 +1,8 @@
 // =============================================================================
-// @hopdrive/eventkit/sources/hasura
+// eventkit/sources/hasura
 // =============================================================================
 // Barrel for the Hasura source family — the short public entry point so consumers
-// keep `import { hasuraEvent } from '@hopdrive/eventkit/sources/hasura'`. Each
+// keep `import { hasuraEvent } from 'eventkit/sources/hasura'`. Each
 // adapter is its own flat plugin folder (ADR-027): `source-hasura-event`,
 // `source-hasura-cron`, `source-hasura-action`; shared parsing/types live in
 // `hasura-shared`.
