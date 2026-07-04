@@ -19,7 +19,7 @@ export interface SerializedError {
 }
 
 /** Phase in which an error surfaced, handed to a plugin's `onError`. */
-export type ErrorPhase = 'normalize' | 'detect' | 'handle' | 'job' | 'plugin' | 'chain-guard';
+export type ErrorPhase = 'normalize' | 'prepare' | 'detect' | 'handle' | 'job' | 'plugin' | 'chain-guard';
 
 /** Context accompanying an `onError` notification (§11.2). */
 export interface ErrorContext {

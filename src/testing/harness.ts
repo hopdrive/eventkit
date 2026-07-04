@@ -127,6 +127,7 @@ function detectorCtx(source: EventKitPlugin, raw: unknown, eventName: string): D
     sourceType: envelope.sourceType,
     log: { debug() {} },
     metadata: {},
+    provided: {},
   };
   return (source.buildDetectorContext ? source.buildDetectorContext(envelope, base) : base) as DetectorContext;
 }

@@ -599,6 +599,35 @@ kit.registerEvents(events);</span>
     </div>
 
 
+    <!-- 1b. kit-level prepare -->
+    <div class="cmp-block">
+      <div class="cmp-title"><span class="num">01+</span><h3>Kit-level <code>prepare</code> — one shared ref for the whole invocation</h3><span class="file">createEventKit(source, { prepare })</span></div>
+      <p class="cmp-note"><b style="color:var(--brass-2)">When to reach for it.</b> Sometimes several events (and their jobs) on one function need the <i>same</i> live dependency, built once per request &mdash; a GraphQL executor, an authenticated vendor client, a resolved tenant config. Building it inside each job repeats setup; putting it on the module&rsquo;s <code>prepare</code> only reaches <i>that</i> event&rsquo;s jobs, not the detectors; and stashing it on <code>envelope.meta</code> is wrong because the envelope is <b>persisted to observability</b> (serialized) &mdash; a live client can&rsquo;t and shouldn&rsquo;t go there. Before this existed you had to hand-roll an <code>augmentJobContext</code> plugin, and you had to <i>know</i> that seam existed. Now it&rsquo;s a first-class option.<br><br>
+      <b style="color:var(--brass-2)">How it works.</b> Pass <code>prepare</code> as a reserved key in <code>createEventKit(source, { prepare })</code>. It runs <b>once per invocation</b>, after <code>normalize()</code> and <i>before</i> detection, and whatever object it returns is attached as <code>ctx.provided</code> on <b>every</b> detector, every module <code>prepare</code>, and every job of that invocation &mdash; the <i>same</i> instance throughout. It is request-scoped and <b>never serialized</b>, so live objects are exactly what it&rsquo;s for. It also runs under <code>dryRun</code> (so a detector that reads <code>ctx.provided</code> behaves identically), so keep it cheap. If it throws, the invocation is aborted cleanly (reported as phase <code>prepare</code>) and no jobs run.<br><br>
+      <b style="color:var(--brass-2)">Which <code>prepare</code>/input do I want?</b> Three scopes, narrowing:</p>
+      <div class="lf-flow" style="margin:0 0 14px">
+        <div class="lf-box lf-plat"><span class="l">kit <code>prepare</code> &rarr; <code>ctx.provided</code></span><span class="v">once per INVOCATION · shared refs for detectors + every event + every job</span></div>
+        <div class="lf-box"><span class="l">module <code>prepare</code> &rarr; <code>ctx.input</code>/<code>ctx.prepared</code></span><span class="v">once per DETECTED EVENT · data for THAT event&rsquo;s jobs</span></div>
+        <div class="lf-box lf-teal"><span class="l">per-job <code>input</code></span><span class="v">per JOB · that job&rsquo;s own args (merges highest)</span></div>
+      </div>
+      <pre style="border-radius:12px;border:1px solid var(--hair);max-width:760px"><span class="k">import</span> { createEventKit } <span class="k">from</span> <span class="s">'eventkit'</span>;
+<span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources'</span>;
+<span class="k">import</span> { createFetchExecutor } <span class="k">from</span> <span class="s">'@hopdrive/sdk-core'</span>;
+
+<span class="k">const</span> kit = createEventKit(hasuraEvent, {
+  <span class="c">// runs once/invocation → ctx.provided on every detector, prepare, and job</span>
+  <span class="hl">prepare: () =&gt; ({ executor: createFetchExecutor({ url, adminSecret }) })</span>,
+})
+  .use(netlifyV2Platform)
+  .registerEvents(events);
+
+<span class="c">// detector reads it (pure predicate can still branch on a provided ref):</span>
+<span class="c">//   (ctx) =&gt; ctx.provided.executor &amp;&amp; ctx.columnChanged('status')</span>
+<span class="c">// job reuses the SAME instance (no re-create, no per-job wiring):</span>
+<span class="c">//   (ctx) =&gt; ctx.provided.executor.mutate(UpdateLane, { ... })</span></pre>
+    </div>
+
+
     <!-- 2. detector -->
     <div class="cmp-block">
       <div class="cmp-title"><span class="num">02</span><h3>The detector</h3><span class="file">events/appointment.ready</span></div>
@@ -2002,7 +2031,8 @@ expect(t.job(<span class="s">'sendOfferSMS'</span>)?.status).toBe(<span class="s
       <p class="ghint">Build one kit per warm lambda at module scope; everything else hangs off it.</p>
       <div class="refentry">
         <div class="rsig">createEventKit(source, config?): EventKit</div>
-        <p>Construct a kit with its one required <b>source</b> (the first positional arg — ADR-019). <code>config</code> is the source&rsquo;s own config (e.g. <code>createEventKit(webhook, { verify })</code>).</p>
+        <p>Construct a kit with its one required <b>source</b> (the first positional arg — ADR-019). <code>config</code> is the source&rsquo;s own config (e.g. <code>createEventKit(webhook, { verify })</code>), plus one reserved kit-level key: <code>prepare</code>.</p>
+        <p><code>config.prepare?: (ctx) =&gt; provided</code> — a <b>kit-level prepare</b> that runs once per invocation (after normalize, before detection) and puts its returned object on <code>ctx.provided</code> for every detector, module <code>prepare</code>, and job. Request-scoped, never serialized — the place for a shared live ref (an executor, a vendor client) instead of a hand-rolled <code>augmentJobContext</code> plugin. Also runs under <code>dryRun</code>; a throw aborts the invocation (phase <code>prepare</code>). See §01+.</p>
       </div>
       <div class="refentry">
         <div class="rsig">kit.use(plugin, config?): EventKit</div>

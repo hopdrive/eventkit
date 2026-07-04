@@ -32,6 +32,13 @@ export interface DetectorContext<
   sourceType: EventSourceType;
   log: DetectorLogger;
   metadata: Record<string, unknown>;
+  /**
+   * Request-scoped shared refs contributed by the kit-level `prepare`
+   * (`createEventKit(source, { prepare })`). `{}` when no kit `prepare` is configured.
+   * The SAME object appears on the detector, module `prepare`, and job contexts of an
+   * invocation. Never serialized — safe for live objects (an executor, a vendor client).
+   */
+  provided: Record<string, unknown>;
 }
 
 /**
@@ -51,6 +58,8 @@ export interface HandlerContext<
   log: HandlerLogger;
   metadata: Record<string, unknown>;
   signal?: AbortSignal;
+  /** Kit-level `prepare` output; see {@link DetectorContext.provided}. `{}` if none. */
+  provided: Record<string, unknown>;
 }
 
 /**
@@ -89,7 +98,39 @@ export interface InvocationContext<
   startedAt: Date;
   signal: AbortSignal;
   log: HandlerLogger;
+  /**
+   * Kit-level `prepare` output for this invocation (see {@link DetectorContext.provided}).
+   * Computed once after normalize / before detection; `{}` if no kit `prepare` is set.
+   */
+  provided: Record<string, unknown>;
 }
+
+/**
+ * Context handed to a kit-level `prepare` — `createEventKit(source, { prepare })`. It runs
+ * ONCE per invocation, AFTER normalize and BEFORE detection, and its returned object becomes
+ * `ctx.provided` for every detector, module `prepare`, and job of that invocation. Use it to
+ * build request-scoped shared refs (a GraphQL executor, a vendor client, a resolved config)
+ * in ONE place instead of a hand-rolled `augmentJobContext` plugin. Request-scoped and NEVER
+ * serialized (unlike `envelope.meta`), so live objects are fine here. Keep it cheap — it also
+ * runs in `dryRun` so detectors that read `ctx.provided` behave identically.
+ */
+export interface KitPrepareContext<
+  TPayload = unknown,
+  TMeta extends Record<string, unknown> = Record<string, unknown>,
+> {
+  invocationId: InvocationId;
+  correlationId: CorrelationId;
+  envelope: EventEnvelope<TPayload, TMeta>;
+  source: EventSourceName;
+  sourceType: EventSourceType;
+  log: HandlerLogger;
+  signal: AbortSignal;
+}
+
+/** A kit-level `prepare` function (see {@link KitPrepareContext}). */
+export type KitPrepareFunction = (
+  ctx: KitPrepareContext,
+) => Record<string, unknown> | Promise<Record<string, unknown>>;
 
 /**
  * Kit-level context injected into a plugin when it is instantiated. Per the

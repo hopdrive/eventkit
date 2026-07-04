@@ -265,6 +265,7 @@ function buildJobContext(
     event,
     envelope: event.envelope,
     input: {},
+    provided: invocation.provided,
     trackingToken: '',
     job: { id: jobId, name: def.name, attempt, options: def.options, metadata },
     log,
