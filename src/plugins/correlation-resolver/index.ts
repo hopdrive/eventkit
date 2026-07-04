@@ -18,6 +18,16 @@
 // (pull the vendor id out of THIS vendor's body) and `lookup` (the SDK/DB query) —
 // exactly like a `sink`/`store`. Registered AFTER loop-guard, it stands down when the
 // echo-back path (loop-guard) already recovered the lineage (`skipIfResolved`).
+//
+// Store & retention (author-owned): because the mapping store is app-injected, its
+// SCHEMA and RETENTION are the author's, not eventkit's. A `vendorId → trackingToken`
+// row is ephemeral — needed only from the origin call until the last inbound signal for
+// that key arrives. The recommended pattern: the writer stamps an absolute `expires_at`
+// per row (sized to the round-trip window — e.g. a scheduled job's lead time + the
+// vendor's late-event/receipt lag + redelivery margin), and a use-case-agnostic purge
+// (DB-native, e.g. pg_cron `DELETE ... WHERE expires_at < now()`) reclaims them. A
+// `lookup` miss on an already-purged (or never-arriving) key is EXPECTED, not an error —
+// it flows through `onMiss` and the invocation simply proceeds as a fresh chain root.
 import type { CorrelationId, EventEnvelope, EventKitPlugin } from '../../core/index.js';
 import { asCorrelationId, ClientError } from '../../core/index.js';
 import { createTokenCodec, type TokenCodec, type TokenCodecConfig } from '../../core/tracking-token.js';
@@ -55,6 +65,8 @@ export interface CorrelationResolverConfig<K = unknown> {
   /**
    * Called when `extractKey` yields nothing OR `lookup` finds no mapping. Best-effort
    * hook for logging the orphan (the invocation proceeds as a clean new chain root).
+   * A miss is EXPECTED for a key whose ref has been purged past its `expires_at`
+   * retention (see the store-and-retention note above) — treat it as normal, not a fault.
    */
   onMiss?: (envelope: EventEnvelope, key: K | null | undefined) => void;
   /**
