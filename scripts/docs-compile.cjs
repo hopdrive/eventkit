@@ -1,7 +1,7 @@
 // =============================================================================
 // docs-compile gate (testing-strategy.md §20)
 // =============================================================================
-// Kills the doc-drift defect class: every `import { … } from 'eventkit…'`
+// Kills the doc-drift defect class: every `import { … } from 'hopdrive-eventkit…'`
 // in README.md and docs/guide.html must reference exports that ACTUALLY EXIST in the
 // built package. A renamed or removed export whose doc snippet wasn't updated fails
 // CI here with a readable diff, instead of a consumer discovering it at copy-paste time.
@@ -19,7 +19,7 @@ const ROOT = path.join(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const DOC_FILES = ['README.md', 'docs/guide.html'];
 
-// Map a bare specifier (e.g. 'eventkit/plugins') to its built CJS entry.
+// Map a bare specifier (e.g. 'hopdrive-eventkit/plugins') to its built CJS entry.
 function entryFor(specifier) {
   const subpath = specifier === pkg.name ? '.' : './' + specifier.slice(pkg.name.length + 1);
   const entry = pkg.exports?.[subpath];
@@ -31,9 +31,14 @@ function entryFor(specifier) {
 // Every `import ... from '<pkg or subpath>'` statement (multi-line aware). The clause is
 // restricted to a real import binding — `{ … }` (no nested brace, so it can't run past the
 // statement), a namespace (`* as X`), or a default identifier — so prose/other imports in
-// between are never swallowed.
+// between are never swallowed. The package specifier is derived from pkg.name (escaped) so a
+// rename can't silently turn this gate into a zero-match no-op.
+const NAME_RE = pkg.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function importStatements(text) {
-  const re = /import\s+((?:type\s+)?(?:\*\s+as\s+\w+|\w+\s*,?\s*(?:\{[^}]*\})?|\{[^}]*\}))\s+from\s+['"](@hopdrive\/eventkit(?:\/[^'"]+)?)['"]/g;
+  const re = new RegExp(
+    `import\\s+((?:type\\s+)?(?:\\*\\s+as\\s+\\w+|\\w+\\s*,?\\s*(?:\\{[^}]*\\})?|\\{[^}]*\\}))\\s+from\\s+['"](${NAME_RE}(?:/[^'"]+)?)['"]`,
+    'g',
+  );
   const out = [];
   let m;
   while ((m = re.exec(text))) out.push({ clause: m[1], specifier: m[2] });

@@ -18,7 +18,7 @@ them, and (optionally) makes them durable.
 ## Install
 
 ```bash
-npm install eventkit
+npm install hopdrive-eventkit
 ```
 
 > Not published to npm yet (see status above) — the command above is how you'll install it
@@ -33,10 +33,10 @@ tightest possible bundle.)
 ## Quick start
 
 ```ts
-import { createEventKit, defineEvent, job } from 'eventkit';
-import { hasuraEvent } from 'eventkit/sources';
-import { netlifyPlatform } from 'eventkit/platforms';
-import { observability, graphqlSink } from 'eventkit/plugins';
+import { createEventKit, defineEvent, job } from 'hopdrive-eventkit';
+import { hasuraEvent } from 'hopdrive-eventkit/sources';
+import { netlifyPlatform } from 'hopdrive-eventkit/platforms';
+import { observability, graphqlSink } from 'hopdrive-eventkit/plugins';
 import { sendOfferSMS, notifyOrg } from './jobs';
 import { initSdk } from './lib/sdk';
 
@@ -239,7 +239,7 @@ turn it into a committed YAML doc of **how events actually flow through the syst
 keeps it honest.
 
 ```ts
-import { toFlowYaml, toFlowGraph, describeKit } from 'eventkit/flow';
+import { toFlowYaml, toFlowGraph, describeKit } from 'hopdrive-eventkit/flow';
 
 toFlowYaml(kit);   // → the human-readable committed doc (see docs/flow.example.yaml)
 toFlowGraph(kit);  // → { nodes, edges } in the FlowNode/FlowEdge manifest vocabulary (React Flow / manifest diffing)
