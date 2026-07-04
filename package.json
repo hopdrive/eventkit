@@ -1,6 +1,6 @@
 {
   "name": "hopdrive-eventkit",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Source-agnostic business-event execution framework. The successor to @hopdrive/hasura-event-detector.",
   "type": "module",
   "main": "dist/cjs/index.js",
