@@ -12,7 +12,7 @@
 // A platform plugin (`provides: ['platform']`, §11.0/§9.8, ADR-027). Imported via
 // `eventkit/platforms`.
 import type { HandlerShortCircuit, PlatformAdapter, RequestContext } from '../../core/index.js';
-import { computedDeadline, env, extractHeaders, queryOf } from '../platform-shared.js';
+import { computedDeadline, env, extractV2Payload, v2Meta } from '../platform-shared.js';
 
 export function netlifyV2BackgroundPlatform(config: { maxExecutionMs?: number } = {}): PlatformAdapter {
   const maxExecutionMs = config.maxExecutionMs ?? 15 * 60 * 1000;
@@ -22,15 +22,12 @@ export function netlifyV2BackgroundPlatform(config: { maxExecutionMs?: number } 
     detect: () => !!env()['NETLIFY'],
     // Netlify answers 202 before jobs finish → a result-driven `respond` can't apply here.
     deferredResponse: true,
-    extractPayload: async (request: unknown) => {
-      const req = request as { json?: () => Promise<unknown> } | undefined;
-      if (req && typeof req.json === 'function') return req.json();
-      return req;
-    },
+    // Read the Web Request body once: parsed JSON as the payload, exact bytes cached for rawBody.
+    extractPayload: (request: unknown) => extractV2Payload(request),
     buildRequest: (request?: unknown): RequestContext => ({
       getRemainingTimeMs: computedDeadline(maxExecutionMs),
-      // v2 can't preserve rawBody (extractPayload consumed it via .json()); headers + query are fine.
-      meta: { headers: extractHeaders(request), query: queryOf(request) },
+      // headers + query + rawBody (the exact bytes extractPayload cached) — HMAC verify needs rawBody.
+      meta: v2Meta(request),
     }),
     // Netlify ignores the body for a background function, but `netlify dev` and any
     // non-background invocation still need a valid Web Response (not a { statusCode }).

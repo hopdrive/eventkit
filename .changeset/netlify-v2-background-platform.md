@@ -18,3 +18,11 @@ dropped the link — rendering them as false extra "origins" in the console flow
 row is now persisted (status `running`) during `onJobStart`, before the job body runs (the
 runtime awaits `onJobStart`), so the parent row is durable before any side effect can spawn a
 child. Idempotent (sink upserts); gated by a new `persistJobsAtStart` option (default true).
+
+**Preserve `rawBody` on the v2 platforms** (surfaced by the sparkserv migration) — the webhook
+source's HMAC `verify` needs the exact request bytes, but `netlifyV2Platform`/
+`netlifyV2BackgroundPlatform` consumed the body via `req.json()` and never exposed `rawBody`, so
+signature verification always failed on v2. The adapters now read the Web `Request` body once as
+text, cache the exact bytes (WeakMap, no mutation of the Request), return the parsed JSON as the
+payload, and expose the bytes as `request.meta.rawBody`. Backward-compatible (rawBody was simply
+absent before); JSON parsing tolerates a non-JSON body (returns the raw string).

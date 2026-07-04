@@ -98,6 +98,19 @@ describe('netlifyV2Platform (Web Request/Response, bucket B)', () => {
     expect((res as Response).status).toBe(200);
   });
 
+  it('preserves rawBody (exact bytes) alongside the parsed payload, from a single body read', async () => {
+    const p = netlifyV2Platform();
+    // Trailing whitespace + key order the parser would not reproduce — proves we keep the ORIGINAL bytes,
+    // which is what an HMAC signature is computed over.
+    const body = '{"hello":"v2","n":1}  ';
+    const request = new Request('https://example.test/fn?a=1', { method: 'POST', body });
+    const payload = await p.extractPayload!(request);
+    expect(payload).toEqual({ hello: 'v2', n: 1 });
+    const req = p.buildRequest!(request);
+    expect((req.meta as { rawBody?: string }).rawBody).toBe(body);
+    expect((req.meta as { query?: Record<string, string> }).query).toEqual({ a: '1' });
+  });
+
   it('drives a full invocation through kit.handler()', async () => {
     const kit = createEventKit(hasuraEvent).use(netlifyV2Platform).registerEvents([apptReady()]);
     const handler = kit.handler();
