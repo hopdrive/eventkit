@@ -562,9 +562,9 @@
         <div class="pane becomes">
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">register-style, once</span></div>
 <pre><span class="k">import</span> { createEventKit } <span class="k">from</span> <span class="s">'eventkit'</span>;
-<span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'eventkit/sources'</span>;
-<span class="k">import</span> { netlifyPlatform } <span class="k">from</span> <span class="s">'eventkit/platforms'</span>;
-<span class="k">import</span> { observability, graphqlSink, batch, loopGuard, grafana } <span class="k">from</span> <span class="s">'eventkit/plugins'</span>;
+<span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources'</span>;
+<span class="k">import</span> { netlifyPlatform } <span class="k">from</span> <span class="s">'hopdrive-eventkit/platforms'</span>;
+<span class="k">import</span> { observability, graphqlSink, batch, loopGuard, grafana } <span class="k">from</span> <span class="s">'hopdrive-eventkit/plugins'</span>;
 <span class="k">import</span> { getLogger } <span class="k">from</span> <span class="s">'@hopdrive/sdk-server-logger'</span>;   <span class="c">// app-side; injected into the bridge</span>
 <span class="k">import</span> { batchJobStore } <span class="k">from</span> <span class="s">'../~lib/batchJobStore'</span>;   <span class="c">// app-side store.update(id,fields); built-in graphqlBatchJobStore is planned</span>
 <span class="k">import</span> auth <span class="k">from</span> <span class="s">'../~lib/functionAuth'</span>;
@@ -627,7 +627,7 @@ module.exports.detector = <span class="k">async</span> (eventName, hasuraEvent) 
         </div>
         <div class="pane becomes">
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">eventkit</span></div>
-<pre><span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'eventkit/sources/hasura'</span>;
+<pre><span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources/hasura'</span>;
 <span class="k">import type</span> { AppointmentRow } <span class="k">from</span> <span class="s">'./types'</span>;
 
 <span class="k">export const</span> detector = hasuraEvent.detector<span class="k">&lt;AppointmentRow&gt;</span>((ctx) =&gt; {
@@ -847,7 +847,7 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">webhook source adapter</span></div>
 <pre><span class="c">// events/acertus.order.created.ts</span>
 <span class="k">import</span> { defineEvent, job, ClientError } <span class="k">from</span> <span class="s">'eventkit'</span>;
-<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'eventkit/sources'</span>;
+<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources'</span>;
 <span class="k">import</span> { publishEventLog, createOrderFromVendor } <span class="k">from</span> <span class="s">'./jobs'</span>;
 <span class="k">import type</span> { AcertusOrder } <span class="k">from</span> <span class="s">'./types'</span>;
 
@@ -880,9 +880,9 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
       <p class="cmp-note" style="margin-top:10px"><b>Why not <code>handler({ before })</code>?</b> <code>before</code> runs <i>before</i> <code>normalize()</code>, on the raw platform args, so it can&rsquo;t see <code>ctx.signatureVerified</code>. Using it for signatures would mean re-doing the HMAC by hand. Keep <code>before</code> for cheap request-level gates that don&rsquo;t need the parsed envelope, like the HTTP method or a missing auth header. <b>So the rule is simple:</b> signatures go in <code>verify</code> (once, in the source), and the forged-request guard goes in the detector via <code>signatureVerified</code>. The endpoint itself is the same register-style shape as a <code>db-*</code> function. The platform adapter maps the module&rsquo;s <code>resolve</code>/<code>respond</code> (or a thrown <code>ClientError</code>) onto the HTTP response:</p>
       <p class="cmp-note" style="margin-top:10px"><b style="color:var(--brass-2)">Or skip the per-detector guard entirely (ADR-030).</b> If <i>every</i> event on an endpoint needs a valid signature, pass <code>rejectUnverified: true</code> to the source: <code>createEventKit(webhook, { vendor, verify, rejectUnverified: true })</code>. Now a failed <code>verify</code> gets rejected with <b>401</b> before any module runs (pass <code>{ status, message }</code> to change that, say <code>403</code>), so no detector needs <code>signatureVerified &amp;&amp;</code> at all. The trade-off: it&rsquo;s a hard block <i>before</i> the request becomes an event, so there&rsquo;s <b>no Invocation record</b>, just a framework <code>warn</code>. Keep the default (<code>verify</code> flags it, the detector declines) when you want the forged attempt recorded for security telemetry. Reach for <code>rejectUnverified</code> when you just want it gone with no boilerplate.</p>
 <pre style="border-radius:12px;border:1px solid var(--hair);max-width:720px"><span class="k">import</span> { createEventKit } <span class="k">from</span> <span class="s">'eventkit'</span>;
-<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'eventkit/sources'</span>;
-<span class="k">import</span> { netlifyV2Platform } <span class="k">from</span> <span class="s">'eventkit/platforms'</span>;
-<span class="k">import</span> { observability, graphqlSink } <span class="k">from</span> <span class="s">'eventkit/plugins'</span>;
+<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources'</span>;
+<span class="k">import</span> { netlifyV2Platform } <span class="k">from</span> <span class="s">'hopdrive-eventkit/platforms'</span>;
+<span class="k">import</span> { observability, graphqlSink } <span class="k">from</span> <span class="s">'hopdrive-eventkit/plugins'</span>;
 <span class="k">import</span> { acertusSignature } <span class="k">from</span> <span class="s">'./security'</span>;
 <span class="k">import</span> events <span class="k">from</span> <span class="s">'./events'</span>;
 
@@ -982,7 +982,7 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">hasuraAction source adapter</span></div>
 <pre><span class="c">// events/cancelAppointment.ts</span>
 <span class="k">import</span> { defineEvent, ActionError } <span class="k">from</span> <span class="s">'eventkit'</span>;
-<span class="k">import</span> { hasuraAction } <span class="k">from</span> <span class="s">'eventkit/sources/hasura'</span>;
+<span class="k">import</span> { hasuraAction } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources/hasura'</span>;
 <span class="k">import</span> { cancelAppointment, notifyCustomer } <span class="k">from</span> <span class="s">'./jobs'</span>;
 
 <span class="k">export const</span> detector = hasuraAction.detector((ctx) =&gt; ctx.actionName === <span class="s">'cancelAppointment'</span>);
@@ -1005,8 +1005,8 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
       <p class="cmp-note" style="margin-top:16px"><b style="color:var(--brass-2)">Why this is the security win.</b> Hasura is already the gate in front of every table and column: roles, row/column permissions, JWT or webhook auth. An Action rides that <i>same</i> model. You declare which roles can call <code>cancelAppointment</code> in Hasura&rsquo;s metadata, and Hasura enforces it before forwarding <code>{ action, input, session_variables, request_query }</code> to your function. So client-invokable privileged logic stops being N snowflake endpoints that each re-derive who the caller is and what they&rsquo;re allowed to do. It&rsquo;s one place to reason about access, one audit surface, and the function gets verified <code>session_variables</code> (<code>role</code> / <code>userId</code> / <code>email</code>) instead of a token it has to trust. Bespoke <code>app-*</code> endpoints get converted to actions over time (security via RBAC, downstream effects traced by correlation id), not lifted as raw HTTP.</p>
       <p class="cmp-note" style="margin-top:14px">There&rsquo;s no dedicated &ldquo;action platform&rdquo;: the request/response contract <i>composes</i> onto whichever generic platform adapter you already register. <code>resolve</code>&rsquo;s return becomes a <b>2xx</b> + the output JSON; a thrown <code>ActionError(message, code?)</code> becomes a <b>4xx</b> + <code>{ message, extensions:{ code? } }</code> &mdash; the exact GraphQL-error shape Hasura surfaces to the client.</p>
 <pre style="border-radius:12px;border:1px solid var(--hair);max-width:720px"><span class="k">import</span> { createEventKit } <span class="k">from</span> <span class="s">'eventkit'</span>;
-<span class="k">import</span> { hasuraAction } <span class="k">from</span> <span class="s">'eventkit/sources/hasura'</span>;
-<span class="k">import</span> { netlifyV2Platform } <span class="k">from</span> <span class="s">'eventkit/platforms'</span>;
+<span class="k">import</span> { hasuraAction } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources/hasura'</span>;
+<span class="k">import</span> { netlifyV2Platform } <span class="k">from</span> <span class="s">'hopdrive-eventkit/platforms'</span>;
 <span class="k">import</span> events <span class="k">from</span> <span class="s">'./events'</span>;
 
 <span class="k">const</span> kit = createEventKit(<span class="hl">hasuraAction</span>)            <span class="c">// the source; Hasura RBAC sits in front of it</span>
@@ -1785,7 +1785,7 @@ module.exports = {
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">detector + declarative jobs</span></div>
 <pre><span class="c">// events/spark.appointment.created.ts</span>
 <span class="k">import</span> { defineEvent } <span class="k">from</span> <span class="s">'eventkit'</span>;
-<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'eventkit/sources'</span>;
+<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources'</span>;
 <span class="k">import</span> { upsertAppointmentFromSpark } <span class="k">from</span> <span class="s">'../resolve'</span>;
 <span class="k">import</span> { syncSchedulerConfig } <span class="k">from</span> <span class="s">'../jobs'</span>;
 <span class="k">import type</span> { SparkAppointment } <span class="k">from</span> <span class="s">'../types'</span>;
@@ -1892,7 +1892,7 @@ kit.registerEvents(events);
         <p class="eyebrow" style="margin-bottom:12px">The committed doc: <code>db-rideshares.flow.yaml</code></p>
 <pre style="margin:0"><span class="c"># @generated by eventkit/flow — DO NOT EDIT BY HAND.
 # CI gate: eventkit-flow check --kit ./src/eventkit.js --out …</span>
-generator: <span class="s">"eventkit/flow"</span>
+generator: <span class="s">"hopdrive-eventkit/flow"</span>
 kit:
   source: { name: source-hasura-event, type: database }
   plugins: [loop-guard, correlation-resolver]
@@ -1958,8 +1958,8 @@ events:
 
     <div class="callout" style="margin-top:28px">
       <p class="eyebrow">What it reads like</p>
-<pre style="margin:0"><span class="k">import</span> { testInvocation, detectorContract, hasuraInsert } <span class="k">from</span> <span class="s">'eventkit/testing'</span>;
-<span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'eventkit/sources'</span>;
+<pre style="margin:0"><span class="k">import</span> { testInvocation, detectorContract, hasuraInsert } <span class="k">from</span> <span class="s">'hopdrive-eventkit/testing'</span>;
+<span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources'</span>;
 <span class="k">import</span> { appointmentReady } <span class="k">from</span> <span class="s">'./appointment.ready'</span>;
 
 <span class="c">// Layer 1 — the detector, over a table. The MANUAL suppress case is added for you.</span>
@@ -1990,11 +1990,11 @@ expect(t.job(<span class="s">'sendOfferSMS'</span>)?.status).toBe(<span class="s
       <h3>Import map</h3>
       <p class="ghint">Import a whole family from its barrel — one path per family, tree-shaken (the package is <code>sideEffects</code>-free, so naming a symbol only bundles that symbol). Granular subpaths (<code>/plugins/batch</code>, <code>/sources/hasura</code>, …) exist if you ever want them, but the barrels are the day-to-day style.</p>
 <pre><span class="k">import</span> { createEventKit, defineEvent, job, ClientError, ActionError } <span class="k">from</span> <span class="s">'eventkit'</span>;
-<span class="k">import</span> { hasuraEvent, hasuraCron, hasuraAction, webhook } <span class="k">from</span> <span class="s">'eventkit/sources'</span>;
-<span class="k">import</span> { observability, graphqlSink, batch, loopGuard, grafana, sentry } <span class="k">from</span> <span class="s">'eventkit/plugins'</span>;
-<span class="k">import</span> { lambdaPlatform, netlifyPlatform, netlifyV2Platform, netlifyBackgroundPlatform } <span class="k">from</span> <span class="s">'eventkit/platforms'</span>;
-<span class="k">import</span> { fakeSource, defineFakeEvent } <span class="k">from</span> <span class="s">'eventkit/testing'</span>;
-<span class="k">import</span> { describeKit, toFlowYaml, toFlowGraph } <span class="k">from</span> <span class="s">'eventkit/flow'</span>;   <span class="c">// flow docs (ADR-032)</span></pre>
+<span class="k">import</span> { hasuraEvent, hasuraCron, hasuraAction, webhook } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources'</span>;
+<span class="k">import</span> { observability, graphqlSink, batch, loopGuard, grafana, sentry } <span class="k">from</span> <span class="s">'hopdrive-eventkit/plugins'</span>;
+<span class="k">import</span> { lambdaPlatform, netlifyPlatform, netlifyV2Platform, netlifyBackgroundPlatform } <span class="k">from</span> <span class="s">'hopdrive-eventkit/platforms'</span>;
+<span class="k">import</span> { fakeSource, defineFakeEvent } <span class="k">from</span> <span class="s">'hopdrive-eventkit/testing'</span>;
+<span class="k">import</span> { describeKit, toFlowYaml, toFlowGraph } <span class="k">from</span> <span class="s">'hopdrive-eventkit/flow'</span>;   <span class="c">// flow docs (ADR-032)</span></pre>
     </div>
 
     <div class="refgroup">
