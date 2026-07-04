@@ -21,6 +21,7 @@ name: Release
 on:
   push:
     branches: [main]
+  workflow_dispatch: # allow manual re-trigger (e.g. to retry a failed publish)
 
 # Never let two release runs race the version PR / publish.
 concurrency: ${{ github.workflow }}-${{ github.ref }}
@@ -37,17 +38,24 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 24 bundles npm 11.x, which supports OIDC Trusted Publishing +
+          # provenance natively. Node 20's bundled npm is 10.x and a global
+          # `npm i -g npm@latest` did NOT reliably replace the npm the publish
+          # step used (it still ENEEDAUTH'd), so pin the runtime instead.
+          node-version: 24
           cache: npm
           # No registry-url/token wiring: leaving setup-node's .npmrc unwritten
           # keeps the publish on the OIDC path (an empty _authToken line would
           # shadow trusted publishing). The registry comes from package.json
           # "publishConfig".
 
-      # npm Trusted Publishing (OIDC) + provenance require npm >= 11.5.1; the npm
-      # bundled with Node 20 is 10.x, so upgrade before publishing.
-      - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest
+      # Belt-and-suspenders: guarantee npm >= 11.5.1 (OIDC support) even if the
+      # bundled npm lags, and print the versions so the publish npm is auditable.
+      - name: Ensure OIDC-capable npm
+        run: |
+          npm install -g npm@latest
+          node -v
+          npm -v
 
       - run: npm ci
 
