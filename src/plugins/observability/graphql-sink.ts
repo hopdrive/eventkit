@@ -111,6 +111,16 @@ const clean = <T extends object>(record: T): Record<string, unknown> => {
 const isSourceJobIdFkError = (err: unknown): boolean =>
   err instanceof GraphqlResponseError && /source_job_id/i.test(JSON.stringify(err.errors));
 
+// Free-form JSON/text columns that carry the invocation's captured payloads. A GraphQL-level
+// rejection on the events/jobs mutation (a serialization edge in `result`, a value the schema
+// rejects) would otherwise lose the WHOLE row — and for a job that means its terminal `status`
+// never lands, leaving it stuck `running`. These are the droppable ones: shed them and re-send
+// so the row lands lossy-but-terminal. Mirrors the source_job_id degrade for invocations.
+const DEGRADABLE_COLUMNS: Record<string, string[]> = {
+  event_executions: ['detection_error_stack', 'handler_error_stack'],
+  job_executions: ['result', 'job_options', 'error_stack'],
+};
+
 export function graphqlSink(config: GraphqlSinkConfig): (batch: ObservabilityBatch) => Promise<void> {
   if (!config?.endpoint) throw new Error('graphqlSink() requires an `endpoint`.');
   const headers = { 'content-type': 'application/json', ...(config.headers ?? {}) };
@@ -189,10 +199,33 @@ export function graphqlSink(config: GraphqlSinkConfig): (batch: ObservabilityBat
     }
   };
 
+  // Send a bulk mutation; on a deterministic GraphQL-level rejection, retry ONCE with the
+  // droppable payload columns stripped so the rows still land with their terminal status
+  // (lossy but not lost). A bulk upsert fails atomically, so we can't know which object
+  // offended — strip across the batch, which is the right trade to save every terminal row.
+  const sendDegradable = async (query: string, table: string, objects: Record<string, unknown>[]): Promise<void> => {
+    if (objects.length === 0) return;
+    try {
+      await send(query, objects);
+    } catch (err) {
+      const droppable = DEGRADABLE_COLUMNS[table];
+      if (err instanceof GraphqlResponseError && droppable && objects.some(o => droppable.some(k => k in o))) {
+        const stripped = objects.map(o => {
+          const copy = { ...o };
+          for (const k of droppable) delete copy[k];
+          return copy;
+        });
+        await send(query, stripped);
+        return;
+      }
+      throw err;
+    }
+  };
+
   return async (batch: ObservabilityBatch): Promise<void> => {
     // Order matters for FKs: invocation → events → jobs.
     await sendInvocation(batch.invocation);
-    await send(MUT_EVENTS, batch.events.map(e => cleanAndMap(e, 'events')));
-    await send(MUT_JOBS, batch.jobs.map(j => cleanAndMap(j, 'jobs')));
+    await sendDegradable(MUT_EVENTS, 'event_executions', batch.events.map(e => cleanAndMap(e, 'events')));
+    await sendDegradable(MUT_JOBS, 'job_executions', batch.jobs.map(j => cleanAndMap(j, 'jobs')));
   };
 }
