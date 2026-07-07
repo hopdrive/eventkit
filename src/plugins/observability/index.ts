@@ -111,6 +111,14 @@ export interface ObservabilityConfig {
   sink: (batch: ObservabilityBatch) => void | Promise<void>;
   /** When true, a sink failure is rethrown (surfacing via onError); default best-effort. */
   strict?: boolean;
+  /**
+   * Called when a best-effort sink flush fails (the default, non-`strict` mode). Silent
+   * telemetry loss is the worst failure mode for a telemetry system — a partially-written
+   * batch can leave a job row stuck `running` after its invocation reads `completed` — so
+   * failures are surfaced here instead of being swallowed. Defaults to a `console.warn`.
+   * Ignored when `strict` is set (the error is rethrown to `onError` instead).
+   */
+  onSinkError?: (err: unknown, ctx: { invocationId: string; final: boolean }) => void;
   /** Capture the raw source payload as `source_event_payload`. Default true. */
   captureSourcePayload?: boolean;
   /** Capture serializable job metadata as `job_options`. Default true. */
@@ -165,6 +173,16 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
 
   const buffers = new Map<string, Buffer>();
   const stack = (s?: string): string | undefined => (captureErrorStacks ? s : undefined);
+  const reportSinkError =
+    config.onSinkError ??
+    ((err: unknown, ctx: { invocationId: string; final: boolean }) => {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[eventkit] observability sink flush failed (invocation=${ctx.invocationId}, final=${ctx.final}); ` +
+          `telemetry for this invocation may be incomplete (e.g. a job row left 'running').`,
+        err,
+      );
+    });
 
   const eventRecord = (buf: Buffer, invocationId: string, correlationId: string, eventName: string): EventRecord => {
     let rec = buf.events.get(eventName);
@@ -198,15 +216,26 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
   const flush = async (invocationId: string, final: boolean): Promise<void> => {
     const buf = buffers.get(invocationId);
     if (!buf) return;
-    if (final) {
-      if (buf.timer) clearInterval(buf.timer);
-      buffers.delete(invocationId);
+    // On a final flush the invocation has ended, so stop the periodic timer up front — no
+    // more mid-flight snapshots are wanted even if this write fails. But do NOT discard the
+    // buffer until the sink has DURABLY accepted the batch. Deleting it up front was the bug:
+    // the sink writes invocation → events → jobs sequentially, and a failure after the
+    // invocations mutation permanently and silently lost the job/event terminal states,
+    // leaving a job stuck 'running' under a 'completed' invocation. Keeping the buffer lets a
+    // later `onFlush` (process teardown) retry the terminal write.
+    if (final && buf.timer) {
+      clearInterval(buf.timer);
+      delete buf.timer;
     }
     try {
       await config.sink(buildBatch(buf));
+      if (final) buffers.delete(invocationId); // durably written → safe to drop
     } catch (err) {
       if (config.strict) throw err;
-      // best-effort: a telemetry write failure must not fail business execution
+      // Best-effort: a telemetry write failure must not fail business execution — but it MUST
+      // be visible (silent loss is undiagnosable), and the buffer MUST survive so onFlush can
+      // retry the terminal write rather than dropping the job's terminal state forever.
+      reportSinkError(err, { invocationId, final });
     }
   };
 

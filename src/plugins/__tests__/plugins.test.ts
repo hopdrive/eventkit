@@ -389,6 +389,35 @@ describe('observability', () => {
     expect(jobRec.result).toBe('ok');
   });
 
+  it('a failed final flush surfaces the error and retries rather than losing the job terminal state', async () => {
+    // Regression: the terminal flush used to delete the buffer BEFORE awaiting the sink and
+    // swallow any error, so a sink failure permanently and silently left a job row 'running'
+    // under a 'completed' invocation. Now the buffer survives a failed flush (so onFlush — which
+    // runs in the same handle() finally — retries it) and the failure is surfaced via onSinkError.
+    const errors: unknown[] = [];
+    const landed: ObservabilityBatch[] = [];
+    let failNext = true;
+    const mod = defineFakeEvent('e', () => true, [job(() => 'ok', { name: 'good' })]);
+    const kit = createEventKit(fakeSource())
+      .use(observability, {
+        persistJobsAtStart: false, // isolate to the single terminal flush
+        onSinkError: err => void errors.push(err),
+        sink: (b: ObservabilityBatch) => {
+          if (failNext) { failNext = false; throw new Error('sink boom'); }
+          landed.push(structuredClone(b));
+        },
+      })
+      .registerEvents([mod]);
+
+    const result = await kit.handle('go');
+
+    expect(result.ok).toBe(true); // best-effort: telemetry failure never fails business execution
+    expect(errors).toHaveLength(1); // the failure was surfaced, not swallowed
+    expect(landed).toHaveLength(1); // onFlush retried the retained buffer and it landed
+    expect(landed[0]!.invocation.status).toBe('completed');
+    expect(landed[0]!.jobs[0]!.status).toBe('completed'); // terminal state preserved, not stuck 'running'
+  });
+
   it('records undetected events by default (Console parity) and can be turned off', async () => {
     const mod = defineFakeEvent('never', () => false, []);
 
@@ -563,6 +592,40 @@ describe('observability/graphql-sink', () => {
     });
     await expect(sink(invocationRecord() as never)).rejects.toThrow(/GraphQL errors/);
     expect(calls).toBe(1); // no wasteful retries on a deterministic GraphQL error
+  });
+
+  it('graceful-degrades a jobs-mutation GraphQL error: retries without heavy payload so the terminal status still lands', async () => {
+    // Regression: a serialization/content rejection on the job_executions upsert (e.g. a value
+    // in `result` the schema rejects) used to lose the whole row — and with it the job's terminal
+    // status, leaving it stuck 'running'. Mirror the source_job_id degrade: shed the droppable
+    // payload columns and re-send so the row lands lossy-but-terminal.
+    const jobsSent: Array<Record<string, unknown>[]> = [];
+    let firstJobsCall = true;
+    const sink = graphqlSink({
+      endpoint: 'http://h/v1/graphql',
+      request: async body => {
+        if (/insert_job_executions/.test(body.query)) {
+          const objects = (body.variables as { objects: Record<string, unknown>[] }).objects;
+          jobsSent.push(objects);
+          if (firstJobsCall) {
+            firstJobsCall = false;
+            return { errors: [{ message: 'invalid input syntax for type json' }] } as never;
+          }
+        }
+        return {};
+      },
+    });
+    await sink({
+      invocation: invocationRecord().invocation,
+      events: [],
+      jobs: [{ id: 'j', invocation_id: 'i1', correlation_id: 'c1', job_name: 'x', status: 'completed', duration_ms: 5, result: { blob: 'x' }, created_at: 'x', updated_at: 'x' }],
+    } as never);
+
+    expect(jobsSent).toHaveLength(2); // first attempt (with result) + degraded retry (without)
+    expect(jobsSent[0]![0]).toHaveProperty('result');
+    expect(jobsSent[1]![0]).not.toHaveProperty('result'); // heavy payload shed
+    expect(jobsSent[1]![0]!.status).toBe('completed'); // terminal status preserved
+    expect(jobsSent[1]![0]!.duration_ms).toBe(5);
   });
 
   it('maps eventkit statuses to the legacy CHECK-constraint set (default) and can be disabled', async () => {
