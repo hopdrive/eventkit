@@ -11,21 +11,15 @@
 // job's `ctx.input`. Three hard rules (ADR-025): no conditional inclusion, no
 // fan-out (one declaration is never expanded into N jobs), no inter-job deps.
 //
-// Request/response sources (ADR-026 — `hasuraAction`, status-contract `webhook`) add an
-// optional `resolve(ctx) => output` that computes the invocation's response value; the
-// source's platform adapter maps it to the wire. `jobs` then become optional side
-// effects that run alongside (sibling-ignorant — `resolve` never reads their results).
-//
-// When the response must instead reflect the OUTCOME of the work, a module declares
-// `respond(ctx, { jobs, ok }) => output` (ADR-026 amendment) in place of `resolve`: it is
-// sequenced AFTER the jobs settle and receives their executions, so the synchronous reply
-// can be composed from the results. `resolve` and `respond` are mutually exclusive — a
-// module picks its response timing by which one it declares. Fire-and-forget stays the
-// default: declare neither and the platform returns its standard ack once jobs finish.
+// A module does NOT declare an HTTP reply (ADR-026, re-amended): one invocation has
+// one wire reply and it belongs to the INVOCATION layer — `kit.handler({ after })`
+// declares it (a constant `{ body }`, or `{ fromResults }` composing from the
+// full InvocationResult across every detected event). Modules own detection + jobs;
+// with no `respond` declared the platform returns its standard ack once jobs finish.
 
 import { asEventName, type EventName } from './brands.js';
 import type { DetectorContext, HandlerContext } from './context.js';
-import type { JobDefinition, JobFunction, JobInputContext, JobsResult, RunOptions } from './job.js';
+import type { JobDefinition, JobFunction, RunOptions } from './job.js';
 
 export type DetectorFunction<
   TPayload = unknown,
@@ -44,44 +38,6 @@ export type PrepareFunction<
   TMeta extends Record<string, unknown> = Record<string, unknown>,
   TPrepared extends Record<string, unknown> = Record<string, unknown>,
 > = (ctx: HandlerContext<TPayload, TMeta>) => TPrepared | Promise<TPrepared>;
-
-/**
- * Computes the invocation's RESPONSE value for a request/response source (ADR-026 —
- * `hasuraAction`, a status-contract `webhook`). Receives the handler context plus the
- * `prepare` output (`ctx.prepared`); the source's platform adapter maps the returned
- * value to the wire (a 2xx body) and a thrown `ClientError`/`ActionError` to the error
- * envelope. `resolve` is the module composing the response — it MUST NOT read job
- * results (jobs are sibling-ignorant fire-and-forget side effects, ADR-025). Optional
- * and source-agnostic: a fire-and-forget module omits it and just returns an ack.
- */
-export type ResolveFunction<
-  TPayload = unknown,
-  TMeta extends Record<string, unknown> = Record<string, unknown>,
-  TPrepared = Record<string, unknown>,
-  TOutput = unknown,
-> = (ctx: JobInputContext<TPayload, TMeta, TPrepared>) => TOutput | Promise<TOutput>;
-
-/**
- * Computes the invocation's RESPONSE value FROM the job results (ADR-026 amendment).
- * The result-driven counterpart to `resolve`: the runtime runs the module's `jobs` under
- * its `run` config, waits for them to settle, then calls `respond` with the handler
- * context (incl. `prepare` output) AND the `JobsResult` (`{ jobs, ok }`). Whatever it
- * returns becomes the response body via the source's platform adapter; a thrown
- * `ClientError`/`ActionError` maps to the error envelope, exactly like `resolve`. Use it
- * when the synchronous reply must reflect the outcome of the work. Mutually exclusive with
- * `resolve`, and requires at least one job (it reads their results). Not usable under a
- * platform that responds before jobs finish (e.g. a background/202 adapter).
- */
-export type RespondFunction<
-  TPayload = unknown,
-  TMeta extends Record<string, unknown> = Record<string, unknown>,
-  TPrepared = Record<string, unknown>,
-  TOutput = unknown,
-  TResult = unknown,
-> = (
-  ctx: JobInputContext<TPayload, TMeta, TPrepared>,
-  result: JobsResult<TResult>,
-) => TOutput | Promise<TOutput>;
 
 /**
  * Optional, registration-time metadata on a module. Feeds static analysis, Flow
@@ -115,8 +71,7 @@ export interface EventModule<
   detector: DetectorFunction<TPayload, TMeta>;
   /**
    * Optional once-per-event data preparation merged into every job's input. Its inferred
-   * return type `TPrepared` flows into `resolve`/`respond`'s `ctx.prepared` (D32), so those
-   * seams read prepared data with no restatement.
+   * return type `TPrepared` also types a per-job `input` mapper's `ctx.prepared` (D32).
    */
   prepare?: PrepareFunction<TPayload, TMeta, TPrepared>;
   /**
@@ -126,27 +81,39 @@ export interface EventModule<
    * Wrap in `job()` only when you need `{ name, retries, input, timeoutMs, … }`. This does
    * NOT reopen the conditional-inclusion hole (ADR-025): `cond && fn` is `false | JobFunction`
    * and `cond && job(fn)` is `false | JobDefinition` — `false` is assignable to neither, so
-   * both still fail to compile; `null`/non-job objects are rejected too. Optional: a
-   * request/response module (with `resolve`) may declare none, but a module MUST declare
-   * `jobs` and/or `resolve` (a do-nothing module is a register error).
+   * both still fail to compile; `null`/non-job objects are rejected too. Required in
+   * effect: a module with no jobs does nothing (a register error) — the HTTP reply is
+   * NOT a module concern (it lives on `kit.handler({ after })`).
    */
   jobs?: (JobDefinition<any> | JobFunction<any>)[];
-  /**
-   * Request/response seam (ADR-026): computes the invocation's response value. Optional
-   * and source-agnostic; the source's platform adapter maps it to the wire. Jobs (if any)
-   * run alongside as sibling-ignorant side effects — `resolve` never reads their results.
-   * Mutually exclusive with `respond`.
-   */
-  resolve?: ResolveFunction<TPayload, TMeta, TPrepared>;
-  /**
-   * Result-driven response seam (ADR-026 amendment): like `resolve`, but sequenced AFTER
-   * the jobs settle and handed their `JobsResult` (`{ jobs, ok }`) so the synchronous reply
-   * can reflect the outcome of the work. Mutually exclusive with `resolve`; requires at
-   * least one job. The fire-and-forget guarantee is unchanged — jobs keep their own retry
-   * and durability; `respond` only reads their executions to shape the reply.
-   */
-  respond?: RespondFunction<TPayload, TMeta, TPrepared>;
   /** Run options for this module's job set (defaults pinned: parallel + continue). */
+  run?: RunOptions;
+  metadata?: EventModuleMetadata;
+}
+
+/**
+ * The module shape a SOURCE-SCOPED `defineEvent` accepts — e.g.
+ * `hasuraEvent.defineEvent<Row>({ ... })`. Same fields as `EventModule`, but every
+ * seam is typed by the SOURCE's enriched contexts instead of the generic base
+ * ones, so ONE type parameter on the outer call types every inline `(ctx) => ...`
+ * arrow (`detector`, `prepare`) with no per-seam helper
+ * wrapper. Each source declares its `defineEvent` with its own detector/handler
+ * context types; the runtime is core `defineEvent` unchanged.
+ *
+ * TPrepared caveat (TS has no partial inference): when the caller passes the
+ * source type parameter explicitly, `TPrepared` falls back to its default — a
+ * per-job `input` mapper then sees `ctx.prepared` as `Record<string, unknown>`
+ * unless the caller states it too. Full inference (the helper style) keeps D32.
+ */
+export interface SourceEventModule<
+  TDetectorCtx,
+  THandlerCtx,
+  TPrepared extends Record<string, unknown> = Record<string, unknown>,
+> {
+  name: string;
+  detector: (ctx: TDetectorCtx) => boolean | Promise<boolean>;
+  prepare?: (ctx: THandlerCtx) => TPrepared | Promise<TPrepared>;
+  jobs?: (JobDefinition<any> | JobFunction<any>)[];
   run?: RunOptions;
   metadata?: EventModuleMetadata;
 }
@@ -164,7 +131,7 @@ export function defineEvent<
 >(
   module: Omit<EventModule<TPayload, TMeta, TPrepared>, 'name'> & { name: string },
 ): EventModule<TPayload, TMeta, TPrepared> {
-  // TPrepared is inferred from `prepare`'s return type (D32) and threaded into
-  // `resolve`/`respond`'s `ctx.prepared`, so those seams are typed without restatement.
+  // TPrepared is inferred from `prepare`'s return type (D32) and threaded into a
+  // per-job `input` mapper's `ctx.prepared`, so that seam is typed without restatement.
   return { ...module, name: asEventName(module.name) };
 }

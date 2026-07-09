@@ -14,6 +14,59 @@ import type { KitDescription } from './flow.js';
 export type PluginFactory = (config?: unknown) => EventKitPlugin;
 
 /**
+ * A JSON-representable response body for the constant `body` mode. A `Promise` (or any
+ * class instance) is deliberately NOT assignable — a constant reply is data, not code,
+ * so it provably cannot wait on or depend on the work.
+ */
+export type ResponseBody = string | number | boolean | null | { [key: string]: unknown } | unknown[];
+
+/**
+ * Optional wire fields on an `after` declaration — the web standard's own
+ * `ResponseInit` vocabulary (`new Response(body, { status, headers })`), as DATA.
+ * They ride BESIDE the mode key and apply to whichever body the mode produces: on a
+ * Web-`Response` platform they become exactly that constructor call; on
+ * classic/Lambda they become the standard `{ statusCode, headers, body }` proxy
+ * shape. They shape the PRODUCED (success) reply only — a thrown
+ * `ClientError`/`ActionError` still owns the error mapping. Use `headers` for a
+ * non-JSON reply (`'content-type': 'text/xml'` for Twilio TwiML, `text/html`, …).
+ */
+export interface ResponseWire {
+  /** Success status. Default 200. */
+  status?: number;
+  /** Response headers, e.g. a content-type for a non-JSON body. Declared keys win over the platform default. */
+  headers?: Record<string, string>;
+}
+
+/**
+ * The INVOCATION-level reply declaration — `kit.handler({ after })` (ADR-026,
+ * re-amended). One invocation has ONE wire reply, and it belongs to this layer:
+ * modules detect and run jobs; the handler declares how the endpoint answers the
+ * original HTTP caller once the run settles. Two self-naming modes:
+ *
+ *  - `{ body }` — Computed: from NOTHING; a constant. Data, not code, so it
+ *    provably cannot wait on or be changed by the work (job failures stay
+ *    Batch/observability's concern).
+ *  - `{ fromResults: (result) => body }` — Computed: from the FULL `InvocationResult` —
+ *    the PRESCRIBED, typed rollup the runtime builds: every detector's verdict as an
+ *    `EventOutcome { name, detected, jobs, error? }` and every job as a
+ *    `JobExecution { jobName, status, output, error, … }`. Compose the reply with
+ *    arbitrary business logic over that record; throw `ClientError(status, …)` /
+ *    `ActionError(message, code?)` to produce the error mapping.
+ *
+ *  Sent: in every mode, the PLATFORM sends the reply — a foreground function replies
+ *  once the whole run settles (a serverless function cannot reply and keep working);
+ *  a background platform acks 202 up-front, which is why `{ fromResults }` is
+ *  rejected there (its value could never reach the wire) and "202 first, then work"
+ *  is a PLATFORM choice, not an `after` mode. With no `after` declared the platform
+ *  returns its standard ack. A framework error stays a 500 (the retry contract) and
+ *  a pre-dispatch client rejection (e.g. webhook `rejectUnverified`) keeps its
+ *  status — `after` shapes only a normally-completed invocation's reply.
+ */
+export type HandlerResponse =
+  | ({ body: ResponseBody; fromResults?: never } & ResponseWire)
+  | ({ fromResults: (result: InvocationResult) => unknown; body?: never } & ResponseWire);
+
+/**
  * A platform-agnostic short-circuit response from a `handler({ before })` pre-check
  * (auth, method gate, …). The `before` hook returns this (or void to proceed); the
  * platform adapter shapes it via `formatRejection`, so the pre-check stays
@@ -66,20 +119,26 @@ export interface EventOutcome {
 }
 
 /**
- * The response a request/response module's `resolve` produced (ADR-026), surfaced so
- * the source's platform adapter can map it to the wire. Exactly one of `output`
- * (resolve returned) or `error` (resolve, or its `prepare`, threw) is set.
+ * The invocation's produced reply value (ADR-026, re-amended), surfaced so the
+ * platform adapter can map it to the wire. Produced by `kit.handler({ after })`
+ * (the `static` body or `fromResults`'s return) or by a pre-dispatch client
+ * rejection (a source-thrown `ClientError`, e.g. webhook `rejectUnverified`).
+ * Exactly one of `output` or `error` is set.
  */
 export interface ResolvedOutcome {
-  /** The value `resolve(ctx)` returned — the success response body. `hasResolved` distinguishes a returned `undefined` from "no resolve". */
+  /** The produced success body. `hasResolved` distinguishes a produced `undefined` from "no response declared". */
   output?: unknown;
-  /** True when a `resolve` ran (success or error) — lets the platform tell "resolved to undefined" from a fire-and-forget invocation. */
+  /** True when a response was produced (success or error) — lets the platform tell "produced undefined" from a fire-and-forget invocation. */
   hasResolved: boolean;
-  /** Set when `resolve` (or the `prepare` before it) threw — mapping data for the error response. */
+  /** Set when the response fn (or the `prepare` before it) threw — mapping data for the error reply. */
   error?: ResolvedError;
+  /** Declared success status from `after` (`ResponseWire`); platform default (200) when absent. */
+  status?: number;
+  /** Declared response headers from `after` (`ResponseWire`); merged over the platform default. */
+  headers?: Record<string, string>;
 }
 
-/** A `resolve`/`prepare` throw, with the fields a platform maps to the wire error. */
+/** A response-fn/`prepare` throw, with the fields a platform maps to the wire error. */
 export interface ResolvedError {
   message: string;
   /** From a thrown `ClientError(status, …)` — the exact HTTP status to respond with. */
@@ -99,9 +158,9 @@ export interface InvocationResult {
   timedOut?: boolean;
   error?: SerializedError;
   /**
-   * The request/response value (ADR-026), if a detected module declared `resolve`. The
-   * FIRST detected module with a `resolve` provides it; fire-and-forget invocations leave
-   * it undefined. The source's platform adapter reads this to shape the wire response.
+   * The invocation's produced reply (ADR-026, re-amended) — from `kit.handler({ after })`
+   * or a pre-dispatch client rejection. Undefined for a plain fire-and-forget invocation;
+   * the platform adapter reads this to shape the wire response.
    */
   resolved?: ResolvedOutcome;
 }
@@ -137,8 +196,14 @@ export interface EventKit {
    * Chainable.
    */
   use(plugin: EventKitPlugin | PluginFactory, config?: unknown): EventKit;
-  registerEvent(module: EventModule): EventKit;
-  registerEvents(modules: EventModule[] | Record<string, EventModule>): EventKit;
+  /**
+   * Accepts a module with ANY payload/meta/prepared typing (`EventModule<any, any, any>`),
+   * so a source-typed module — `hasuraEvent.defineEvent<Row>(…)`, a typed `defineEvent`
+   * — registers without a variance cast. The kit stores modules heterogeneously; the
+   * per-module types did their work at authoring time.
+   */
+  registerEvent(module: EventModule<any, any, any>): EventKit;
+  registerEvents(modules: EventModule<any, any, any>[] | Record<string, EventModule<any, any, any>>): EventKit;
   /** Explicit validation; also run on first `handle()`. Throws on misconfig. */
   validate(): void;
 
@@ -149,6 +214,8 @@ export interface EventKit {
    */
   handler<TArgs extends unknown[] = [HttpRequestEvent, ...unknown[]]>(opts?: {
     before?: (...args: TArgs) => HandlerShortCircuit | void | Promise<HandlerShortCircuit | void>;
+    /** The endpoint's reply declaration, applied after the run settles — see {@link HandlerResponse}. Omit for the platform's standard ack. */
+    after?: HandlerResponse;
   }): (...args: unknown[]) => unknown;
   /** Manual entry: forward raw platform args (the adapter extracts payload + budget). */
   handle(rawPayloadOrArgs: unknown, request?: RequestContext | unknown): Promise<InvocationResult>;

@@ -9,6 +9,7 @@
 // the `verify` path (and `hmacVerify` preset) is exercised for real.
 import { createHmac } from 'node:crypto';
 import type { HasuraEventPayload, HasuraCronPayload, HasuraActionPayload, HasuraOperation } from '../plugins/hasura-shared/types.js';
+import { randomId as sharedRandomId } from '../core/ids.js';
 
 type Row = Record<string, unknown>;
 
@@ -31,8 +32,7 @@ export interface HasuraEventOptions {
   traceId?: string;
 }
 
-const randomId = (): string =>
-  typeof globalThis.crypto?.randomUUID === 'function' ? globalThis.crypto.randomUUID() : `test-${Date.now().toString(36)}`;
+const randomId = (): string => sharedRandomId('test');
 
 const hasuraEventPayload = (
   table: string,

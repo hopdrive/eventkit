@@ -38,7 +38,7 @@ five pieces that fit as if reserved for this:
 1. **`'skipped'` is a first-class job status that nothing produces today.**
    `JobExecutionStatus` includes `'skipped'` (core/job.ts), and BOTH ok-predicates already
    treat it as success (`kit.ts` — `status === 'completed' || status === 'skipped'`, in
-   `InvocationResult.ok` and the `respond` seam's `ok`). Meanwhile `ctx.skip(reason)`
+   `InvocationResult.ok` and the `after: { fromResults }` reply's `result.ok`). Meanwhile `ctx.skip(reason)`
    (ADR-035) deliberately ends `'completed'` + `metadata.conditionNotMet` — a job that RAN
    and chose to do nothing. The unclaimed `'skipped'` status is exactly the missing half of
    that pair: a job the FRAMEWORK never ran. Selective replay is its first producer, and the
@@ -97,9 +97,9 @@ Semantics:
   Detection still runs and is recorded — the replay shows what WOULD have fired, skipped.
 - No `x-eventkit-replay-jobs` header but `x-eventkit-replay-of` present: full replay
   (all jobs run) — still marked as a replay in the record.
-- Selection never affects detectors, `prepare`, `resolve`/`respond`, or plugins. It gates
-  job execution only. (A module whose `respond` reads job results sees the skipped
-  executions — `ok` stays true, statuses are visible. Honest.)
+- Selection never affects detectors, `prepare`, the `after` reply fn, or plugins. It gates
+  job execution only. (An `after: { fromResults }` fn that reads job results sees the skipped
+  executions on the `InvocationResult` rollup — `result.ok` stays true, statuses are visible. Honest.)
 
 Why headers and not a body wrapper: the body must stay the source's native payload so
 `normalize` is untouched (a Hasura event body is Hasura's shape; wrapping it would need

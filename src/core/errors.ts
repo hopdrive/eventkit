@@ -140,7 +140,7 @@ function safeStringify(value: unknown): string {
 // =============================================================================
 // Request/response error classes (ADR-026)
 // =============================================================================
-// Thrown from a module's `resolve` (or a job) to signal a non-2xx wire response.
+// Thrown from a module's response fn (or a job) to signal a non-2xx wire reply.
 // Carry their mapping data as plain fields so the runtime/platform can read them
 // duck-typed (instanceof across bundled module copies is unreliable). The runtime
 // surfaces these onto `InvocationResult.resolved.error`; the source's platform

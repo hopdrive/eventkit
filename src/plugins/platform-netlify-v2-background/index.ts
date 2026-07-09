@@ -11,8 +11,8 @@
 // formatRejection) and only diverges on the deferred budget + 202 response.
 // A platform plugin (`provides: ['platform']`, §11.0/§9.8, ADR-027). Imported via
 // `eventkit/platforms`.
-import type { HandlerShortCircuit, PlatformAdapter, RequestContext } from '../../core/index.js';
-import { computedDeadline, env, extractV2Payload, v2Meta } from '../platform-shared.js';
+import type { PlatformAdapter, RequestContext } from '../../core/index.js';
+import { computedDeadline, env, extractV2Payload, v2Meta, webRejection } from '../platform-shared.js';
 
 export function netlifyV2BackgroundPlatform(config: { maxExecutionMs?: number } = {}): PlatformAdapter {
   const maxExecutionMs = config.maxExecutionMs ?? 15 * 60 * 1000;
@@ -32,7 +32,6 @@ export function netlifyV2BackgroundPlatform(config: { maxExecutionMs?: number } 
     // Netlify ignores the body for a background function, but `netlify dev` and any
     // non-background invocation still need a valid Web Response (not a { statusCode }).
     formatResponse: () => new Response(null, { status: 202 }),
-    // v2 needs a Web Response — a hand-shaped { statusCode } would be a malformed reply.
-    formatRejection: (r: HandlerShortCircuit) => new Response(r.body ?? '', { status: r.status, headers: r.headers ?? {} }),
+    formatRejection: webRejection,
   };
 }

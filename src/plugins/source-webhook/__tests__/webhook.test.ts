@@ -18,6 +18,41 @@ const v2Request = (body: unknown, headers: Record<string, string>) => ({
   headers: new Headers(headers),
 });
 
+describe('factory-attached authoring helpers', () => {
+  it('webhook.detector / .prepare / .resolve exist on the bare factory and pass the fn through unchanged', () => {
+    const fn = () => true;
+    expect(webhook.detector(fn as never)).toBe(fn);
+    expect(webhook.prepare(fn as never)).toBe(fn);
+  });
+
+  it('a configured instance carries the same helpers (identity, same behavior as the factory)', () => {
+    const src = webhook({ vendor: 'acme' });
+    const fn = () => true;
+    expect(src.detector(fn as never)).toBe(fn);
+    expect(src.prepare(fn as never)).toBe(fn);
+  });
+
+  it('a typed detector authored via the bare factory runs against a real invocation', async () => {
+    type StripeEvent = { type: string; data: { object: { id: string } } };
+    let seenId = '';
+    const mod = defineEvent<StripeEvent>({
+      name: 'stripe.payment_intent.succeeded',
+      detector: webhook.detector<StripeEvent>(
+        ctx => ctx.signatureVerified && ctx.body.type === 'payment_intent.succeeded',
+      ),
+      jobs: [
+        job((c: JobContext) => {
+          seenId = (c.envelope.payload as StripeEvent).data.object.id;
+        }),
+      ],
+    });
+    const kit = createEventKit(webhook({ vendor: 'stripe' })).registerEvent(mod);
+    const result = await kit.handle({ type: 'payment_intent.succeeded', data: { object: { id: 'pi_123' } } });
+    expect(result.events[0]?.detected).toBe(true);
+    expect(seenId).toBe('pi_123');
+  });
+});
+
 describe('webhook source', () => {
   it('surfaces signatureVerified (true) and the eventType from the header', async () => {
     let seen: { verified?: boolean; eventType?: string; vendor?: string } = {};
@@ -79,21 +114,30 @@ describe('webhook source', () => {
     expect(fired).toEqual(['sms.delivered']);
   });
 
-  it('status-contract vendor: resolve ack → 200; a thrown ClientError → that status (paired with netlifyV2Platform)', async () => {
+  it('status-contract vendor: after {fromResults} ack → 200; a thrown ClientError → that status (netlifyV2Platform)', async () => {
     const stripe = webhook({ vendor: 'stripe', eventTypeHeader: 'stripe-event', verify: () => true });
     const ackMod = defineEvent({
       name: 'stripe.ack',
       detector: stripe.detector((ctx: WebhookDetectorContext) => ctx.eventType === 'ok'),
-      resolve: stripe.resolve(() => ({ received: true })),
+      jobs: [job(() => 'processed', { name: 'process' })],
     });
     const rejectMod = defineEvent({
       name: 'stripe.reject',
       detector: stripe.detector((ctx: WebhookDetectorContext) => ctx.eventType === 'bad'),
-      resolve: stripe.resolve((_ctx: WebhookHandlerContext & { prepared: Record<string, unknown> }) => {
-        throw new ClientError(400, 'unprocessable webhook');
-      }),
+      jobs: [job(() => 'seen', { name: 'see' })],
     });
-    const handler = createEventKit(stripe).use(netlifyV2Platform).registerEvents([ackMod, rejectMod]).handler();
+    const handler = createEventKit(stripe)
+      .use(netlifyV2Platform)
+      .registerEvents([ackMod, rejectMod])
+      .handler({
+        after: {
+          // one invocation-level reply, composed from the typed rollup
+          fromResults: result => {
+            if (result.events.some(e => e.name === 'stripe.reject')) throw new ClientError(400, 'unprocessable webhook');
+            return { received: true };
+          },
+        },
+      });
 
     const ok = (await handler(v2Request({ id: 1 }, { 'stripe-event': 'ok' }))) as Response;
     expect(ok.status).toBe(200);

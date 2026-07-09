@@ -44,6 +44,8 @@ interface Row {
 }
 
 const BOOM = new Error('boom');
+// typing helper for handler() results in this file
+declare function kitHandle(): ReturnType<ReturnType<typeof createEventKit>['handle']>;
 
 /** A module with one marker job so we can prove isolate-and-continue actually ran it. */
 function markerModule(ran: { value: boolean }) {
@@ -110,38 +112,6 @@ const rows: Row[] = [
       const mod = defineEvent({ name: 'test.jobcrash', detector: () => true, jobs: [job(() => { throw BOOM; }, { name: 'j' })] });
       const kit = createEventKit(fakeSource()).use(recorder.plugin).registerEvents([mod]);
       return { kit, recorder, jobRan: () => false };
-    },
-  },
-  {
-    seam: 'resolve throws (maps to resolved.error; jobs still ok)',
-    ok: true, wire: 'client-status', onError: true, continues: true, hasInvocationRecord: true,
-    build() {
-      const ran = { value: false };
-      const recorder = recordingPlugin();
-      const mod = defineEvent({
-        name: 'test.resolvecrash',
-        detector: () => true,
-        jobs: [job(() => { ran.value = true; return 'ok'; }, { name: 'marker' })],
-        resolve: () => { throw new ClientError(422, 'nope'); },
-      });
-      const kit = createEventKit(fakeSource()).use(recorder.plugin).registerEvents([mod]);
-      return { kit, recorder, jobRan: () => ran.value };
-    },
-  },
-  {
-    seam: 'respond throws (after jobs; maps to resolved.error)',
-    ok: true, wire: 'client-status', onError: true, continues: true, hasInvocationRecord: true,
-    build() {
-      const ran = { value: false };
-      const recorder = recordingPlugin();
-      const mod = defineEvent({
-        name: 'test.respondcrash',
-        detector: () => true,
-        jobs: [job(() => { ran.value = true; return 'ok'; }, { name: 'marker' })],
-        respond: () => { throw new ClientError(400, 'bad'); },
-      });
-      const kit = createEventKit(fakeSource()).use(recorder.plugin).registerEvents([mod]);
-      return { kit, recorder, jobRan: () => ran.value };
     },
   },
   {
@@ -285,21 +255,23 @@ describe("crash-policy 'signalRetry' (ADR-038)", () => {
     expect(hasEscalationLog(recorder)).toBe(true);
   });
 
-  it('resolve throw is NOT escalated — the deliberate client reply still wins', async () => {
+  it("a handler-level `after` is SKIPPED when a crash escalates — the 500 reaches the wire", async () => {
     const recorder = recordingPlugin();
     const mod = defineEvent({
-      name: 'test.resolvecrash',
-      detector: () => true,
+      name: 'test.detectorcrash',
+      detector: () => { throw BOOM; },
       jobs: [job(() => 'ok', { name: 'marker' })],
-      resolve: () => { throw new ClientError(422, 'nope'); },
     });
-    const kit = createEventKit(signalRetrySource()).use(recorder.plugin).registerEvents([mod]);
+    const handler = createEventKit(signalRetrySource())
+      .use(recorder.plugin)
+      .registerEvents([mod])
+      .handler({ after: { body: { received: true } } });
 
-    const result = await kit.handle({ hello: 'world' });
+    const result = (await handler({ hello: 'world' })) as Awaited<ReturnType<typeof kitHandle>>;
 
-    expect(result.error).toBeUndefined(); // not a framework 500
-    expect(result.resolved?.error).toBeDefined(); // client status still mapped
-    expect(hasEscalationLog(recorder)).toBe(false);
+    expect(result.error).toBeDefined(); // escalated to a retryable framework error
+    expect(result.resolved).toBeUndefined(); // the constant ack did NOT mask the 500
+    expect(hasEscalationLog(recorder)).toBe(true);
   });
 
   it('job failure is NOT escalated — a business failure stays a 200 (own retry)', async () => {

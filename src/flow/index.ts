@@ -14,7 +14,6 @@ export type {
   KitDescription,
   KitEventDescription,
   KitJobDescription,
-  FlowResponseKind,
   FlowManifest,
   FlowNode,
   FlowEdge,

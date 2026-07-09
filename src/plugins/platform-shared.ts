@@ -111,7 +111,7 @@ export const v2Meta = (request: unknown): Record<string, unknown> => {
   return meta;
 };
 
-/** Serialize a `resolve` success body: a string passes through, anything else is JSON. */
+/** Serialize a produced response body: a string passes through, anything else is JSON. */
 const outputBody = (output: unknown): string => (typeof output === 'string' ? output : JSON.stringify(output ?? null));
 
 /** A generic `{ message, extensions? }` error body (Stripe ignores it; Hasura reads `message`). */
@@ -160,22 +160,34 @@ const jsonBody = (result: InvocationResult): string =>
   });
 
 /**
- * HTTP {statusCode, body} honoring a request/response module's `resolve` (ADR-026):
- *   - framework error      → 500 + ack body (retryable)
- *   - resolve threw         → ClientError status (or 400) + {message, extensions?}
- *   - resolve returned      → 200 + the output (status-contract ack, e.g. Stripe)
- *   - no resolve            → 200 + the fire-and-forget ack body (unchanged)
+ * HTTP {statusCode, headers?, body} honoring a request/response module's `response` (ADR-026):
+ *   - framework error       → 500 + ack body (retryable)
+ *   - response fn threw     → ClientError status (or 400) + {message, extensions?}
+ *   - response produced     → declared `ResponseWire` status (default 200) + headers + the output
+ *   - no response declared  → 200 + the fire-and-forget ack body (unchanged)
  */
-export const httpResponse = (result: InvocationResult): { statusCode: number; body: string } => {
+export const httpResponse = (
+  result: InvocationResult,
+): { statusCode: number; body: string; headers?: Record<string, string> } => {
   if (result.error) return { statusCode: 500, body: jsonBody(result) };
   const r = result.resolved;
   if (r?.error) return { statusCode: r.error.status ?? 400, body: errorBody(r.error) };
-  if (r?.hasResolved) return { statusCode: 200, body: outputBody(r.output) };
+  if (r?.hasResolved) {
+    return {
+      statusCode: r.status ?? 200,
+      body: outputBody(r.output),
+      ...(r.headers ? { headers: r.headers } : {}),
+    };
+  }
   return { statusCode: 200, body: jsonBody(result) };
 };
 
 /** HTTP-style short-circuit (classic/lambda/background): { statusCode, body }. */
 export const httpRejection = (r: HandlerShortCircuit) => ({ statusCode: r.status, body: r.body ?? '' });
+
+/** Web-`Response` short-circuit (the v2 adapters) — a hand-shaped `{ statusCode }` would be a malformed v2 reply. */
+export const webRejection = (r: HandlerShortCircuit): Response =>
+  new Response(r.body ?? '', { status: r.status, headers: r.headers ?? {} });
 
 export const env = (): Record<string, string | undefined> =>
   typeof process !== 'undefined' && process.env ? process.env : {};

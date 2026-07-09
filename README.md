@@ -103,18 +103,26 @@ A module is a declarative record. There's no handler function. You declare the j
 the runtime runs them.
 
 ```ts
-defineEvent<TPayload>({
+hasuraEvent.defineEvent<Row>({   // the source-scoped builder types every inline (ctx) => seam
   name,           // business event name (the identity)
   detector,       // (ctx) => boolean. the predicate, keep the switch house style
   prepare?,       // (ctx) => shared. runs once, merges into every job's input
   jobs?,          // a STATIC list of bare functions (or job(fn, opts) when you need options)
-  resolve?,       // (ctx) => output. request/response seam (ADR-026), runs concurrent with jobs
-  respond?,       // (ctx, { jobs, ok }) => output. result-driven response (ADR-029): runs AFTER
-                  //   jobs settle so the reply reflects their outcome. mutually exclusive with resolve
   run?,           // RunOptions for the batch (timeoutMs / metadata). jobs always run parallel;
                   //   mode:'series' + continueOnFailure are a planned future control (ADR-031)
   metadata?,      // registration-time hints for tooling
-});  // a module must declare jobs and/or a response seam (resolve or respond)
+});  // a module must declare jobs — the HTTP reply is NOT a module concern
+
+// The endpoint's ONE reply is declared at the INVOCATION layer (ADR-026, re-amended):
+//   kit.handler({
+//     before?,     // pre-dispatch gate (auth / method); returning a value short-circuits
+//     after?,      // the reply declaration:
+//                  //   { body }              a constant; the work can't change it
+//                  //   { fromResults: (result) => output }  business logic over the typed
+//                  //       rollup (InvocationResult: every EventOutcome + JobExecution)
+//                  //   + optional status/headers (web-standard ResponseInit, as data)
+//   })
+// "202 now, then the work" is a PLATFORM choice (netlifyBackgroundPlatform), not an after mode.
 ```
 
 Three rules keep every event chain deterministic and analyzable:
@@ -205,12 +213,13 @@ kit** (the positional arg to `createEventKit`).
   The context exposes `signatureVerified`, `vendor`, `eventType`, `body`. `verify` runs once
   (before `normalize`) and annotates `signatureVerified`; the detector decides. Set
   `rejectUnverified: true` (ADR-030) to instead reject a bad signature with 401 before any
-  module runs. A status-contract vendor (Stripe) uses `resolve` plus a thrown
-  `ClientError(status, ...)`.
+  module runs. A status-contract vendor (Stripe) declares the reply at the invocation
+  layer — `kit.handler({ after: { body } })` for a constant receipt, or `{ fromResults }`
+  with a thrown `ClientError(status, ...)`.
 - **`hasuraAction`**. A **request/response** source for Hasura Actions
   (`sourceType:'action'`, gated by Hasura's permission model). Context: `actionName`,
-  `input`, `sessionVariables`, `requestQuery?`. A module's `resolve` returns the output,
-  and the generic platform adapter you register (`netlifyV2Platform`/`netlifyPlatform`/
+  `input`, `sessionVariables`, `requestQuery?`. The action's work runs as jobs; `kit.handler({ after: { fromResults } })` returns the
+  output composed from the rollup, and the generic platform adapter you register (`netlifyV2Platform`/`netlifyPlatform`/
   `lambdaPlatform`) maps it to 2xx. A thrown `ActionError(message, code?)` maps to 4xx
   `{ message, extensions: { code? } }` (no dedicated action platform). The bespoke `app-*`
   endpoints get *converted* to actions over time (see the migration playbook), not migrated.

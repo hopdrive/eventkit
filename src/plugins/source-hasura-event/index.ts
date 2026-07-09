@@ -14,11 +14,15 @@ import type {
   PrepareFunction,
   EventKitPlugin,
   EventEnvelope,
+  EventModule,
   EventSourceType,
   RequestContext,
+  SourceEventModule,
 } from '../../core/index.js';
+import { defineEvent } from '../../core/index.js';
 import type { HasuraEventPayload, HasuraDetectorContext, HasuraHandlerContext } from '../hasura-shared/types.js';
 import { normalizeHasuraEvent, buildHasuraDetectorContext, buildHasuraHandlerContext } from '../hasura-shared/adapter.js';
+import { callableSource, authoringHelper } from '../hasura-shared/callable-source.js';
 import type { HasuraTokenDiscoveryConfig } from '../hasura-shared/token-discovery.js';
 
 /** Source config for `hasuraEvent` — the second arg of `createEventKit`. */
@@ -27,7 +31,9 @@ export type HasuraEventConfig = HasuraTokenDiscoveryConfig;
 /**
  * The `hasuraEvent` source adapter plus its authoring helpers. Also CALLABLE as a
  * factory (ADR-039.2): `createEventKit(hasuraEvent, { tokenField })` configures
- * inbound token discovery; bare `hasuraEvent` uses defaults.
+ * inbound token discovery; bare `hasuraEvent` uses defaults. The typed helper
+ * signatures below (incl. the D32 `TPrepared` inference on `prepare`) ARE the
+ * public authoring contract; at runtime the helpers are identity wrappers.
  */
 export interface HasuraEventSource extends EventKitPlugin {
   (config?: HasuraEventConfig): EventKitPlugin;
@@ -38,20 +44,22 @@ export interface HasuraEventSource extends EventKitPlugin {
   prepare<TNewRow = Record<string, unknown>, TOldRow = TNewRow, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
     fn: (ctx: HasuraHandlerContext<TNewRow, TOldRow>) => TPrepared | Promise<TPrepared>,
   ): PrepareFunction<HasuraEventPayload<TNewRow, TOldRow>, Record<string, unknown>, TPrepared>;
+  /**
+   * Source-scoped module builder: `hasuraEvent.defineEvent<Row>({ ... })`. The row
+   * type on THIS call flows into every inline seam — a bare `detector: (ctx) => ...`
+   * arrow gets the full Hasura context (`ctx.operation`, `ctx.columnChanged`,
+   * `ctx.newRow`) with no per-seam `.detector()` wrapper. Runtime = core
+   * `defineEvent` (name branding only). See `SourceEventModule` for the TPrepared
+   * caveat when the row type is passed explicitly.
+   */
+  defineEvent<TNewRow = Record<string, unknown>, TOldRow = TNewRow, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
+    module: SourceEventModule<HasuraDetectorContext<TNewRow, TOldRow>, HasuraHandlerContext<TNewRow, TOldRow>, TPrepared>,
+  ): EventModule<HasuraEventPayload<TNewRow, TOldRow>, Record<string, unknown>, TPrepared>;
 }
 
-// Authoring helpers — identity wrappers; the runtime supplies the enriched ctx.
-// Defined once (config-independent) and attached to both the default plugin and the factory.
-function detector(fn: unknown): DetectorFunction {
-  return fn as unknown as DetectorFunction;
-}
-// Generic identity wrapper: repeats the signature so the inferred `TPrepared` is
-// preserved into `PrepareFunction`'s 3rd slot (D32) rather than erased to the default.
-function prepare<TNewRow = Record<string, unknown>, TOldRow = TNewRow, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
-  fn: (ctx: HasuraHandlerContext<TNewRow, TOldRow>) => TPrepared | Promise<TPrepared>,
-): PrepareFunction<HasuraEventPayload<TNewRow, TOldRow>, Record<string, unknown>, TPrepared> {
-  return fn as unknown as PrepareFunction<HasuraEventPayload<TNewRow, TOldRow>, Record<string, unknown>, TPrepared>;
-}
+// The same core defineEvent function, re-typed so the row type parameter on the
+// OUTER call contextually types every inline seam (the runtime shape is identical).
+const defineHasuraEvent = defineEvent as unknown as HasuraEventSource['defineEvent'];
 
 /** Build the plugin object; `normalize` closes over the source config (ADR-039.2). */
 function build(config: HasuraEventConfig): EventKitPlugin {
@@ -59,8 +67,9 @@ function build(config: HasuraEventConfig): EventKitPlugin {
     name: 'source-hasura-event',
     provides: ['source', 'source:hasura'],
     sourceType: 'database',
-    detector,
-    prepare,
+    detector: authoringHelper,
+    prepare: authoringHelper,
+    defineEvent: defineHasuraEvent,
     // Shape-3 capabilities.
     normalize(raw: unknown, request: RequestContext): EventEnvelope {
       return normalizeHasuraEvent(raw, request, config) as EventEnvelope;
@@ -74,13 +83,4 @@ function build(config: HasuraEventConfig): EventKitPlugin {
   } as EventKitPlugin;
 }
 
-// The public export is a factory with the default plugin's members attached, so
-// `createEventKit(hasuraEvent)`, `createEventKit(hasuraEvent, config)`, and direct
-// capability use (`hasuraEvent.normalize(...)`) all work. `fn.name` is non-writable,
-// so it is set via defineProperty (a plain Object.assign of `name` throws in strict mode).
-const factory = (config: HasuraEventConfig = {}): EventKitPlugin => build(config);
-const defaults = build({});
-const { name: pluginName, ...rest } = defaults;
-Object.assign(factory, rest, { detector, prepare });
-Object.defineProperty(factory, 'name', { value: pluginName, configurable: true });
-export const hasuraEvent = factory as HasuraEventSource;
+export const hasuraEvent = callableSource<HasuraEventConfig, HasuraEventSource>(build);

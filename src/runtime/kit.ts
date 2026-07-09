@@ -25,7 +25,7 @@ import {
   type EventModuleMetadata,
   type EventOutcome,
   type EventSourceType,
-  type FlowResponseKind,
+  type HandlerResponse,
   type JobDefinition,
   type KitDescription,
   type KitEventDescription,
@@ -45,16 +45,14 @@ import {
   type ResolvedOutcome,
   type SerializedError,
 } from '../core/index.js';
+import { isJobDefinition } from '../core/job.js';
 import { PluginManager } from './plugin-manager.js';
 import { runJobs, type InvocationRuntime } from './run.js';
 import { createHandlerLogger, createDetectorLogger } from './loggers.js';
 import { newInvocationId, newCorrelationId, newUuid } from './ids.js';
 
-const isJobDefinition = (x: unknown): boolean =>
-  !!x && typeof x === 'object' && (x as { __eventkitJob?: unknown }).__eventkitJob === true;
-
 /**
- * Map a thrown value from `resolve`/`prepare` into the platform-mappable shape. Reads
+ * Map a thrown value from a response fn / `prepare` into the platform-mappable shape. Reads
  * `ClientError.status` and `ActionError.code`/`extensions` DUCK-TYPED — `instanceof`
  * across bundled copies of the package is unreliable, and the error classes carry these
  * as plain fields for exactly this reason (ADR-026).
@@ -68,12 +66,44 @@ function toResolvedError(err: unknown): ResolvedError {
   return out;
 }
 
+/**
+ * Validate a handler-level `after` declaration for untyped JS callers (the TS type
+ * already enforces this): exactly one of { body } / { fromResults }, a DATA-only
+ * constant body, and well-formed ResponseWire fields.
+ */
+function validateHandlerResponse(after: HandlerResponse): void {
+  const r = after as { body?: unknown; fromResults?: unknown; status?: unknown; headers?: unknown };
+  const modes = (['body', 'fromResults'] as const).filter(k => r?.[k] !== undefined);
+  if (typeof after !== 'object' || after === null || modes.length !== 1) {
+    throw new Error(`handler({ after }): declare exactly one of { body }, { fromResults }.`);
+  }
+  if (modes[0] === 'body') {
+    const body = r.body;
+    // A constant body is DATA — a function or thenable means the author wanted a
+    // computed reply; that contract is { fromResults }.
+    if (typeof body === 'function' || (body !== null && typeof (body as { then?: unknown })?.then === 'function')) {
+      throw new Error(`handler({ after }): 'body' is a CONSTANT reply (data, not code) — use { fromResults: fn } for a computed reply.`);
+    }
+  } else if (typeof r.fromResults !== 'function') {
+    throw new Error(`handler({ after }): 'fromResults' must be a function.`);
+  }
+  if (r.status !== undefined && (typeof r.status !== 'number' || !Number.isInteger(r.status))) {
+    throw new Error(`handler({ after }): 'status' must be an integer HTTP status.`);
+  }
+  if (r.headers !== undefined && (typeof r.headers !== 'object' || r.headers === null || Array.isArray(r.headers))) {
+    throw new Error(`handler({ after }): 'headers' must be a record of header strings.`);
+  }
+}
+
 /** Milliseconds reserved before the serverless budget expires, for best-effort flush. */
 const FLUSH_SAFETY_MARGIN_MS = 200;
 
+/** A module as stored after registerEvent normalization: jobs fully wrapped to JobDefinitions. */
+type RegisteredModule = EventModule<any, any, any>;
+
 class Kit implements EventKit {
   private readonly pm: PluginManager;
-  private readonly modules: EventModule[] = [];
+  private readonly modules: RegisteredModule[] = [];
   private readonly moduleNames = new Set<string>();
   private validated = false;
   private readyPromise?: Promise<void>;
@@ -116,31 +146,49 @@ class Kit implements EventKit {
     return this;
   }
 
-  registerEvent(module: EventModule): EventKit {
+  /**
+   * Shared inbound pipeline for `handle()` and `dryRun()`: resolve the raw payload +
+   * RequestContext (platform-aware, else pass-through), then normalize → augment →
+   * notify. Everything after this point works from the returned envelope.
+   */
+  private async intake(
+    rawPayloadOrArgs: unknown,
+    request?: RequestContext | unknown,
+  ): Promise<{ envelope: EventEnvelope; req: RequestContext }> {
+    let raw: unknown;
+    let req: RequestContext;
+    if (this.pm.platform) {
+      raw = await this.pm.platform.extractPayload?.(rawPayloadOrArgs, request);
+      req = (this.pm.platform.buildRequest?.(rawPayloadOrArgs, request) as RequestContext) ?? {};
+    } else {
+      raw = rawPayloadOrArgs;
+      req = (request as RequestContext) ?? {};
+    }
+    await this.pm.onBeforeNormalize(raw, req);
+    let envelope: EventEnvelope = this.pm.normalize(raw, req);
+    envelope = await this.pm.augmentEnvelope(envelope);
+    await this.pm.onAfterNormalize(envelope);
+    return { envelope, req };
+  }
+
+  registerEvent(module: EventModule<any, any, any>): EventKit {
     if (!module || typeof module.name !== 'string') throw new Error('registerEvent: module must have a string name.');
     if (typeof module.detector !== 'function') throw new Error(`Event '${module.name}' is missing a detector.`);
     if (module.prepare !== undefined && typeof module.prepare !== 'function') {
       throw new Error(`Event '${module.name}': prepare must be a function if provided.`);
     }
-    if (module.resolve !== undefined && typeof module.resolve !== 'function') {
-      throw new Error(`Event '${module.name}': resolve must be a function if provided.`);
+    // Migration guard for untyped JS callers: the HTTP reply is NOT a module concern
+    // (ADR-026, re-amended) — it is declared at the invocation layer.
+    const legacy = module as { resolve?: unknown; respond?: unknown; response?: unknown };
+    if (legacy.resolve !== undefined || legacy.respond !== undefined || legacy.response !== undefined) {
+      throw new Error(
+        `Event '${module.name}': a module does not declare an HTTP reply — declare it at the invocation layer: ` +
+          `kit.handler({ after: { body } }) or kit.handler({ after: { fromResults: (result) => body } }).`,
+      );
     }
-    if (module.respond !== undefined && typeof module.respond !== 'function') {
-      throw new Error(`Event '${module.name}': respond must be a function if provided.`);
-    }
-    // ADR-026: a module picks ONE response timing. `resolve` runs concurrently with the
-    // jobs (sibling-ignorant); `respond` runs after they settle and reads their results.
-    if (module.resolve !== undefined && module.respond !== undefined) {
-      throw new Error(`Event '${module.name}': declare 'resolve' OR 'respond', not both — they are two response timings for the same seam.`);
-    }
-    // `respond` composes the response FROM job results, so it needs jobs to read.
-    if (module.respond !== undefined && (module.jobs === undefined || module.jobs.length === 0)) {
-      throw new Error(`Event '${module.name}': 'respond' requires at least one job (it reads their results); use 'resolve' for a job-independent response.`);
-    }
-    // ADR-025/026: a module declares `jobs` (fire-and-forget) and/or a response seam
-    // (`resolve`/`respond`). A module with neither does nothing — a config error.
-    if (module.jobs === undefined && module.resolve === undefined && module.respond === undefined) {
-      throw new Error(`Event '${module.name}': must declare 'jobs' and/or 'resolve'/'respond' (a module with neither does nothing).`);
+    // ADR-025: a module declares `jobs` — a module with none does nothing (a config error).
+    if (module.jobs === undefined) {
+      throw new Error(`Event '${module.name}': must declare 'jobs' (a module with no jobs does nothing).`);
     }
     // ADR-031: series execution and continueOnFailure are specified but NOT enabled in this
     // release. The option types omit them, so a TS caller can't set them; this guards untyped
@@ -176,12 +224,17 @@ class Kit implements EventKit {
     }
     if (this.moduleNames.has(module.name)) throw new Error(`Duplicate event name registered: '${module.name}'.`);
     this.moduleNames.add(module.name);
-    // Store a module with the normalized (fully-wrapped) jobs so dispatch/runJobs see only JobDefinitions.
-    this.modules.push(normalizedJobs ? { ...module, jobs: normalizedJobs } : module);
+    // Store the module with normalized jobs (dispatch/runJobs see only JobDefinitions)
+    // plus the normalized response seam (kind + the internal fn dispatch runs).
+    const registered: RegisteredModule = {
+      ...module,
+      ...(normalizedJobs ? { jobs: normalizedJobs } : {}),
+    };
+    this.modules.push(registered);
     return this;
   }
 
-  registerEvents(modules: EventModule[] | Record<string, EventModule>): EventKit {
+  registerEvents(modules: EventModule<any, any, any>[] | Record<string, EventModule<any, any, any>>): EventKit {
     const list = Array.isArray(modules) ? modules : Object.values(modules);
     for (const m of list) this.registerEvent(m);
     return this;
@@ -192,19 +245,6 @@ class Kit implements EventKit {
     // plus registration sanity. onInit (async) runs in ensureReady()/handle().
     this.pm.resolve();
     if (this.modules.length === 0) throw new Error('No event modules registered. Call kit.registerEvents(...).');
-    // ADR-026: a result-driven `respond` cannot run under a platform that answers before
-    // the jobs finish (a background / 202-early adapter) — the outcome it reads hasn't
-    // happened yet. Reject the combination up front rather than silently dropping the body.
-    if (this.pm.platform?.deferredResponse) {
-      const offender = this.modules.find(m => m.respond !== undefined);
-      if (offender) {
-        throw new Error(
-          `Event '${offender.name}': 'respond' (result-driven response) is incompatible with platform ` +
-          `'${this.pm.platform.name}', which responds before jobs finish. Use 'resolve' for an immediate ` +
-          `ack, or register a non-deferred platform.`,
-        );
-      }
-    }
     this.validated = true;
   }
 
@@ -247,11 +287,23 @@ class Kit implements EventKit {
 
   handler(opts?: {
     before?: (...args: unknown[]) => HandlerShortCircuit | void | Promise<HandlerShortCircuit | void>;
+    after?: HandlerResponse;
   }): (...args: unknown[]) => unknown {
+    // Fail fast at handler creation (module scope), not on the first request.
+    if (opts?.after !== undefined) validateHandlerResponse(opts.after);
     return async (...args: unknown[]) => {
       // Resolve the kit (and thus the platform) up front so a `before` rejection can
       // be shaped by the platform even though it never reaches handle().
       await this.ensureReady();
+      // `{ fromResults }` composes the reply from the settled run — impossible under a
+      // platform that answers before the run finishes (background/202). Same rule the
+      // module-level result-driven seam had; checked here because the platform resolves lazily.
+      if (opts?.after && 'fromResults' in opts.after && this.pm.platform?.deferredResponse) {
+        throw new Error(
+          `handler({ after: { fromResults } }) is incompatible with platform '${this.pm.platform.name}', ` +
+            `which responds before the run finishes. Use { body } (or no after), or a non-deferred platform.`,
+        );
+      }
       if (opts?.before) {
         const pre = await opts.before(...args);
         if (pre != null) {
@@ -262,8 +314,39 @@ class Kit implements EventKit {
         }
       }
       const result = await this.handle(args[0], args[1]);
+      // Apply the invocation-level `after` reply declaration (ADR-026, re-amended). Skipped when:
+      //  - a framework error occurred (the 500 retry contract is load-bearing);
+      //  - something already produced a reply (a pre-dispatch client rejection, e.g.
+      //    webhook rejectUnverified — its status must not be clobbered by an ack).
+      if (opts?.after && !result.error && !result.resolved) {
+        result.resolved = await this.produceReply(opts.after, result);
+      }
       return this.pm.platform ? this.pm.platform.formatResponse?.(result) : result;
     };
+  }
+
+  /**
+   * Produce the invocation's reply from the handler-level `after` declaration:
+   * `{ body }` is the constant reply; `{ fromResults }` runs over the full
+   * InvocationResult — a throw (ClientError/ActionError) maps to the wire error,
+   * reported through onError at phase 'handle'. Declared `ResponseWire` fields
+   * attach to a successfully produced reply only.
+   */
+  private async produceReply(after: HandlerResponse, result: InvocationResult): Promise<ResolvedOutcome> {
+    let outcome: ResolvedOutcome;
+    if (after.fromResults) {
+      try {
+        outcome = { hasResolved: true, output: await after.fromResults(result) };
+      } catch (err) {
+        await this.pm.reportError(err, 'handle', { invocationId: result.invocationId });
+        return { hasResolved: true, error: toResolvedError(err) };
+      }
+    } else {
+      outcome = { hasResolved: true, output: after.body };
+    }
+    if (after.status !== undefined) outcome.status = after.status;
+    if (after.headers !== undefined) outcome.headers = after.headers;
+    return outcome;
   }
 
   async handle(rawPayloadOrArgs: unknown, request?: RequestContext | unknown): Promise<InvocationResult> {
@@ -283,27 +366,14 @@ class Kit implements EventKit {
     // retry. Business-logic crashes (detector/handler/job) are caught downstream
     // and stay in events[] with NO top-level error → 200 → no retry.
     try {
-    // 1. Resolve raw payload + RequestContext (platform-aware).
-    let raw: unknown;
-    let req: RequestContext;
-    if (this.pm.platform) {
-      raw = await this.pm.platform.extractPayload?.(rawPayloadOrArgs, request);
-      req = (this.pm.platform.buildRequest?.(rawPayloadOrArgs, request) as RequestContext) ?? {};
-    } else {
-      raw = rawPayloadOrArgs;
-      req = (request as RequestContext) ?? {};
-    }
+    // 1–2. Resolve raw payload + RequestContext, normalize → augment (shared intake).
+    const intake = await this.intake(rawPayloadOrArgs, request);
+    const envelope: EventEnvelope = intake.envelope;
 
     const sourceType: EventSourceType = this.pm.sourceType;
 
-    // 2. Normalize → augment envelope.
-    await this.pm.onBeforeNormalize(raw, req);
-    let envelope: EventEnvelope = this.pm.normalize(raw, req);
-    envelope = await this.pm.augmentEnvelope(envelope);
-    await this.pm.onAfterNormalize(envelope);
-
     // 3. Per-request config refinement (delta), then resolve ids.
-    req = await this.pm.configureInvocation(req, envelope);
+    const req = await this.pm.configureInvocation(intake.req, envelope);
     const invocationId = req.invocationId ? asInvocationId(req.invocationId) : newInvocationId();
     // Single correlationId lever, by precedence: a plugin's augmentEnvelope (e.g.
     // loop-guard lifting the inbound token's correlation — chaining beats a
@@ -398,7 +468,7 @@ class Kit implements EventKit {
     }
 
     const detected = await this.detect(envelope, invocation);
-    const { events, resolved } = await this.dispatch(detected, envelope, invocation, runtime);
+    const { events } = await this.dispatch(detected, envelope, invocation, runtime);
 
     result = {
       ok: events.every(e => e.jobs.every(j => j.status === 'completed' || j.status === 'skipped')),
@@ -407,16 +477,15 @@ class Kit implements EventKit {
       durationMs: Date.now() - start,
     };
     if (timedOut) result.timedOut = true;
-    if (resolved) result.resolved = resolved;
 
     // ADR-038: under crashPolicy 'signalRetry' (the webhook source's default), an
     // UNHANDLED processing crash — a detector or prepare throw, surfaced as
     // events[].error — is escalated to a top-level framework error → 500 → an
-    // at-least-once sender retries. A deliberate resolve/respond reply (`resolved`)
-    // wins: that response is intentional, not a crash. Emit a loud error log too, so a
-    // crash this severe is visible in Grafana (the obs sink) on top of the onError
-    // route (Sentry) that reportError already fired during detect/dispatch.
-    if (this.pm.crashPolicy === 'signalRetry' && !resolved) {
+    // at-least-once sender retries. (A handler-level `respond` is skipped on a
+    // framework error, so the escalation always reaches the wire.) Emit a loud error
+    // log too, so a crash this severe is visible in Grafana (the obs sink) on top of
+    // the onError route (Sentry) that reportError already fired during detect/dispatch.
+    if (this.pm.crashPolicy === 'signalRetry') {
       const crashed = events.find(e => e.error !== undefined);
       if (crashed?.error) {
         invocation.log.error('Processing crash escalated to a retryable 500 (crashPolicy=signalRetry)', {
@@ -475,19 +544,9 @@ class Kit implements EventKit {
 
   async dryRun(rawPayloadOrArgs: unknown, request?: RequestContext | unknown): Promise<DryRunResult> {
     await this.ensureReady();
-    let raw: unknown;
-    let req: RequestContext;
-    if (this.pm.platform) {
-      raw = await this.pm.platform.extractPayload?.(rawPayloadOrArgs, request);
-      req = (this.pm.platform.buildRequest?.(rawPayloadOrArgs, request) as RequestContext) ?? {};
-    } else {
-      raw = rawPayloadOrArgs;
-      req = (request as RequestContext) ?? {};
-    }
-    await this.pm.onBeforeNormalize(raw, req);
-    let envelope: EventEnvelope = this.pm.normalize(raw, req);
-    envelope = await this.pm.augmentEnvelope(envelope);
-    await this.pm.onAfterNormalize(envelope);
+    // Same intake as handle(); per-request configureInvocation is deliberately skipped
+    // (detection only — no invocation is being configured).
+    const { envelope, req } = await this.intake(rawPayloadOrArgs, request);
 
     const invocationId = req.invocationId ? asInvocationId(req.invocationId) : newInvocationId();
     const correlationId = envelope.correlationId ?? newCorrelationId();
@@ -505,7 +564,7 @@ class Kit implements EventKit {
     };
 
     // Kit-level prepare runs in dryRun too, so detectors that read `ctx.provided` behave
-    // identically. (Module `prepare` / jobs / resolve still do NOT run — detection only.)
+    // identically. (Module `prepare` / jobs / response fns still do NOT run — detection only.)
     invocation.provided = await this.runKitPrepare(invocation);
     const detected = await this.detect(envelope, invocation);
     const jobNamesOf = (module: EventModule): string[] =>
@@ -535,8 +594,8 @@ class Kit implements EventKit {
   private async detect(
     envelope: EventEnvelope,
     invocation: InvocationContext,
-  ): Promise<Array<{ module: EventModule; event: DetectedEvent | null; error?: SerializedError }>> {
-    const out: Array<{ module: EventModule; event: DetectedEvent | null; error?: SerializedError }> = [];
+  ): Promise<Array<{ module: RegisteredModule; event: DetectedEvent | null; error?: SerializedError }>> {
+    const out: Array<{ module: RegisteredModule; event: DetectedEvent | null; error?: SerializedError }> = [];
     for (const module of this.modules) {
       const base: DetectorContext = {
         eventName: asEventName(module.name),
@@ -612,15 +671,12 @@ class Kit implements EventKit {
    * prepare crash with no jobs does not flip it (no-retry contract).
    */
   private async dispatch(
-    detected: Array<{ module: EventModule; event: DetectedEvent | null; error?: SerializedError }>,
+    detected: Array<{ module: RegisteredModule; event: DetectedEvent | null; error?: SerializedError }>,
     envelope: EventEnvelope,
     invocation: InvocationContext,
     runtime: InvocationRuntime,
-  ): Promise<{ events: EventOutcome[]; resolved?: ResolvedOutcome }> {
+  ): Promise<{ events: EventOutcome[] }> {
     const events: EventOutcome[] = [];
-    // The FIRST detected module with a `resolve` provides the invocation's response
-    // (ADR-026). Captured here and surfaced on InvocationResult for the platform.
-    let resolved: ResolvedOutcome | undefined;
     for (const entry of detected) {
       const { module, event } = entry;
 
@@ -653,56 +709,15 @@ class Kit implements EventKit {
       const handlerStart = Date.now();
       let jobs: JobExecution[] = [];
       let error: ReturnType<typeof serializeError> | undefined;
-      let moduleResolved: ResolvedOutcome | undefined;
       try {
-        // prepare() runs ONCE before the jobs + resolve; its result is shared into the
-        // job input AND the resolve context (data only — never job selection).
+        // prepare() runs ONCE before the jobs; its result is shared into every job's
+        // input (data only — never job selection).
         const prepared = module.prepare ? ((await module.prepare(ctx)) as Record<string, unknown>) : {};
         const jobInputCtx: JobInputContext = { ...(ctx as HandlerContext), prepared };
-        // Kick off jobs (fire-and-forget, never reject) and resolve (the response)
-        // CONCURRENTLY — they are sibling-ignorant (ADR-025/026); resolve never reads
-        // job results. Await both so serverless doesn't freeze mid-side-effect.
-        const jobsPromise = runJobs(runtime, event, module.jobs ?? [], module.run, jobInputCtx);
-        if (module.resolve) {
-          try {
-            const output = await module.resolve(jobInputCtx);
-            moduleResolved = { hasResolved: true, output };
-          } catch (rErr) {
-            error = serializeError(rErr);
-            moduleResolved = { hasResolved: true, error: toResolvedError(rErr) };
-            await this.pm.reportError(rErr, 'handle', {
-              invocationId: invocation.invocationId,
-              correlationId: invocation.correlationId,
-              eventName: event.name,
-            });
-          }
-        }
-        jobs = await jobsPromise;
-        // ADR-026 amendment: `respond` is the RESULT-DRIVEN response — sequenced AFTER the
-        // jobs settle, handed their executions + an `ok` flag (same predicate as
-        // InvocationResult.ok), so the synchronous reply can reflect the outcome. Mutually
-        // exclusive with `resolve` (enforced at register time). Jobs keep their own retry /
-        // durability — `respond` only reads results; a throw maps to the wire error.
-        if (module.respond) {
-          const ok = jobs.every(j => j.status === 'completed' || j.status === 'skipped');
-          try {
-            const output = await module.respond(jobInputCtx, { jobs, ok });
-            moduleResolved = { hasResolved: true, output };
-          } catch (rErr) {
-            error = serializeError(rErr);
-            moduleResolved = { hasResolved: true, error: toResolvedError(rErr) };
-            await this.pm.reportError(rErr, 'handle', {
-              invocationId: invocation.invocationId,
-              correlationId: invocation.correlationId,
-              eventName: event.name,
-            });
-          }
-        }
+        jobs = await runJobs(runtime, event, module.jobs ?? [], module.run, jobInputCtx);
       } catch (err) {
-        // A prepare() crash — neither jobs nor a response seam produced anything. For a
-        // request/response module this becomes the error response.
+        // A prepare() crash — no jobs ran for this event.
         error = serializeError(err);
-        if (module.resolve || module.respond) moduleResolved = { hasResolved: true, error: toResolvedError(err) };
         await this.pm.reportError(err, 'handle', {
           invocationId: invocation.invocationId,
           correlationId: invocation.correlationId,
@@ -715,16 +730,13 @@ class Kit implements EventKit {
       if (error !== undefined) handlerResult.error = error;
       await this.pm.onEventHandlerEnd(ctx, handlerResult);
 
-      // detected stays true even on a prepare/resolve crash (the event WAS detected);
-      // the error is surfaced separately. `ok` is computed from job status only — a
-      // resolve crash maps to the wire error response, not to a job-failure retry.
+      // detected stays true even on a prepare crash (the event WAS detected);
+      // the error is surfaced separately.
       const outcome: EventOutcome = { name: event.name, detected: true, jobs };
       if (error !== undefined) outcome.error = error;
       events.push(outcome);
-
-      if (moduleResolved && !resolved) resolved = moduleResolved; // first resolve wins
     }
-    return resolved ? { events, resolved } : { events };
+    return { events };
   }
 
   async shutdown(): Promise<void> {
@@ -746,7 +758,6 @@ class Kit implements EventKit {
       .map(p => p.name);
 
     const events: KitEventDescription[] = this.modules.map(m => {
-      const response: FlowResponseKind = m.respond ? 'respond' : m.resolve ? 'resolve' : 'none';
       const jobs: KitJobDescription[] = (m.jobs ?? []).map(entry => {
         // Jobs are normalized to JobDefinition at register time; stay defensive.
         const def = isJobDefinition(entry) ? (entry as JobDefinition) : undefined;
@@ -766,7 +777,7 @@ class Kit implements EventKit {
       });
 
       const meta = m.metadata as EventModuleMetadata | undefined;
-      const ev: KitEventDescription = { name: String(m.name), response, jobs };
+      const ev: KitEventDescription = { name: String(m.name), jobs };
       // run.mode is gone from RunOptions (ADR-031) and the register guard rejects a
       // non-parallel mode, so this reads defensively for a legacy/untyped shape.
       const runMode = (m.run as { mode?: 'parallel' | 'series' } | undefined)?.mode;

@@ -16,7 +16,6 @@ kit:
   plugins: [loop-guard, correlation-resolver]
 events:
   - name: rideshare.requested
-    response: none
     description: A rideshare was requested for a move
     owner: mobility
     flowHints:
@@ -28,7 +27,6 @@ events:
       - name: notifyDispatcher
         retries: 2
   - name: vendor.ride.driver_assigned
-    response: none
     jobs:
       - name: updateRidehailSystem
         continueOnFailure: false

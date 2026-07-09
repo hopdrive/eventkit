@@ -8,6 +8,7 @@
 // production teams that prefer the official SDK, inject `send` delegating to
 // `@sentry/node`; the plugin stays dependency-free.
 import type { EventKitPlugin, ErrorContext } from '../../core/index.js';
+import { randomId } from '../../core/ids.js';
 
 /** Sentry event payload (the subset we populate), passed to `send`. */
 export interface SentryEvent {
@@ -49,11 +50,8 @@ function parseDsn(dsn: string): DsnParts {
   return { endpoint, authHeader };
 }
 
-const newEventId = (): string =>
-  (typeof globalThis.crypto?.randomUUID === 'function' ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random()}`)
-    .replace(/-/g, '')
-    .slice(0, 32)
-    .padEnd(32, '0');
+/** Sentry wants a 32-char dashless event id — a UUID with the dashes stripped. */
+const newEventId = (): string => randomId('sentry').replace(/-/g, '').slice(0, 32).padEnd(32, '0');
 
 export function sentry(config: SentryConfig = {}): EventKitPlugin {
   if (!config.send && !config.dsn) {

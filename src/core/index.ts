@@ -3,8 +3,8 @@
 // =============================================================================
 // The complete public type surface (the §9/§11 RFC interfaces plus the helper
 // types the RFC left loose) lives here. Runtime values exported are the pure
-// leaf utilities (serialization, branded-id helpers) plus the Phase-0 stubs
-// (`job`, `run`, `createEventKit`) whose bodies land in Phase 1.
+// leaf utilities (serialization, branded-id helpers, `job`, `defineEvent`) —
+// `createEventKit` itself is runtime and re-exported from the package root.
 
 // ── Branded identifiers ────────────────────────────────────────────────────
 export type {
@@ -74,16 +74,15 @@ export type {
   JobsResult,
   RunOptions,
 } from './job.js';
-export { job, NotImplementedError } from './job.js';
+export { job } from './job.js';
 
 // ── Event modules (ADR-025: declarative; no handler) ─────────────────────────
 export type {
   EventModule,
   EventModuleMetadata,
+  SourceEventModule,
   DetectorFunction,
   PrepareFunction,
-  ResolveFunction,
-  RespondFunction,
 } from './event-module.js';
 export { defineEvent } from './event-module.js';
 
@@ -100,14 +99,13 @@ export type {
 } from './plugin.js';
 
 // ── Kit / entry point (types only; createEventKit + run are runtime, re-exported from the root) ──
-export type { EventKit, InvocationResult, EventOutcome, ResolvedOutcome, ResolvedError, PluginFactory, HandlerShortCircuit, HttpRequestEvent, DryRunResult, DryRunEvent } from './kit.js';
+export type { EventKit, HandlerResponse, InvocationResult, EventOutcome, ResolvedOutcome, ResolvedError, ResponseBody, ResponseWire, PluginFactory, HandlerShortCircuit, HttpRequestEvent, DryRunResult, DryRunEvent } from './kit.js';
 
 // ── Flow description + manifest vocabulary (§14–§16) ─────────────────────────
 export type {
   KitDescription,
   KitEventDescription,
   KitJobDescription,
-  FlowResponseKind,
   FlowManifest,
   FlowNode,
   FlowEdge,

@@ -5,8 +5,8 @@
 // deadline) unless a v2 context is confirmed to expose a live countdown (D21).
 // A platform plugin (`provides: ['platform']`, §11.0/§9.8). Imported via
 // `eventkit/platforms`.
-import type { HandlerShortCircuit, InvocationResult, PlatformAdapter, RequestContext } from '../../core/index.js';
-import { computedDeadline, env, extractV2Payload, httpResponse, v2Meta } from '../platform-shared.js';
+import type { InvocationResult, PlatformAdapter, RequestContext } from '../../core/index.js';
+import { computedDeadline, env, extractV2Payload, httpResponse, v2Meta, webRejection } from '../platform-shared.js';
 
 export function netlifyV2Platform(config: { maxExecutionMs?: number } = {}): PlatformAdapter {
   const maxExecutionMs = config.maxExecutionMs ?? 10_000;
@@ -22,10 +22,10 @@ export function netlifyV2Platform(config: { maxExecutionMs?: number } = {}): Pla
       meta: v2Meta(request),
     }),
     formatResponse: (result: InvocationResult) => {
-      const { statusCode, body } = httpResponse(result);
-      return new Response(body, { status: statusCode, headers: { 'content-type': 'application/json' } });
+      const { statusCode, body, headers } = httpResponse(result);
+      // Declared ResponseWire headers win over the json default — new Response(body, init) as data.
+      return new Response(body, { status: statusCode, headers: { 'content-type': 'application/json', ...(headers ?? {}) } });
     },
-    // v2 needs a Web Response — a hand-shaped { statusCode } would be a malformed reply.
-    formatRejection: (r: HandlerShortCircuit) => new Response(r.body ?? '', { status: r.status, headers: r.headers ?? {} }),
+    formatRejection: webRejection,
   };
 }

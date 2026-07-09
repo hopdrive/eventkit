@@ -19,6 +19,7 @@ import {
   type RunOptions,
 } from '../core/index.js';
 import type { InvocationContext } from '../core/index.js';
+import { isJobDefinition } from '../core/job.js';
 import type { PluginManager } from './plugin-manager.js';
 import { createHandlerLogger, createJobLogger } from './loggers.js';
 import { newUuid } from './ids.js';
@@ -64,9 +65,6 @@ function emitRunEnd(rt: InvocationRuntime, event: DetectedEvent, executions: Job
   createHandlerLogger({ ...correlation, scope: 'handler' }, sink)
     .info(`${event.name} completed ${executions.length} ${plural(executions.length)}${failed ? ` (${failed} failed)` : ''}`);
 }
-
-const isJobDefinition = (x: unknown): x is JobDefinition =>
-  !!x && typeof x === 'object' && (x as { __eventkitJob?: unknown }).__eventkitJob === true;
 
 /**
  * Run a module's declared `jobs`. `jobInputCtx` is the detected event's handler

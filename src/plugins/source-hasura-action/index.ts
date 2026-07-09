@@ -3,22 +3,25 @@
 // =============================================================================
 // The `hasuraAction` request/response source plugin — Hasura Actions (§7.2, ADR-026).
 // `provides: ['source']`; folder name === plugin `name` (`source-hasura-action`).
-// Adds `.resolve` (computes the action's synchronous response body) alongside
-// `.detector`/`.prepare`. Shared parsing / types / context builders live in
-// `../hasura-shared`.
+// The action's work runs as JOBS; the reply is declared at the invocation layer —
+// `kit.handler({ after: { fromResults } })`, throwing `ActionError`/`ClientError` for
+// a 4xx. Shared parsing / types / context builders live in `../hasura-shared`.
 import type {
   DetectorContext,
   DetectorFunction,
   HandlerContext,
   PrepareFunction,
-  ResolveFunction,
   EventKitPlugin,
   EventEnvelope,
+  EventModule,
   EventSourceType,
   RequestContext,
+  SourceEventModule,
 } from '../../core/index.js';
+import { defineEvent } from '../../core/index.js';
 import type { HasuraActionPayload, HasuraActionContext, HasuraActionHandlerContext } from '../hasura-shared/types.js';
 import { normalizeHasuraAction, buildHasuraActionDetectorContext, buildHasuraActionHandlerContext } from '../hasura-shared/adapter.js';
+import { callableSource, authoringHelper } from '../hasura-shared/callable-source.js';
 import type { HasuraTokenDiscoveryConfig } from '../hasura-shared/token-discovery.js';
 
 /** Source config for `hasuraAction` — the second arg of `createEventKit`. */
@@ -38,21 +41,18 @@ export interface HasuraActionSource extends EventKitPlugin {
   prepare<TInput = Record<string, unknown>, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
     fn: (ctx: HasuraActionHandlerContext<TInput>) => TPrepared | Promise<TPrepared>,
   ): PrepareFunction<HasuraActionPayload<TInput>>;
-  /** Computes the action's synchronous response body (§7.2). Throw `ActionError`/`ClientError` for a 4xx. */
-  resolve<TInput = Record<string, unknown>, TOutput = unknown>(
-    fn: (ctx: HasuraActionHandlerContext<TInput> & { prepared: Record<string, unknown> }) => TOutput | Promise<TOutput>,
-  ): ResolveFunction<HasuraActionPayload<TInput>>;
+  /**
+   * Source-scoped module builder: `hasuraAction.defineEvent<Input>({ ... })`. The
+   * action-input type on THIS call types every inline seam (`ctx.actionName` /
+   * `ctx.input` / `ctx.sessionVariables`), no per-seam wrapper. Runtime = core `defineEvent`.
+   */
+  defineEvent<TInput = Record<string, unknown>, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
+    module: SourceEventModule<HasuraActionContext<TInput>, HasuraActionHandlerContext<TInput>, TPrepared>,
+  ): EventModule<HasuraActionPayload<TInput>, Record<string, unknown>, TPrepared>;
 }
 
-function detector(fn: unknown): DetectorFunction {
-  return fn as unknown as DetectorFunction;
-}
-function prepare(fn: unknown): PrepareFunction {
-  return fn as unknown as PrepareFunction;
-}
-function resolve(fn: unknown): ResolveFunction {
-  return fn as unknown as ResolveFunction;
-}
+// Core defineEvent, re-typed so the input type on the OUTER call types every inline seam.
+const defineActionEvent = defineEvent as unknown as HasuraActionSource['defineEvent'];
 
 /** Build the plugin object; `normalize` closes over the source config (ADR-039.2). */
 function build(config: HasuraActionConfig): EventKitPlugin {
@@ -60,9 +60,9 @@ function build(config: HasuraActionConfig): EventKitPlugin {
     name: 'source-hasura-action',
     provides: ['source', 'source:hasura-action'],
     sourceType: 'action',
-    detector,
-    prepare,
-    resolve,
+    detector: authoringHelper,
+    prepare: authoringHelper,
+    defineEvent: defineActionEvent,
     normalize(raw: unknown, request: RequestContext): EventEnvelope {
       return normalizeHasuraAction(raw, request, config) as EventEnvelope;
     },
@@ -75,9 +75,4 @@ function build(config: HasuraActionConfig): EventKitPlugin {
   } as EventKitPlugin;
 }
 
-const factory = (config: HasuraActionConfig = {}): EventKitPlugin => build(config);
-const defaults = build({});
-const { name: pluginName, ...rest } = defaults;
-Object.assign(factory, rest, { detector, prepare, resolve });
-Object.defineProperty(factory, 'name', { value: pluginName, configurable: true });
-export const hasuraAction = factory as HasuraActionSource;
+export const hasuraAction = callableSource<HasuraActionConfig, HasuraActionSource>(build);

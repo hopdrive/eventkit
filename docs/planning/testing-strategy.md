@@ -31,8 +31,8 @@ The single highest-value addition. Generalize the five hand-picked ADR-033 cases
 parameterized table that injects a throw at **every seam**:
 
 `normalize`, `configureInvocation`, `augmentEnvelope`, `buildDetectorContext`, `detector`,
-`prepare`, `buildHandlerContext`, job body, `resolve`, `respond`, every `on*` notification,
-`onFlush`, and the observability sink.
+`prepare`, `buildHandlerContext`, job body, `handler` `before`, the `after` reply fn, every `on*`
+notification, `onFlush`, and the observability sink.
 
 Each row asserts the **same invariants**:
 1. `InvocationResult.ok` is **truthful** (a swallowed failure must not report `ok: true`).
@@ -46,8 +46,8 @@ One table (~15 rows) means every future refactor of `kit.ts`'s dispatch loop is 
 *complete* failure surface, not the five failures someone remembered.
 
 ### P0-B. Lifecycle-ordering golden snapshot
-Record the full hook-call sequence for one rich invocation — two modules, multi-job, one `resolve`,
-one `respond`, plugins registered in a known order — and snapshot it. Plugin callback ordering is a
+Record the full hook-call sequence for one rich invocation — two modules, multi-job, a
+`handler({ after: { fromResults } })` reply, plugins registered in a known order — and snapshot it. Plugin callback ordering is a
 documented contract (§11) that nothing pins today; a subtle reorder would silently change observability
 attribution.
 
@@ -60,8 +60,9 @@ contract with Grafana and the Console. It also permanently locks the "job logs a
 ### P0-D. `formatResponse` matrix
 `{ resolved output, ClientError, ActionError, framework error, timeout }` × `{ netlify, netlify-v2,
 netlify-background, lambda }`. `formatResponse` is what a vendor's retry contract actually sees, so
-every cell is a promise we make to an external caller. Include: `respond` under a `deferredResponse`
-platform is a register-time error; `resolve` under `deferredResponse` is **permitted**.
+every cell is a promise we make to an external caller. Include: `after: { fromResults }` under a
+`deferredResponse`/background platform is rejected at handler creation; `after: { body }` under
+`deferredResponse` is **permitted** (and ignored).
 
 ### P1 — known holes (each a small, named test)
 - Duplicate event-name registration throws (`kit.ts` guard exists, no test).
@@ -70,8 +71,9 @@ platform is a register-time error; `resolve` under `deferredResponse` is **permi
 - `rejectUnverified` produces **no** invocation record + a framework `warn` (assert with a sink wired).
 - Non-serializable `metadata` fail-fast with Batch registered (D13).
 - Batch retry state: a retryable failure reads `delaying`/`ready`, not terminal `error` (P0-4 / §12.4).
-- "First resolve wins" pinned (or double-declare made an error). *Note: moot by construction today —
-  `resolve`/`respond` mutual exclusion is already register-time guarded — so this is a lock, not a bug fix.*
+- `after` mode mutual exclusion pinned (declaring both `{ body }` and `{ fromResults }` is an error).
+  *Note: moot by construction today — the two `after` modes are mutually exclusive, validated at handler
+  creation — so this is a lock, not a bug fix.*
 - CLI: `generate` into a temp dir → `check` passes; mutate a module → `check` fails nonzero;
   regenerate twice → **byte-identical** output (determinism is what makes the committed YAML diffable).
 
@@ -121,8 +123,8 @@ Build order:
    framework.
 2. **Recording invocation harness.** `testInvocation(kit, rawPayload)` (or a `recordingPlugin()` you
    `use()`) runs the **real** `handle()` and returns an assertable result: which detectors fired, each
-   job's resolved `input`/`metadata`, executions, logs, `resolve`/`respond` output, and the hook
-   sequence. A full-kit integration test becomes three lines.
+   job's resolved `input`/`metadata`, executions, logs, the `after` reply output (`result.resolved`),
+   and the hook sequence. A full-kit integration test becomes three lines.
 3. **Detector contract helper.** `detectorContract(module, { fires: [...payloads], suppresses:
    [...payloads] })` runs the table and, for `hasuraEvent` modules, **auto-appends a MANUAL-operation
    case** — so console-edit suppression (the named silent-regression risk, D17) is tested by default in
