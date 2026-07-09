@@ -49,11 +49,16 @@ jobs:
           # shadow trusted publishing). The registry comes from package.json
           # "publishConfig".
 
-      # Belt-and-suspenders: guarantee npm >= 11.5.1 (OIDC support) even if the
-      # bundled npm lags, and print the versions so the publish npm is auditable.
-      - name: Ensure OIDC-capable npm
+      # Use Node 24's bundled npm as-is (11.5.1+, which supports OIDC Trusted
+      # Publishing + provenance natively). We deliberately do NOT `npm install -g
+      # npm@latest` here: reinstalling npm over the bundled copy drops some of npm's
+      # own *bundled* transitive deps — notably `sigstore`, which `libnpmpublish`
+      # loads to build the provenance attestation under `NPM_CONFIG_PROVENANCE`. That
+      # self-update is what broke the 0.5.0 publish ("Cannot find module 'sigstore'"
+      # from libnpmpublish/lib/provenance.js). The pristine bundled npm ships sigstore
+      # intact. Print the versions so the publish npm stays auditable.
+      - name: Print npm/node versions
         run: |
-          npm install -g npm@latest
           node -v
           npm -v
 
