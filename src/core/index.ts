@@ -83,6 +83,7 @@ export type {
   SourceEventModule,
   ResponseBody,
   ResponseDeclaration,
+  ResponseWire,
   DetectorFunction,
   PrepareFunction,
 } from './event-module.js';

@@ -112,6 +112,7 @@ hasuraEvent.defineEvent<Row>({   // the source-scoped builder types every inline
                   //   { static: body }                     a constant; the work can't change it
                   //   { fromRequest: (ctx) => output }     computed from the request; runs alongside jobs
                   //   { fromJobs: (ctx, {jobs, ok}) => output }  computed from results; runs AFTER jobs
+                  //   + optional status/headers beside the mode key (web-standard ResponseInit, as data)
   run?,           // RunOptions for the batch (timeoutMs / metadata). jobs always run parallel;
                   //   mode:'series' + continueOnFailure are a planned future control (ADR-031)
   metadata?,      // registration-time hints for tooling

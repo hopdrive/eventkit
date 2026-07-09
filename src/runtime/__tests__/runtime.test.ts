@@ -388,6 +388,40 @@ describe('ADR-026: resolve (request/response) is source-agnostic; jobs run along
     expect(() => createEventKit(fakeSource()).registerEvents([asPromise])).toThrow(/CONSTANT body/);
   });
 
+  it('ResponseWire: declared status/headers land on the PRODUCED reply only', async () => {
+    const ok = await createEventKit(fakeSource())
+      .registerEvents([
+        defineEvent({
+          name: 'twiml.reply',
+          detector: always,
+          response: { static: '<Response/>', status: 201, headers: { 'content-type': 'text/xml' } },
+        }),
+      ])
+      .handle('go');
+    expect(ok.resolved).toMatchObject({ hasResolved: true, output: '<Response/>', status: 201, headers: { 'content-type': 'text/xml' } });
+
+    // On a throw, the error mapping owns the wire — declared wire fields are NOT attached.
+    const err = await createEventKit(fakeSource())
+      .registerEvents([
+        defineEvent({
+          name: 'wire.error',
+          detector: always,
+          response: { fromRequest: () => { throw new ClientError(422, 'nope'); }, status: 201, headers: { 'x-a': '1' } },
+        }),
+      ])
+      .handle('go');
+    expect(err.resolved?.error).toMatchObject({ status: 422 });
+    expect(err.resolved?.status).toBeUndefined();
+    expect(err.resolved?.headers).toBeUndefined();
+  });
+
+  it('register-time (JS guard): malformed ResponseWire fields are rejected', () => {
+    const badStatus = { name: asName('bad.status'), detector: always, response: { static: { a: 1 }, status: '201' } } as unknown as ReturnType<typeof defineEvent>;
+    expect(() => createEventKit(fakeSource()).registerEvents([badStatus])).toThrow(/'response.status' must be an integer/);
+    const badHeaders = { name: asName('bad.headers'), detector: always, response: { static: { a: 1 }, headers: ['x'] } } as unknown as ReturnType<typeof defineEvent>;
+    expect(() => createEventKit(fakeSource()).registerEvents([badHeaders])).toThrow(/'response.headers' must be a record/);
+  });
+
   it('register-time (JS guard): the removed resolve/respond fields point at the migration', () => {
     const legacy = { name: asName('old.style'), detector: always, resolve: () => 1 } as unknown as ReturnType<typeof defineEvent>;
     expect(() => createEventKit(fakeSource()).registerEvents([legacy])).toThrow(/replaced by the declarative 'response'/);

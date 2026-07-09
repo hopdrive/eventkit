@@ -69,6 +69,17 @@ void defineEvent({ name: 'bad.null', detector, jobs: [null] });
 void defineEvent({ name: 'ok.response', detector, response: { fromRequest: () => ({ accessToken: 't', userId: 1 }) } });
 // …and the static (constant) mode is pure data:
 void defineEvent({ name: 'ok.response.static', detector, response: { static: { received: true } } });
+// ── ResponseWire: the web-standard ResponseInit fields ride BESIDE the mode key ──
+void defineEvent({
+  name: 'ok.response.wire',
+  detector,
+  response: { static: '<Response/>', status: 201, headers: { 'content-type': 'text/xml' } },
+});
+void defineEvent({
+  name: 'ok.response.wire.fn',
+  detector,
+  response: { fromRequest: () => '<html/>', headers: { 'content-type': 'text/html' } },
+});
 
 // ── ADR-026: a `response` + optional `jobs` (fire-and-forget side effects) compiles ──
 void defineEvent({ name: 'ok.response.jobs', detector, response: { fromRequest: () => 'ok' }, jobs: [job(work)] });

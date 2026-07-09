@@ -73,13 +73,35 @@ export type ResponseBody = string | number | boolean | null | { [key: string]: u
  *  there at `validate()`. The modes declare what the reply DERIVES FROM — never when
  *  the wire is written.
  *
+ *  Wire shape: optional `status` / `headers` (see {@link ResponseWire}) may ride
+ *  beside the mode key — the web-standard `ResponseInit` fields as data — for a
+ *  non-JSON body, a content-type, or a non-200 success status.
+ *
  *  Exactly one mode may be declared — the single field plus the `never`-typed
  *  cross-keys make that a compile error, and register time enforces it for JS.
  */
+/**
+ * Optional wire fields on a `response` declaration — the web standard's own
+ * `ResponseInit` vocabulary (`new Response(body, { status, headers })`), as DATA.
+ * They ride BESIDE the mode key (never inside the body, so a JSON body containing
+ * a `status` field is never misread) and apply to whichever body the mode
+ * produces: on a Web-`Response` platform they become exactly that constructor
+ * call; on classic/Lambda they become the standard `{ statusCode, headers, body }`
+ * proxy shape. They shape the PRODUCED (success) reply only — a thrown
+ * `ClientError`/`ActionError` still owns the error mapping. Use `headers` for a
+ * non-JSON reply (`'content-type': 'text/xml'` for Twilio TwiML, `text/html`, …).
+ */
+export interface ResponseWire {
+  /** Success status. Default 200. */
+  status?: number;
+  /** Response headers, e.g. a content-type for a non-JSON body. Declared keys win over the platform default. */
+  headers?: Record<string, string>;
+}
+
 export type ResponseDeclaration<TCtx = any, TResult = unknown> =
-  | { static: ResponseBody; fromRequest?: never; fromJobs?: never }
-  | { fromRequest: (ctx: TCtx) => unknown; static?: never; fromJobs?: never }
-  | { fromJobs: (ctx: TCtx, result: JobsResult<TResult>) => unknown; static?: never; fromRequest?: never };
+  | ({ static: ResponseBody; fromRequest?: never; fromJobs?: never } & ResponseWire)
+  | ({ fromRequest: (ctx: TCtx) => unknown; static?: never; fromJobs?: never } & ResponseWire)
+  | ({ fromJobs: (ctx: TCtx, result: JobsResult<TResult>) => unknown; static?: never; fromRequest?: never } & ResponseWire);
 
 /**
  * Optional, registration-time metadata on a module. Feeds static analysis, Flow

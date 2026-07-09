@@ -82,6 +82,8 @@ type RegisteredModule = EventModule<any, any, any> & {
   responseKind: FlowResponseKind;
   resolveFn?: (ctx: JobInputContext) => unknown;
   respondFn?: (ctx: JobInputContext, result: JobsResult) => unknown;
+  /** Declared wire fields (`ResponseWire`: status/headers) applied to the produced reply. */
+  responseWire?: { status?: number; headers?: Record<string, string> };
 };
 
 class Kit implements EventKit {
@@ -176,8 +178,9 @@ class Kit implements EventKit {
     let responseKind: FlowResponseKind = 'none';
     let resolveFn: ((ctx: JobInputContext) => unknown) | undefined;
     let respondFn: ((ctx: JobInputContext, result: JobsResult) => unknown) | undefined;
+    let responseWire: { status?: number; headers?: Record<string, string> } | undefined;
     if (module.response !== undefined) {
-      const r = module.response as { static?: unknown; fromRequest?: unknown; fromJobs?: unknown };
+      const r = module.response as { static?: unknown; fromRequest?: unknown; fromJobs?: unknown; status?: unknown; headers?: unknown };
       const modes = (['static', 'fromRequest', 'fromJobs'] as const).filter(k => r?.[k] !== undefined);
       if (typeof module.response !== 'object' || module.response === null || modes.length !== 1) {
         throw new Error(
@@ -204,6 +207,22 @@ class Kit implements EventKit {
         if (typeof r.fromJobs !== 'function') throw new Error(`Event '${module.name}': 'response.fromJobs' must be a function.`);
         responseKind = 'from-jobs';
         respondFn = r.fromJobs as typeof respondFn;
+      }
+    }
+    // Optional wire fields (`ResponseWire`) beside the mode key — validated for JS callers.
+    if (module.response !== undefined) {
+      const r = module.response as { status?: unknown; headers?: unknown };
+      if (r.status !== undefined && (typeof r.status !== 'number' || !Number.isInteger(r.status))) {
+        throw new Error(`Event '${module.name}': 'response.status' must be an integer HTTP status.`);
+      }
+      if (r.headers !== undefined && (typeof r.headers !== 'object' || r.headers === null || Array.isArray(r.headers))) {
+        throw new Error(`Event '${module.name}': 'response.headers' must be a record of header strings.`);
+      }
+      if (r.status !== undefined || r.headers !== undefined) {
+        responseWire = {
+          ...(r.status !== undefined ? { status: r.status as number } : {}),
+          ...(r.headers !== undefined ? { headers: r.headers as Record<string, string> } : {}),
+        };
       }
     }
     // `fromJobs` composes the reply FROM job results, so it needs jobs to read.
@@ -259,6 +278,7 @@ class Kit implements EventKit {
       responseKind,
       ...(resolveFn ? { resolveFn } : {}),
       ...(respondFn ? { respondFn } : {}),
+      ...(responseWire ? { responseWire } : {}),
     };
     this.modules.push(registered);
     return this;
@@ -787,6 +807,12 @@ class Kit implements EventKit {
       if (error !== undefined) outcome.error = error;
       events.push(outcome);
 
+      // Declared wire fields (`ResponseWire`) shape the PRODUCED reply only; a thrown
+      // ClientError/ActionError still owns the error mapping.
+      if (moduleResolved && !moduleResolved.error && module.responseWire) {
+        if (module.responseWire.status !== undefined) moduleResolved.status = module.responseWire.status;
+        if (module.responseWire.headers !== undefined) moduleResolved.headers = module.responseWire.headers;
+      }
       if (moduleResolved && !resolved) resolved = moduleResolved; // first resolve wins
     }
     return resolved ? { events, resolved } : { events };

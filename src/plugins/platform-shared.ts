@@ -160,17 +160,25 @@ const jsonBody = (result: InvocationResult): string =>
   });
 
 /**
- * HTTP {statusCode, body} honoring a request/response module's `response` (ADR-026):
+ * HTTP {statusCode, headers?, body} honoring a request/response module's `response` (ADR-026):
  *   - framework error       → 500 + ack body (retryable)
  *   - response fn threw     → ClientError status (or 400) + {message, extensions?}
- *   - response produced     → 200 + the output (status-contract ack, e.g. Stripe)
+ *   - response produced     → declared `ResponseWire` status (default 200) + headers + the output
  *   - no response declared  → 200 + the fire-and-forget ack body (unchanged)
  */
-export const httpResponse = (result: InvocationResult): { statusCode: number; body: string } => {
+export const httpResponse = (
+  result: InvocationResult,
+): { statusCode: number; body: string; headers?: Record<string, string> } => {
   if (result.error) return { statusCode: 500, body: jsonBody(result) };
   const r = result.resolved;
   if (r?.error) return { statusCode: r.error.status ?? 400, body: errorBody(r.error) };
-  if (r?.hasResolved) return { statusCode: 200, body: outputBody(r.output) };
+  if (r?.hasResolved) {
+    return {
+      statusCode: r.status ?? 200,
+      body: outputBody(r.output),
+      ...(r.headers ? { headers: r.headers } : {}),
+    };
+  }
   return { statusCode: 200, body: jsonBody(result) };
 };
 

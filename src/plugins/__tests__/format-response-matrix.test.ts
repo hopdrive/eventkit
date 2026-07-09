@@ -45,6 +45,18 @@ const OUTCOMES = {
     result: res({ ok: false, timedOut: true, events: [{ name: 'e', detected: true, jobs: [] }] }),
     status: 200, bodyIncludes: [],
   },
+  'ResponseWire status + headers (declared wire fields)': {
+    result: res({
+      ok: true,
+      resolved: {
+        hasResolved: true,
+        output: '<Response><Say>ok</Say></Response>',
+        status: 201,
+        headers: { 'content-type': 'text/xml' },
+      },
+    }),
+    status: 201, bodyIncludes: ['<Say>ok</Say>'],
+  },
 } as const;
 
 const httpRead = (r: unknown) => {
@@ -81,4 +93,42 @@ describe('formatResponse matrix (outcome × platform)', () => {
       });
     }
   }
+});
+
+// ── ResponseWire headers reach the wire (new Response(body, init) as data) ──
+describe('ResponseWire headers on the produced reply', () => {
+  const twiml = res({
+    ok: true,
+    resolved: {
+      hasResolved: true,
+      output: '<Response><Say>ok</Say></Response>',
+      status: 201,
+      headers: { 'content-type': 'text/xml', 'x-vendor': 'twilio' },
+    },
+  });
+
+  it('classic/lambda: headers ride the standard proxy response object', () => {
+    for (const make of [netlifyPlatform, lambdaPlatform]) {
+      const out = make().formatResponse!(twiml) as { statusCode: number; body: string; headers?: Record<string, string> };
+      expect(out.statusCode).toBe(201);
+      expect(out.headers).toEqual({ 'content-type': 'text/xml', 'x-vendor': 'twilio' });
+      expect(out.body).toBe('<Response><Say>ok</Say></Response>'); // string body passes through verbatim
+    }
+  });
+
+  it('v2: declared headers merge OVER the json default on the Web Response', () => {
+    const out = netlifyV2Platform().formatResponse!(twiml) as Response;
+    expect(out.status).toBe(201);
+    expect(out.headers.get('content-type')).toBe('text/xml'); // declared wins over application/json
+    expect(out.headers.get('x-vendor')).toBe('twilio');
+  });
+
+  it('a produced reply with NO wire fields keeps today\'s defaults (200 + json content-type)', () => {
+    const plain = res({ ok: true, resolved: { hasResolved: true, output: { hello: 'world' } } });
+    const classic = netlifyPlatform().formatResponse!(plain) as { statusCode: number; headers?: unknown };
+    expect(classic.statusCode).toBe(200);
+    expect(classic.headers).toBeUndefined();
+    const v2 = netlifyV2Platform().formatResponse!(plain) as Response;
+    expect(v2.headers.get('content-type')).toBe('application/json');
+  });
 });

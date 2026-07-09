@@ -68,7 +68,7 @@ export interface EventOutcome {
 /**
  * The value a module's `response` declaration produced (ADR-026), surfaced so the
  * source's platform adapter can map it to the wire. Exactly one of `output` (the
- * response fn returned / the fixed `json` body) or `error` (the fn, or the `prepare`
+ * response fn returned / the `static` body) or `error` (the fn, or the `prepare`
  * before it, threw) is set.
  */
 export interface ResolvedOutcome {
@@ -78,6 +78,10 @@ export interface ResolvedOutcome {
   hasResolved: boolean;
   /** Set when the response fn (or the `prepare` before it) threw — mapping data for the error reply. */
   error?: ResolvedError;
+  /** Declared success status from the module's `response` (`ResponseWire`); platform default (200) when absent. */
+  status?: number;
+  /** Declared response headers from the module's `response` (`ResponseWire`); merged over the platform default. */
+  headers?: Record<string, string>;
 }
 
 /** A response-fn/`prepare` throw, with the fields a platform maps to the wire error. */

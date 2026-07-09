@@ -22,8 +22,9 @@ export function netlifyV2Platform(config: { maxExecutionMs?: number } = {}): Pla
       meta: v2Meta(request),
     }),
     formatResponse: (result: InvocationResult) => {
-      const { statusCode, body } = httpResponse(result);
-      return new Response(body, { status: statusCode, headers: { 'content-type': 'application/json' } });
+      const { statusCode, body, headers } = httpResponse(result);
+      // Declared ResponseWire headers win over the json default — new Response(body, init) as data.
+      return new Response(body, { status: statusCode, headers: { 'content-type': 'application/json', ...(headers ?? {}) } });
     },
     formatRejection: webRejection,
   };
