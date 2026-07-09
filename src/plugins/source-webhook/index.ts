@@ -99,8 +99,14 @@ interface WebhookFields<TBody> {
 export interface WebhookDetectorContext<TBody = unknown> extends DetectorContext<TBody>, WebhookFields<TBody> {}
 export interface WebhookHandlerContext<TBody = unknown> extends HandlerContext<TBody>, WebhookFields<TBody> {}
 
-export interface WebhookSource extends EventKitPlugin {
-  sourceType: 'webhook';
+/**
+ * The typed authoring helpers. Available on a configured instance AND on the bare
+ * `webhook` factory value (`webhook.detector<TBody>(fn)`), so an event module can
+ * type its contexts without knowing the vendor/verify config, which lives in the
+ * entry file. Identity wrappers at runtime — the runtime supplies the enriched
+ * context; these signatures supply the types.
+ */
+export interface WebhookAuthoring {
   detector<TBody = unknown>(fn: (ctx: WebhookDetectorContext<TBody>) => boolean | Promise<boolean>): DetectorFunction<TBody>;
   prepare<TBody = unknown, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
     fn: (ctx: WebhookHandlerContext<TBody>) => TPrepared | Promise<TPrepared>,
@@ -108,6 +114,28 @@ export interface WebhookSource extends EventKitPlugin {
   resolve<TBody = unknown, TOutput = unknown>(
     fn: (ctx: JobInputContext<TBody> & WebhookFields<TBody>) => TOutput | Promise<TOutput>,
   ): ResolveFunction<TBody>;
+}
+
+export interface WebhookSource extends EventKitPlugin, WebhookAuthoring {
+  sourceType: 'webhook';
+}
+
+// The authoring-helper implementations — identity wrappers with the WebhookAuthoring
+// signatures, shared by every configured instance and the factory value itself.
+function detector<TBody = unknown>(
+  fn: (ctx: WebhookDetectorContext<TBody>) => boolean | Promise<boolean>,
+): DetectorFunction<TBody> {
+  return fn as unknown as DetectorFunction<TBody>;
+}
+function prepare<TBody = unknown, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
+  fn: (ctx: WebhookHandlerContext<TBody>) => TPrepared | Promise<TPrepared>,
+): PrepareFunction<TBody, Record<string, unknown>, TPrepared> {
+  return fn as unknown as PrepareFunction<TBody, Record<string, unknown>, TPrepared>;
+}
+function resolve<TBody = unknown, TOutput = unknown>(
+  fn: (ctx: JobInputContext<TBody> & WebhookFields<TBody>) => TOutput | Promise<TOutput>,
+): ResolveFunction<TBody> {
+  return fn as unknown as ResolveFunction<TBody>;
 }
 
 const fieldsFromMeta = <TBody>(envelope: EventEnvelope<TBody>): WebhookFields<TBody> => {
@@ -134,8 +162,7 @@ export {
   type HasuraPassphraseConfig,
 } from './presets.js';
 
-/** Build a per-vendor webhook source adapter (§7.1). */
-export function webhook(config: WebhookConfig): WebhookSource {
+function buildWebhook(config: WebhookConfig): WebhookSource {
   if (!config?.vendor) throw new Error('webhook() requires a `vendor`.');
   const { vendor, eventTypeHeader, verify, rejectUnverified } = config;
   // Inbound vendor webhooks are at-least-once: a processing crash should 500 so the sender
@@ -158,19 +185,10 @@ export function webhook(config: WebhookConfig): WebhookSource {
     provides: ['source', 'source:webhook'],
     sourceType: 'webhook',
     crashPolicy,
-    // Authoring helpers — identity wrappers carrying the vendor-typed context.
-    detector(fn) {
-      return fn as unknown as DetectorFunction;
-    },
-    // Generic identity wrapper preserving the inferred TPrepared into PrepareFunction (D32).
-    prepare<TBody = unknown, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
-      fn: (ctx: WebhookHandlerContext<TBody>) => TPrepared | Promise<TPrepared>,
-    ): PrepareFunction<TBody, Record<string, unknown>, TPrepared> {
-      return fn as unknown as PrepareFunction<TBody, Record<string, unknown>, TPrepared>;
-    },
-    resolve(fn) {
-      return fn as unknown as ResolveFunction;
-    },
+    // Authoring helpers — the shared identity wrappers carrying the vendor-typed context.
+    detector,
+    prepare,
+    resolve,
     normalize(raw: unknown, request: RequestContext): EventEnvelope {
       const reqMeta = (request.meta ?? {}) as { headers?: Record<string, unknown>; query?: Record<string, unknown>; rawBody?: string };
       const headers = lowerKeys(reqMeta.headers ?? {});
@@ -225,3 +243,15 @@ export function webhook(config: WebhookConfig): WebhookSource {
     },
   };
 }
+
+/**
+ * Build a per-vendor webhook source adapter (§7.1). Unlike the Hasura sources, the
+ * bare `webhook` value is NOT itself a plugin (there is no default vendor — config is
+ * required), but the typed authoring helpers ARE attached to it, uniform with the
+ * Hasura family: `webhook.detector<TBody>(fn)` in an event module, the configured
+ * `webhook({ vendor, verify })` in the entry file.
+ */
+export const webhook: ((config: WebhookConfig) => WebhookSource) & WebhookAuthoring = Object.assign(
+  (config: WebhookConfig): WebhookSource => buildWebhook(config),
+  { detector, prepare, resolve },
+);

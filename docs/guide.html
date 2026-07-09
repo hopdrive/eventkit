@@ -850,72 +850,94 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
     </div>
 
     <div class="cmp-block" style="margin-top:8px">
-      <div class="cmp-title"><span class="num">↪</span><h3>A vendor webhook event</h3><span class="file">acertus.order.created</span></div>
-      <p class="cmp-note">The business event keeps a business-semantic name, <code>acertus.order.created</code>, not an HTTP route. Detection becomes explicit and observable.<br><br>Two things are webhook-specific. The detector reads <code>signatureVerified</code> / <code>vendor</code> / <code>eventType</code> instead of DB rows. And because Acertus keys its retries on the HTTP status, the module adds a <code>resolve</code> that owns the response. <code>resolve</code> returns a value for a 200 ack, or throws <code>ClientError(status)</code> for a specific status (a 4xx tells Acertus not to retry a bad payload). The real work stays a durable job, retried on its own, so a fast ack doesn&rsquo;t cost you durability.</p>
+      <div class="cmp-title"><span class="num">↪</span><h3>A vendor webhook event</h3><span class="file">stripe.payment_intent.succeeded</span></div>
+      <p class="cmp-note">The business event keeps a business-semantic name, <code>stripe.payment_intent.succeeded</code>, not an HTTP route. Detection becomes explicit and observable.<br><br>Three things are webhook-specific. Stripe carries its event type <b>in the body</b>, not a header &mdash; so the module types the body <b>once</b> with <code>webhook.detector&lt;StripePaymentEvent&gt;(...)</code> and the detector reads <code>ctx.body.type</code> with real types, alongside <code>ctx.signatureVerified</code>. (Header-routed vendors like Twilio use <code>eventTypeHeader</code> and read <code>ctx.eventType</code> instead.) Second, Stripe redelivers on <b>any non-2xx</b> for up to ~72&nbsp;hours &mdash; so the module&rsquo;s <code>resolve</code> returns the 2xx ack fast, and the real work stays a durable job retried on its own. Delivery is at-least-once: write the jobs idempotent. Third, Stripe sends <i>every</i> event type on the endpoint&rsquo;s subscription &mdash; a type with no registered module simply fires nothing and falls through to the standard 200 ack, which is exactly what Stripe requires for events you ignore.</p>
       <div class="cmp">
         <div class="pane was">
           <div class="pane-head"><span class="tagdot"></span>Now<span class="sig">bespoke function</span></div>
-<pre><span class="c">// functions/webhook-acertus — outside the framework</span>
+<pre><span class="c">// functions/webhook-stripe — outside the framework</span>
+<span class="k">const</span> stripe = require(<span class="s">'stripe'</span>)(process.env.STRIPE_SECRET_KEY);
+
 <span class="k">export const</span> handler = <span class="k">async</span> (event) =&gt; {
-  <span class="k">const</span> body = JSON.parse(event.body);
-  <span class="k">if</span> (!verifyAcertusSignature(event.headers, body))
-    <span class="k">return</span> { statusCode: 401 };
-  <span class="k">if</span> (body.type !== <span class="s">'order.created'</span>) <span class="k">return</span> { statusCode: 200 };
+  <span class="k">let</span> stripeEvent;
+  <span class="k">try</span> {
+    stripeEvent = stripe.webhooks.constructEvent(
+      event.body, event.headers[<span class="s">'stripe-signature'</span>],
+      process.env.STRIPE_WEBHOOK_SECRET);
+  } <span class="k">catch</span> {
+    <span class="k">return</span> { statusCode: 400 };   <span class="c">// signature failed</span>
+  }
+  <span class="k">if</span> (stripeEvent.type !== <span class="s">'payment_intent.succeeded'</span>)
+    <span class="k">return</span> { statusCode: 200 };   <span class="c">// must 2xx ignored types</span>
 
   <span class="k">try</span> {
-    <span class="hl"><span class="k">await</span> createOrderFromVendor(body, sdk);   <span class="c">// no record</span>
-    <span class="k">await</span> publishEventLog(<span class="s">'acertus.order.created'</span>, body);</span>
+    <span class="hl"><span class="k">await</span> markAppointmentPaid(stripeEvent.data.object, sdk);   <span class="c">// no record</span>
+    <span class="k">await</span> publishEventLog(<span class="s">'stripe.payment_intent.succeeded'</span>, stripeEvent);</span>
   } <span class="k">catch</span> (e) {
-    console.error(e);   <span class="c">// no correlation, no retry, no trace</span>
-    <span class="k">return</span> { statusCode: 500 };
+    console.error(e);   <span class="c">// no correlation, no trace</span>
+    <span class="k">return</span> { statusCode: 500 };   <span class="c">// Stripe redelivers — the WHOLE handler reruns</span>
   }
   <span class="k">return</span> { statusCode: 200 };
 };</pre>
         </div>
         <div class="pane becomes">
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">webhook source adapter</span></div>
-<pre><span class="c">// events/acertus.order.created.ts</span>
-<span class="k">import</span> { defineEvent, job, ClientError } <span class="k">from</span> <span class="s">'eventkit'</span>;
+<pre><span class="c">// events/stripe.payment_intent.succeeded.ts</span>
+<span class="k">import</span> { defineEvent, job } <span class="k">from</span> <span class="s">'eventkit'</span>;
 <span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources'</span>;
-<span class="k">import</span> { publishEventLog, createOrderFromVendor } <span class="k">from</span> <span class="s">'./jobs'</span>;
-<span class="k">import type</span> { AcertusOrder } <span class="k">from</span> <span class="s">'./types'</span>;
+<span class="k">import</span> { markAppointmentPaid, publishEventLog } <span class="k">from</span> <span class="s">'./jobs'</span>;
 
-<span class="k">export const</span> detector = webhook.detector((ctx) =&gt; {
-  <span class="k">const</span> { signatureVerified, vendor, eventType } = ctx;
-  <span class="k">const</span> isAcertus    = vendor === <span class="s">'acertus'</span>;
-  <span class="k">const</span> orderCreated = eventType === <span class="s">'order.created'</span>;
-  <span class="k">return</span> signatureVerified &amp;&amp; isAcertus &amp;&amp; orderCreated;   <span class="c">// forged requests never fire</span>
+<span class="c">// The slice of Stripe's event body this module reads — typed once, checked everywhere.</span>
+<span class="k">export interface</span> StripePaymentEvent {
+  id: <span class="k">string</span>;                     <span class="c">// evt_…</span>
+  type: <span class="k">string</span>;                   <span class="c">// 'payment_intent.succeeded'</span>
+  data: { object: {
+    id: <span class="k">string</span>;                   <span class="c">// pi_…</span>
+    amount_received: <span class="k">number</span>;
+    metadata: { appointmentId?: <span class="k">string</span> };
+  } };
+}
+
+<span class="c">// webhook.detector&lt;TBody&gt; types ctx.body — on the BARE factory, no vendor config needed here</span>
+<span class="k">export const</span> detector = <span class="hl">webhook.detector<span class="k">&lt;StripePaymentEvent&gt;</span></span>((ctx) =&gt; {
+  <span class="k">const</span> isVerified         = ctx.signatureVerified;                          <span class="c">// one HMAC check, done in the source</span>
+  <span class="k">const</span> isPaymentSucceeded = ctx.body.type === <span class="s">'payment_intent.succeeded'</span>;  <span class="c">// typed — a typo won't compile</span>
+  <span class="k">const</span> isOurAppointment   = !!ctx.body.data.object.metadata.appointmentId;
+  <span class="k">return</span> isVerified &amp;&amp; isPaymentSucceeded &amp;&amp; isOurAppointment;   <span class="c">// forged requests never fire</span>
 });
 
-<span class="k">export default</span> defineEvent<span class="k">&lt;AcertusOrder&gt;</span>({
-  name: <span class="s">'acertus.order.created'</span>, detector,
-  prepare: (ctx) =&gt; ({ order: ctx.body }),
-  <span class="hl"><span class="c">// resolve owns the response Acertus keys on for retries.</span>
-  <span class="c">// return a value → 200 ack. throw ClientError(status) → that status.</span>
-  resolve: (ctx) =&gt; {
-    <span class="k">if</span> (!ctx.prepared.order?.dealershipId)
-      <span class="k">throw new</span> ClientError(<span class="s">400</span>, <span class="s">'missing dealership'</span>);   <span class="c">// 4xx, Acertus won't retry a bad payload</span>
-    <span class="k">return</span> { received: <span class="k">true</span> };                          <span class="c">// 200, fast ack</span>
-  },</span>
-  <span class="c">// the real work is a DURABLE job, retried on its own, not by the vendor</span>
+<span class="k">export default</span> defineEvent<span class="k">&lt;StripePaymentEvent&gt;</span>({
+  name: <span class="s">'stripe.payment_intent.succeeded'</span>, detector,
+  prepare: webhook.prepare<span class="k">&lt;StripePaymentEvent&gt;</span>((ctx) =&gt; ({
+    paymentIntentId: ctx.body.data.object.id,
+    appointmentId:   ctx.body.data.object.metadata.appointmentId!,
+    amountReceived:  ctx.body.data.object.amount_received,
+  })),
+  <span class="hl"><span class="c">// resolve owns the reply Stripe keys on: ANY non-2xx is redelivered (~72h).</span>
+  <span class="c">// Return the ack fast — the real work is durable jobs, retried on their own.</span>
+  resolve: () =&gt; ({ received: <span class="k">true</span> }),</span>
   jobs: [
-    job(createOrderFromVendor, { retries: 3 }),
-    job(publishEventLog,       { metadata: { vendor: <span class="s">'acertus'</span> } }),
+    job(markAppointmentPaid, { retries: 3 }),   <span class="c">// consumer-pay: appointment → status 'paid'</span>
+    job(publishEventLog,     { metadata: { vendor: <span class="s">'stripe'</span> } }),
   ],
 });</pre>
         </div>
       </div>
       <p class="cmp-note" style="margin-top:14px"><b style="color:var(--brass-2)">Signature verification happens in one place: the source&rsquo;s <code>verify</code> function.</b> You pass it to <code>createEventKit(webhook, { verify })</code>. It runs <b>once</b> per request, before <code>normalize()</code>, and puts the result on <code>ctx.signatureVerified</code>. It does <i>not</i> re-run for each event module. So the detector&rsquo;s <code>signatureVerified &amp;&amp; …</code> is just a cheap boolean read of that one result, not a second check. On purpose, <code>verify</code> never throws. A forged request still gets normalized, it&rsquo;s just flagged, and the detector is what decides not to fire on it. That keeps the call explicit and visible per event.</p>
       <p class="cmp-note" style="margin-top:10px"><b>Why not <code>handler({ before })</code>?</b> <code>before</code> runs <i>before</i> <code>normalize()</code>, on the raw platform args, so it can&rsquo;t see <code>ctx.signatureVerified</code>. Using it for signatures would mean re-doing the HMAC by hand. Keep <code>before</code> for cheap request-level gates that don&rsquo;t need the parsed envelope, like the HTTP method or a missing auth header. <b>So the rule is simple:</b> signatures go in <code>verify</code> (once, in the source), and the forged-request guard goes in the detector via <code>signatureVerified</code>. The endpoint itself is the same register-style shape as a <code>db-*</code> function. The platform adapter maps the module&rsquo;s <code>resolve</code>/<code>respond</code> (or a thrown <code>ClientError</code>) onto the HTTP response:</p>
-      <p class="cmp-note" style="margin-top:10px"><b style="color:var(--brass-2)">Or skip the per-detector guard entirely (ADR-030).</b> If <i>every</i> event on an endpoint needs a valid signature, pass <code>rejectUnverified: true</code> to the source: <code>createEventKit(webhook, { vendor, verify, rejectUnverified: true })</code>. Now a failed <code>verify</code> gets rejected with <b>401</b> before any module runs (pass <code>{ status, message }</code> to change that, say <code>403</code>), so no detector needs <code>signatureVerified &amp;&amp;</code> at all. The trade-off: it&rsquo;s a hard block <i>before</i> the request becomes an event, so there&rsquo;s <b>no Invocation record</b>, just a framework <code>warn</code>. Keep the default (<code>verify</code> flags it, the detector declines) when you want the forged attempt recorded for security telemetry. Reach for <code>rejectUnverified</code> when you just want it gone with no boilerplate.</p>
+      <p class="cmp-note" style="margin-top:10px"><b style="color:var(--brass-2)">Or skip the per-detector guard entirely (ADR-030).</b> If <i>every</i> event on an endpoint needs a valid signature, pass <code>rejectUnverified: true</code> to the source: <code>createEventKit(webhook, { vendor, verify, rejectUnverified: true })</code>. Now a failed <code>verify</code> gets rejected with <b>401</b> before any module runs (pass <code>{ status, message }</code> to change that — Stripe&rsquo;s docs recommend a <b>400</b> on signature failure, so <code>rejectUnverified: { status: 400 }</code>), so no detector needs <code>signatureVerified &amp;&amp;</code> at all. The trade-off: it&rsquo;s a hard block <i>before</i> the request becomes an event, so there&rsquo;s <b>no Invocation record</b>, just a framework <code>warn</code>. Keep the default (<code>verify</code> flags it, the detector declines) when you want the forged attempt recorded for security telemetry. Reach for <code>rejectUnverified</code> when you just want it gone with no boilerplate.</p>
 <pre style="border-radius:12px;border:1px solid var(--hair);max-width:720px"><span class="k">import</span> { createEventKit } <span class="k">from</span> <span class="s">'eventkit'</span>;
-<span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources'</span>;
+<span class="k">import</span> { webhook, hmacVerify } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources'</span>;
 <span class="k">import</span> { netlifyV2Platform } <span class="k">from</span> <span class="s">'hopdrive-eventkit/platforms'</span>;
 <span class="k">import</span> { observability, graphqlSink } <span class="k">from</span> <span class="s">'hopdrive-eventkit/plugins'</span>;
-<span class="k">import</span> { acertusSignature } <span class="k">from</span> <span class="s">'./security'</span>;
 <span class="k">import</span> events <span class="k">from</span> <span class="s">'./events'</span>;
 
-<span class="k">const</span> kit = createEventKit(<span class="hl">webhook, { vendor: <span class="s">'acertus'</span>, verify: acertusSignature }</span>)   <span class="c">// source + its config</span>
+<span class="c">// hmacVerify speaks Stripe's scheme natively: the Stripe-Signature header is</span>
+<span class="c">// `t=&lt;unix&gt;,v1=&lt;hmac&gt;`, HMAC-SHA256 over `${t}.${rawBody}` — with a replay guard.</span>
+<span class="k">const</span> kit = createEventKit(<span class="hl">webhook, {
+  vendor: <span class="s">'stripe'</span>,
+  verify: hmacVerify({ secret: cfg.stripeWebhookSecret, toleranceSeconds: 300 }),
+}</span>)   <span class="c">// source + its config</span>
   .use(netlifyV2Platform)   <span class="c">// maps resolve → 200, ClientError → its status, a crash → 500</span>
   .use(observability, { sink: graphqlSink({ endpoint: cfg.graphqlUrl, adminSecret: cfg.graphqlSecret }) })
   .registerEvents(events);
@@ -2117,6 +2139,7 @@ kit.registerEvents(modules[] | record): EventKit</div>
       <div class="refentry">
         <div class="rsig">webhook(config) <span class="refbadge shipped">shipped</span></div>
         <p>Vendor webhooks (<code>{ vendor, verify, eventTypeHeader }</code>); context exposes <code>signatureVerified</code>, <code>vendor</code>, <code>eventType</code>, <code>body</code>. Covers <code>event-handlers</code>&rsquo; <code>webhook-*</code> (Stripe, Twilio, Dealerware) and the reverse-integration repos. Mostly fire-and-forget; a status-contract vendor (Stripe) uses <code>resolve</code> + a thrown <code>ClientError(status,…)</code> that the platform maps to the HTTP status.</p>
+        <p>Typed authoring helpers ride the <b>bare factory</b>, uniform with the Hasura family: <code>webhook.detector&lt;TBody&gt;(fn)</code> / <code>webhook.prepare&lt;TBody&gt;(fn)</code> / <code>webhook.resolve&lt;TBody&gt;(fn)</code> type <code>ctx.body</code> as <code>TBody</code>, so an event module gets full typing without knowing the entry file&rsquo;s vendor/verify config. (A configured instance carries the same helpers.) Verify presets ship alongside: <code>hmacVerify</code> (Stripe&rsquo;s <code>t=,v1=</code> scheme natively, with replay tolerance), <code>staticHeaderToken</code>, <code>sharedSecret</code>, <code>hasuraPassphrase</code>.</p>
       </div>
       <div class="refentry">
         <div class="rsig">hasuraAction <span class="refbadge shipped">shipped</span></div>

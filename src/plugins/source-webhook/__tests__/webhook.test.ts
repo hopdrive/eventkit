@@ -18,6 +18,43 @@ const v2Request = (body: unknown, headers: Record<string, string>) => ({
   headers: new Headers(headers),
 });
 
+describe('factory-attached authoring helpers', () => {
+  it('webhook.detector / .prepare / .resolve exist on the bare factory and pass the fn through unchanged', () => {
+    const fn = () => true;
+    expect(webhook.detector(fn as never)).toBe(fn);
+    expect(webhook.prepare(fn as never)).toBe(fn);
+    expect(webhook.resolve(fn as never)).toBe(fn);
+  });
+
+  it('a configured instance carries the same helpers (identity, same behavior as the factory)', () => {
+    const src = webhook({ vendor: 'acme' });
+    const fn = () => true;
+    expect(src.detector(fn as never)).toBe(fn);
+    expect(src.prepare(fn as never)).toBe(fn);
+    expect(src.resolve(fn as never)).toBe(fn);
+  });
+
+  it('a typed detector authored via the bare factory runs against a real invocation', async () => {
+    type StripeEvent = { type: string; data: { object: { id: string } } };
+    let seenId = '';
+    const mod = defineEvent<StripeEvent>({
+      name: 'stripe.payment_intent.succeeded',
+      detector: webhook.detector<StripeEvent>(
+        ctx => ctx.signatureVerified && ctx.body.type === 'payment_intent.succeeded',
+      ),
+      jobs: [
+        job((c: JobContext) => {
+          seenId = (c.envelope.payload as StripeEvent).data.object.id;
+        }),
+      ],
+    });
+    const kit = createEventKit(webhook({ vendor: 'stripe' })).registerEvent(mod);
+    const result = await kit.handle({ type: 'payment_intent.succeeded', data: { object: { id: 'pi_123' } } });
+    expect(result.events[0]?.detected).toBe(true);
+    expect(seenId).toBe('pi_123');
+  });
+});
+
 describe('webhook source', () => {
   it('surfaces signatureVerified (true) and the eventType from the header', async () => {
     let seen: { verified?: boolean; eventType?: string; vendor?: string } = {};

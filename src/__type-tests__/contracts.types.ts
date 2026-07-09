@@ -16,6 +16,7 @@
 // covers the typed job-context contribution.
 
 import { job, defineEvent } from '../index.js';
+import { webhook } from '../plugins/source-webhook/index.js';
 import type { JobContext, EventKitPlugin } from '../core/index.js';
 
 const work = (_ctx: JobContext): void => {};
@@ -124,3 +125,14 @@ void defineEvent({ name: 'bad.prepared.key', detector, prepare: () => ({ base: 1
 
 // @ts-expect-error prepared.base is a number — `.toUpperCase()` is not a number method
 void defineEvent({ name: 'bad.prepared.type', detector, prepare: () => ({ base: 1 }), resolve: ctx => ctx.prepared.base.toUpperCase() });
+
+// ── Webhook authoring generics: `webhook.detector<TBody>` types ctx.body on the BARE factory ──
+// The helpers are attached to the factory value itself (uniform with the Hasura family),
+// so an event module types its contexts without knowing the entry file's vendor config.
+type StripeEvent = { type: string; data: { object: { id: string; amount: number } } };
+void webhook.detector<StripeEvent>(ctx => ctx.signatureVerified && ctx.body.type === 'payment_intent.succeeded');
+void webhook.prepare<StripeEvent>(ctx => ({ paymentIntentId: ctx.body.data.object.id }));
+void webhook.resolve<StripeEvent>(ctx => ({ received: true, amount: ctx.body.data.object.amount }));
+
+// @ts-expect-error `missing` is not a key of the typed StripeEvent body
+void webhook.detector<StripeEvent>(ctx => ctx.body.missing === true);
