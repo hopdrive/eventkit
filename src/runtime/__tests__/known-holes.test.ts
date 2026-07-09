@@ -112,8 +112,8 @@ describe('rejectUnverified: NO invocation record + a framework warn', () => {
 
 describe('resolve is permitted under a deferredResponse platform (respond is not)', () => {
   it('a resolve module validates + runs under netlifyBackgroundPlatform; a respond module is rejected at validate()', () => {
-    // { json } = job-independent fixed reply → fine on a background/202 platform.
-    const okMod = defineEvent({ name: 'bg.ok', detector: always, jobs: [job(() => 1)], response: { json: { received: true } } });
+    // { static } = job-independent constant reply → fine on a background/202 platform.
+    const okMod = defineEvent({ name: 'bg.ok', detector: always, jobs: [job(() => 1)], response: { static: { received: true } } });
     const okKit = createEventKit(fakeSource()).use(netlifyBackgroundPlatform).registerEvents([okMod]);
     expect(() => okKit.validate()).not.toThrow();
 

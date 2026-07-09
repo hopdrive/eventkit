@@ -865,7 +865,7 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
 
     <div class="cmp-block" style="margin-top:8px">
       <div class="cmp-title"><span class="num">↪</span><h3>A vendor webhook event</h3><span class="file">stripe.payment_intent.succeeded</span></div>
-      <p class="cmp-note">The business event keeps a business-semantic name, <code>stripe.payment_intent.succeeded</code>, not an HTTP route. Detection becomes explicit and observable.<br><br>Three things are webhook-specific. Stripe carries its event type <b>in the body</b>, not a header &mdash; so the module types the body <b>once</b>, on the outer <code>webhook.defineEvent&lt;StripePaymentEvent&gt;({ … })</code> call, and the inline detector reads <code>ctx.body.type</code> with real types, alongside <code>ctx.signatureVerified</code>. (Header-routed vendors like Twilio use <code>eventTypeHeader</code> and read <code>ctx.eventType</code> instead.) Second, Stripe redelivers on <b>any non-2xx</b> for up to ~72&nbsp;hours &mdash; so the module declares <code>response: { json: … }</code>: a fixed 2xx receipt the work can&rsquo;t change, while the real work stays a durable job retried on its own. Delivery is at-least-once: write the jobs idempotent. Third, Stripe sends <i>every</i> event type on the endpoint&rsquo;s subscription &mdash; a type with no registered module simply fires nothing and falls through to the standard 200 ack, which is exactly what Stripe requires for events you ignore.</p>
+      <p class="cmp-note">The business event keeps a business-semantic name, <code>stripe.payment_intent.succeeded</code>, not an HTTP route. Detection becomes explicit and observable.<br><br>Three things are webhook-specific. Stripe carries its event type <b>in the body</b>, not a header &mdash; so the module types the body <b>once</b>, on the outer <code>webhook.defineEvent&lt;StripePaymentEvent&gt;({ … })</code> call, and the inline detector reads <code>ctx.body.type</code> with real types, alongside <code>ctx.signatureVerified</code>. (Header-routed vendors like Twilio use <code>eventTypeHeader</code> and read <code>ctx.eventType</code> instead.) Second, Stripe redelivers on <b>any non-2xx</b> for up to ~72&nbsp;hours &mdash; so the module declares <code>response: { static: … }</code>: a constant 2xx receipt the work can&rsquo;t change, while the real work stays a durable job retried on its own. Delivery is at-least-once: write the jobs idempotent. Third, Stripe sends <i>every</i> event type on the endpoint&rsquo;s subscription &mdash; a type with no registered module simply fires nothing and falls through to the standard 200 ack, which is exactly what Stripe requires for events you ignore.</p>
       <div class="cmp">
         <div class="pane was">
           <div class="pane-head"><span class="tagdot"></span>Now<span class="sig">bespoke function</span></div>
@@ -928,9 +928,9 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
     amountReceived:  ctx.body.data.object.amount_received,
   }),
   <span class="hl"><span class="c">// the response declaration owns the reply Stripe keys on: ANY non-2xx is</span>
-  <span class="c">// redelivered (~72h). { json } DECLARES it: a fixed receipt — the jobs can't</span>
-  <span class="c">// change it, and being data (not code) it can't wait on anything either.</span>
-  response: { json: { received: <span class="k">true</span> } },</span>
+  <span class="c">// redelivered (~72h). { static } DECLARES it: a constant receipt — the jobs</span>
+  <span class="c">// can't change it, and being data (not code) it can't wait on anything either.</span>
+  response: { static: { received: <span class="k">true</span> } },</span>
   jobs: [
     job(markAppointmentPaid, { retries: 3 }),   <span class="c">// consumer-pay: appointment → status 'paid'</span>
     job(publishEventLog,     { metadata: { vendor: <span class="s">'stripe'</span> } }),
@@ -961,11 +961,11 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
       <p class="cmp-note" style="margin-top:16px"><b style="color:var(--brass-2)">Three ways a module can shape its response &mdash; and the declaration SAYS which one.</b> A module has one <code>response</code> field, and the key you put in it states the contract at the definition site: what the reply derives from, and therefore when it runs. All three are source-agnostic. (The full set of response modes, including fire-and-forget and background, is in the lane diagram in the Platform adapters section.)</p>
       <div class="shape-grid">
         <div class="shape-card">
-          <div class="shape-h"><span class="nm"><code>response: { json }</code> &middot; fixed receipt</span><span class="shape-when">a quick fixed reply is fine</span></div>
+          <div class="shape-h"><span class="nm"><code>response: { static }</code> &middot; constant</span><span class="shape-when">a fixed receipt is fine</span></div>
           <div class="shape-flow">
             <span class="sf in">request</span><span class="sf-arr">&rarr;</span><span class="sf work">the declared body</span><span class="sf-arr">&rarr;</span><span class="sf out">200</span>
           </div>
-          <p class="shape-sub">&Vert; jobs run alongside, durable and retried</p>
+          <p class="shape-sub"><b>Computed:</b> from nothing &middot; <b>Sent:</b> by the platform once the run settles</p>
           <p class="shape-desc">The reply is <b>data, not code</b> &mdash; it provably cannot depend on (or wait for) the work. Jobs run alongside with their own retry; their failures never touch the wire status. The usual best call for a vendor webhook.</p>
         </div>
         <div class="shape-card">
@@ -973,7 +973,7 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
           <div class="shape-flow">
             <span class="sf in">request</span><span class="sf-arr">&rarr;</span><span class="sf work">fromRequest(ctx)</span><span class="sf-arr">&rarr;</span><span class="sf out">200 / 4xx</span>
           </div>
-          <p class="shape-sub">runs alongside any jobs &middot; never sees their results</p>
+          <p class="shape-sub"><b>Computed:</b> from the request (+ <code>prepared</code>) &middot; <b>Sent:</b> by the platform once the run settles</p>
           <p class="shape-desc">The reply is computed from the <b>request</b> (ctx + <code>prepared</code>) &mdash; including doing the work right here and <b>returning or throwing</b> on it. A throw maps to the vendor&rsquo;s error status, so the vendor&rsquo;s redelivery becomes the retry. It structurally cannot read job results (the context doesn&rsquo;t carry them).</p>
         </div>
         <div class="shape-card alt">
@@ -981,7 +981,7 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
           <div class="shape-flow">
             <span class="sf in">request</span><span class="sf-arr">&rarr;</span><span class="sf job">jobs</span><span class="sf-arr">&rarr;</span><span class="sf work">fromJobs(ctx,&nbsp;{jobs,ok})</span><span class="sf-arr">&rarr;</span><span class="sf out">200 / 4xx</span>
           </div>
-          <p class="shape-sub">jobs settle first, then compose the reply</p>
+          <p class="shape-sub"><b>Computed:</b> from the jobs&rsquo; outcomes, after they settle &middot; <b>Sent:</b> by the platform once the run settles</p>
           <p class="shape-desc">Run the work as real <b>durable jobs</b>, then build the reply from <code>{ jobs, ok }</code>. Needs at least one job. Not available under a background platform (rejected at <code>validate()</code>). Jobs keep their own retry; this only reads the results. The single <code>response</code> field makes the three modes mutually exclusive by construction.</p>
         </div>
       </div>
@@ -1364,8 +1364,8 @@ kit.registerEvents(events);</pre>
             <p class="lane-out">The response body is ignored. For long <code>db-*</code> work that shouldn&rsquo;t hold the trigger&rsquo;s connection open. Still a 2xx, so Hasura doesn&rsquo;t retry.</p>
           </div>
           <div class="lane lane-rr">
-            <div class="lane-head"><span class="lane-n"><code>{ json } / { fromRequest }</code> &middot; request-derived</span><span class="lane-tag">concurrent with the jobs</span></div>
-            <p class="lane-flow"><code>fromRequest(ctx)</code> &rarr; output &nbsp;<span style="color:var(--faint)">(runs alongside the jobs; never sees their results — <code>{ json }</code> is the fixed-body special case)</span></p>
+            <div class="lane-head"><span class="lane-n"><code>{ static } / { fromRequest }</code> &middot; request-derived</span><span class="lane-tag">concurrent with the jobs</span></div>
+            <p class="lane-flow"><code>fromRequest(ctx)</code> &rarr; output &nbsp;<span style="color:var(--faint)">(runs alongside the jobs; never sees their results — <code>{ static }</code> is the constant special case)</span></p>
             <p class="lane-out"><b>return</b> &rarr; 2xx body &nbsp;·&nbsp; <b>throw <code>ClientError(4xx)</code></b> &rarr; that status, so a vendor stops retrying &nbsp;·&nbsp; <b>throw <code>ActionError(code)</code></b> &rarr; <code>{ message, extensions }</code>. The fast ack: the reply depends only on the request, so it doesn&rsquo;t wait on the work. For webhooks and Actions, like Stripe or Spark retry semantics.</p>
           </div>
           <div class="lane lane-rr">
@@ -2115,7 +2115,7 @@ kit.registerEvents(modules[] | record): EventKit</div>
           <li><b><code>detector</code></b> — <code>(ctx) =&gt; boolean | Promise&lt;boolean&gt;</code>, authored inline. House style is <code>switch (ctx.operation)</code> with named booleans.</li>
           <li><b><code>prepare?</code></b> — <code>(ctx) =&gt; shared</code>. Runs once before the jobs; its result merges into every job&rsquo;s <code>ctx.input</code> (shared <code>sdk</code>, fetched rows, closures).</li>
           <li><b><code>jobs?</code></b> — <code>JobDefinition[]</code>, a <i>static array literal</i> of <code>job(fn, opts?)</code>. The runtime runs them; no conditional inclusion, no fan-out, no inter-job deps. Optional only when a <code>response</code> is present — a module must declare <code>jobs</code> and/or a <code>response</code>.</li>
-          <li><b><code>response?</code></b> <span class="refbadge shipped">shipped</span> — the <b>response declaration</b> (ADR-026, amended): one field, three self-naming modes, so the definition states the behavior a later maintainer needs. <b><code>{ json: body }</code></b> — a fixed JSON body, sent regardless of how the jobs go; data, not code, so it provably can&rsquo;t wait on the work. <b><code>{ fromRequest: (ctx) =&gt; output }</code></b> — computed from the request (+ <code>ctx.prepared</code>); runs alongside the jobs, structurally can&rsquo;t see their results; a throw maps to the wire error (<code>ClientError</code>/<code>ActionError</code>), so doing the work here means the vendor&rsquo;s redelivery is the retry. <b><code>{ fromJobs: (ctx, { jobs, ok }) =&gt; output }</code></b> — computed from the jobs&rsquo; outcomes; sequenced after they settle; needs ≥1 job; rejected at <code>validate()</code> under a background/202 platform. Exactly one mode per module — the single field makes that structural (and dual keys fail to compile). <code>kit.describe()</code>/flow docs derive the kind (<code>json</code>/<code>from-request</code>/<code>from-jobs</code>) from the declaration, so tooling can&rsquo;t drift from the code.</li>
+          <li><b><code>response?</code></b> <span class="refbadge shipped">shipped</span> — the <b>response declaration</b> (ADR-026, amended): one field, three self-naming modes, so the definition states the behavior a later maintainer needs. <b><code>{ static: body }</code></b> — a constant, computed from nothing; data, not code, so it provably can&rsquo;t wait on (or be changed by) the work. <b><code>{ fromRequest: (ctx) =&gt; output }</code></b> — computed from the request (+ <code>ctx.prepared</code>); runs alongside the jobs, structurally can&rsquo;t see their results; a throw maps to the wire error (<code>ClientError</code>/<code>ActionError</code>), so doing the work here means the vendor&rsquo;s redelivery is the retry. <b><code>{ fromJobs: (ctx, { jobs, ok }) =&gt; output }</code></b> — computed from the jobs&rsquo; outcomes; sequenced after they settle; needs ≥1 job; rejected at <code>validate()</code> under a background/202 platform. Exactly one mode per module — the single field makes that structural (and dual keys fail to compile). In every mode the reply is <i>sent</i> by the platform once the run settles (a background platform acks 202 up-front) — the modes declare what the reply <i>derives from</i>, never when the wire is written. <code>kit.describe()</code>/flow docs derive the kind (<code>static</code>/<code>from-request</code>/<code>from-jobs</code>) from the declaration, so tooling can&rsquo;t drift from the code.</li>
           <li><b><code>run?</code></b> is <code>RunOptions</code> for the batch (<code>timeoutMs</code> / <code>metadata</code>). Jobs always run in parallel this release. <code>mode: 'series'</code> and <code>continueOnFailure</code> are <span class="refbadge planned">planned</span> (see &ldquo;How the jobs run&rdquo;).</li>
           <li><b><code>metadata?</code></b> — registration-time hints for tooling (description, tags, owner, flowHints); nothing depends on it at runtime.</li>
         </ul>
@@ -2155,7 +2155,7 @@ kit.registerEvents(modules[] | record): EventKit</div>
       </div>
       <div class="refentry">
         <div class="rsig">webhook(config) <span class="refbadge shipped">shipped</span></div>
-        <p>Vendor webhooks (<code>{ vendor, verify, eventTypeHeader }</code>); context exposes <code>signatureVerified</code>, <code>vendor</code>, <code>eventType</code>, <code>body</code>. Covers <code>event-handlers</code>&rsquo; <code>webhook-*</code> (Stripe, Twilio, Dealerware) and the reverse-integration repos. Mostly fire-and-forget; a status-contract vendor (Stripe) declares a <code>response</code> — <code>{ json }</code> for a fixed receipt, or <code>{ fromRequest }</code> with a thrown <code>ClientError(status,…)</code> that the platform maps to the HTTP status.</p>
+        <p>Vendor webhooks (<code>{ vendor, verify, eventTypeHeader }</code>); context exposes <code>signatureVerified</code>, <code>vendor</code>, <code>eventType</code>, <code>body</code>. Covers <code>event-handlers</code>&rsquo; <code>webhook-*</code> (Stripe, Twilio, Dealerware) and the reverse-integration repos. Mostly fire-and-forget; a status-contract vendor (Stripe) declares a <code>response</code> — <code>{ static }</code> for a constant receipt, or <code>{ fromRequest }</code> with a thrown <code>ClientError(status,…)</code> that the platform maps to the HTTP status.</p>
         <p>Typed authoring rides the <b>bare factory</b>, uniform with the Hasura family: author modules with <code>webhook.defineEvent&lt;TBody&gt;({ … })</code> (the body type on the outer call types <code>ctx.body</code> in every inline seam), or use the per-seam helpers <code>webhook.detector&lt;TBody&gt;(fn)</code> / <code>webhook.prepare&lt;TBody&gt;(fn)</code> for standalone exports — either way the module gets full typing without knowing the entry file&rsquo;s vendor/verify config. (A configured instance carries the same members.) Verify presets ship alongside: <code>hmacVerify</code> (Stripe&rsquo;s <code>t=,v1=</code> scheme natively, with replay tolerance), <code>staticHeaderToken</code>, <code>sharedSecret</code>, <code>hasuraPassphrase</code>.</p>
       </div>
       <div class="refentry">

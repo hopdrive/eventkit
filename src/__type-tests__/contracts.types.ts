@@ -67,19 +67,19 @@ void defineEvent({ name: 'bad.null', detector, jobs: [null] });
 
 // ── ADR-026: a request/response module compiles with a `response` and NO `jobs` ──
 void defineEvent({ name: 'ok.response', detector, response: { fromRequest: () => ({ accessToken: 't', userId: 1 }) } });
-// …and the fixed-body mode is pure data:
-void defineEvent({ name: 'ok.response.json', detector, response: { json: { received: true } } });
+// …and the static (constant) mode is pure data:
+void defineEvent({ name: 'ok.response.static', detector, response: { static: { received: true } } });
 
 // ── ADR-026: a `response` + optional `jobs` (fire-and-forget side effects) compiles ──
 void defineEvent({ name: 'ok.response.jobs', detector, response: { fromRequest: () => 'ok' }, jobs: [job(work)] });
 
 // ── the modes are structurally exclusive — declaring two at once fails to compile ──
-// @ts-expect-error `json` and `fromRequest` are mutually exclusive on one declaration
-void defineEvent({ name: 'bad.dual.mode', detector, response: { json: { a: 1 }, fromRequest: () => 'x' } });
+// @ts-expect-error `static` and `fromRequest` are mutually exclusive on one declaration
+void defineEvent({ name: 'bad.dual.mode', detector, response: { static: { a: 1 }, fromRequest: () => 'x' } });
 
-// ── a fixed `json` body is DATA — a Promise (i.e. an async computation) is not assignable ──
-// @ts-expect-error a Promise is not a ResponseBody — a fixed body cannot wait on work
-void defineEvent({ name: 'bad.json.promise', detector, response: { json: (async () => ({ ok: true }))() } });
+// ── a `static` body is DATA — a Promise (i.e. an async computation) is not assignable ──
+// @ts-expect-error a Promise is not a ResponseBody — a static reply cannot wait on work
+void defineEvent({ name: 'bad.static.promise', detector, response: { static: (async () => ({ ok: true }))() } });
 
 // ── ADR-026 guard: the response is MODULE-level, not a per-job option ────────
 // @ts-expect-error `response` is not a JobOptions field — it belongs on the module
@@ -197,7 +197,7 @@ void webhook.defineEvent<StripeEvent>({
   name: 'ok.scoped.webhook',
   detector: ctx => ctx.signatureVerified && ctx.body.type === 'payment_intent.succeeded',
   prepare: ctx => ({ paymentIntentId: ctx.body.data.object.id }),
-  response: { json: { received: true } },
+  response: { static: { received: true } },
   jobs: [work],
 });
 void webhook.defineEvent<StripeEvent>({

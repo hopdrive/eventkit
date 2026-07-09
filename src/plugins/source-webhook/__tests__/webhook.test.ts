@@ -119,7 +119,7 @@ describe('webhook source', () => {
     const ackMod = defineEvent({
       name: 'stripe.ack',
       detector: stripe.detector((ctx: WebhookDetectorContext) => ctx.eventType === 'ok'),
-      response: { json: { received: true } },
+      response: { static: { received: true } },
     });
     const rejectMod = defineEvent({
       name: 'stripe.reject',

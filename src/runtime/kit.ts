@@ -74,7 +74,7 @@ const FLUSH_SAFETY_MARGIN_MS = 200;
 /**
  * A module as stored after registerEvent normalization: jobs fully wrapped, and the
  * `response` declaration lowered to its kind (for describe()/flow and the platform
- * checks) plus the internal seam fn dispatch runs — `resolveFn` for `{ json }` /
+ * checks) plus the internal seam fn dispatch runs — `resolveFn` for `{ static }` /
  * `{ fromRequest }` (runs alongside the jobs), `respondFn` for `{ fromJobs }`
  * (sequenced after they settle).
  */
@@ -167,7 +167,7 @@ class Kit implements EventKit {
       throw new Error(
         `Event '${module.name}': 'resolve'/'respond' were replaced by the declarative 'response' field — ` +
           `use response: { fromRequest: fn } (was resolve), response: { fromJobs: fn } (was respond), ` +
-          `or response: { json: body } for a fixed reply.`,
+          `or response: { static: body } for a constant reply.`,
       );
     }
     // ADR-026 (amended): normalize the `response` declaration — one field, exactly one
@@ -177,24 +177,24 @@ class Kit implements EventKit {
     let resolveFn: ((ctx: JobInputContext) => unknown) | undefined;
     let respondFn: ((ctx: JobInputContext, result: JobsResult) => unknown) | undefined;
     if (module.response !== undefined) {
-      const r = module.response as { json?: unknown; fromRequest?: unknown; fromJobs?: unknown };
-      const modes = (['json', 'fromRequest', 'fromJobs'] as const).filter(k => r?.[k] !== undefined);
+      const r = module.response as { static?: unknown; fromRequest?: unknown; fromJobs?: unknown };
+      const modes = (['static', 'fromRequest', 'fromJobs'] as const).filter(k => r?.[k] !== undefined);
       if (typeof module.response !== 'object' || module.response === null || modes.length !== 1) {
         throw new Error(
-          `Event '${module.name}': 'response' must declare exactly one of { json }, { fromRequest }, { fromJobs }.`,
+          `Event '${module.name}': 'response' must declare exactly one of { static }, { fromRequest }, { fromJobs }.`,
         );
       }
       const mode = modes[0]!;
-      if (mode === 'json') {
-        const body = r.json;
-        // A fixed body is DATA — a function or thenable here means the author wanted a
+      if (mode === 'static') {
+        const body = r.static;
+        // A static body is DATA — a function or thenable here means the author wanted a
         // computed reply; that contract is `fromRequest` (guards untyped JS callers).
         if (typeof body === 'function' || (body !== null && typeof (body as { then?: unknown })?.then === 'function')) {
           throw new Error(
-            `Event '${module.name}': 'response.json' is a FIXED body (data, not code) — use response: { fromRequest: fn } for a computed reply.`,
+            `Event '${module.name}': 'response.static' is a CONSTANT body (data, not code) — use response: { fromRequest: fn } for a computed reply.`,
           );
         }
-        responseKind = 'json';
+        responseKind = 'static';
         resolveFn = () => body;
       } else if (mode === 'fromRequest') {
         if (typeof r.fromRequest !== 'function') throw new Error(`Event '${module.name}': 'response.fromRequest' must be a function.`);
@@ -209,7 +209,7 @@ class Kit implements EventKit {
     // `fromJobs` composes the reply FROM job results, so it needs jobs to read.
     if (responseKind === 'from-jobs' && (module.jobs === undefined || module.jobs.length === 0)) {
       throw new Error(
-        `Event '${module.name}': response { fromJobs } requires at least one job (it reads their results); use { fromRequest } or { json } for a job-independent reply.`,
+        `Event '${module.name}': response { fromJobs } requires at least one job (it reads their results); use { fromRequest } or { static } for a job-independent reply.`,
       );
     }
     // ADR-025/026: a module declares `jobs` (fire-and-forget) and/or a `response`.
@@ -284,7 +284,7 @@ class Kit implements EventKit {
       if (offender) {
         throw new Error(
           `Event '${offender.name}': response { fromJobs } (result-driven) is incompatible with platform ` +
-          `'${this.pm.platform.name}', which responds before jobs finish. Use { fromRequest } or { json } ` +
+          `'${this.pm.platform.name}', which responds before jobs finish. Use { fromRequest } or { static } ` +
           `for an immediate reply, or register a non-deferred platform.`,
         );
       }
@@ -665,7 +665,7 @@ class Kit implements EventKit {
   }
 
   /**
-   * Run a module's response fn (`{ json }`/`{ fromRequest }`/`{ fromJobs }`) and map its outcome
+   * Run a module's response fn (`{ static }`/`{ fromRequest }`/`{ fromJobs }`) and map its outcome
    * (ADR-026): a returned value becomes the response output; a throw becomes the
    * wire error (`toResolvedError`), reported through `onError` at phase 'handle'.
    */
@@ -746,7 +746,7 @@ class Kit implements EventKit {
         // CONCURRENTLY — they are sibling-ignorant (ADR-025/026); a request-driven
         // response never reads job results. Await both so serverless doesn't freeze mid-side-effect.
         const jobsPromise = runJobs(runtime, event, module.jobs ?? [], module.run, jobInputCtx);
-        // `{ json }` / `{ fromRequest }` → resolveFn: request-driven, sibling-ignorant.
+        // `{ static }` / `{ fromRequest }` → resolveFn: request-driven, sibling-ignorant.
         if (module.resolveFn) {
           const r = await this.runResponseSeam(() => module.resolveFn!(jobInputCtx), invocation, event.name);
           moduleResolved = r.resolved;

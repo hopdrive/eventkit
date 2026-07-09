@@ -109,7 +109,7 @@ hasuraEvent.defineEvent<Row>({   // the source-scoped builder types every inline
   prepare?,       // (ctx) => shared. runs once, merges into every job's input
   jobs?,          // a STATIC list of bare functions (or job(fn, opts) when you need options)
   response?,      // the RESPONSE DECLARATION (ADR-026, amended) — the key states the contract:
-                  //   { json: body }                       fixed reply; the work can't change it
+                  //   { static: body }                     a constant; the work can't change it
                   //   { fromRequest: (ctx) => output }     computed from the request; runs alongside jobs
                   //   { fromJobs: (ctx, {jobs, ok}) => output }  computed from results; runs AFTER jobs
   run?,           // RunOptions for the batch (timeoutMs / metadata). jobs always run parallel;
@@ -206,8 +206,8 @@ kit** (the positional arg to `createEventKit`).
   The context exposes `signatureVerified`, `vendor`, `eventType`, `body`. `verify` runs once
   (before `normalize`) and annotates `signatureVerified`; the detector decides. Set
   `rejectUnverified: true` (ADR-030) to instead reject a bad signature with 401 before any
-  module runs. A status-contract vendor (Stripe) declares a `response` — `{ json }` for a
-  fixed receipt, or `{ fromRequest }` with a thrown `ClientError(status, ...)`.
+  module runs. A status-contract vendor (Stripe) declares a `response` — `{ static }` for a
+  constant receipt, or `{ fromRequest }` with a thrown `ClientError(status, ...)`.
 - **`hasuraAction`**. A **request/response** source for Hasura Actions
   (`sourceType:'action'`, gated by Hasura's permission model). Context: `actionName`,
   `input`, `sessionVariables`, `requestQuery?`. A module's `response: { fromRequest }` returns the output,

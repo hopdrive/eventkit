@@ -363,13 +363,13 @@ describe('ADR-026: resolve (request/response) is source-agnostic; jobs run along
     expect(() => createEventKit(fakeSource()).registerEvents([bad])).toThrow(/must declare 'jobs' and\/or a 'response'/);
   });
 
-  it("response { json }: the fixed body becomes resolved.output; the work can't change it", async () => {
+  it("response { static }: the constant body becomes resolved.output; the work can't change it", async () => {
     const result = await createEventKit(fakeSource())
       .registerEvents([
         defineEvent({
           name: 'fixed.ack',
           detector: always,
-          response: { json: { received: true } },
+          response: { static: { received: true } },
           jobs: [job(() => { throw new Error('job blew up'); }, { name: 'boom' })],
         }),
       ])
@@ -381,11 +381,11 @@ describe('ADR-026: resolve (request/response) is source-agnostic; jobs run along
     expect(result.ok).toBe(false); // the job failure still shows in job status (Batch's concern)
   });
 
-  it('register-time (JS guard): a function/thenable in response.json is rejected — that contract is fromRequest', () => {
-    const asFn = { name: asName('bad.json.fn'), detector: always, response: { json: () => ({ a: 1 }) } } as unknown as ReturnType<typeof defineEvent>;
-    expect(() => createEventKit(fakeSource()).registerEvents([asFn])).toThrow(/FIXED body/);
-    const asPromise = { name: asName('bad.json.thenable'), detector: always, response: { json: Promise.resolve({ a: 1 }) } } as unknown as ReturnType<typeof defineEvent>;
-    expect(() => createEventKit(fakeSource()).registerEvents([asPromise])).toThrow(/FIXED body/);
+  it('register-time (JS guard): a function/thenable in response.static is rejected — that contract is fromRequest', () => {
+    const asFn = { name: asName('bad.static.fn'), detector: always, response: { static: () => ({ a: 1 }) } } as unknown as ReturnType<typeof defineEvent>;
+    expect(() => createEventKit(fakeSource()).registerEvents([asFn])).toThrow(/CONSTANT body/);
+    const asPromise = { name: asName('bad.static.thenable'), detector: always, response: { static: Promise.resolve({ a: 1 }) } } as unknown as ReturnType<typeof defineEvent>;
+    expect(() => createEventKit(fakeSource()).registerEvents([asPromise])).toThrow(/CONSTANT body/);
   });
 
   it('register-time (JS guard): the removed resolve/respond fields point at the migration', () => {
@@ -440,7 +440,7 @@ describe('ADR-026 amendment: respond (result-driven response) runs after jobs an
 
   it('register-time: declaring both resolve and respond throws (one response timing)', () => {
     // two modes in one declaration — rejected at register time (and a compile error in TS)
-    const bad = defineEvent({ name: 'both', detector: always, jobs: [job(() => 1)], response: { json: { a: 1 }, fromJobs: () => 2 } as never });
+    const bad = defineEvent({ name: 'both', detector: always, jobs: [job(() => 1)], response: { static: { a: 1 }, fromJobs: () => 2 } as never });
     expect(() => createEventKit(fakeSource()).registerEvents([bad])).toThrow(/exactly one of/);
   });
 

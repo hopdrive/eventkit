@@ -14,7 +14,7 @@
 // Request/response sources (ADR-026 — `hasuraAction`, status-contract `webhook`) add an
 // optional `response` DECLARATION: one field, three self-naming modes, each stating at
 // the definition site what the reply derives from (and therefore when it runs):
-//   response: { json: {…} }            — a FIXED body; the work cannot change it
+//   response: { static: {…} }          — a constant; the work cannot change it
 //   response: { fromRequest: (ctx) => …} — computed from the request; runs alongside jobs
 //   response: { fromJobs: (ctx, {jobs, ok}) => …} — computed from the results; runs after
 // The single field makes the modes structurally exclusive; the source's platform adapter
@@ -44,9 +44,9 @@ export type PrepareFunction<
 > = (ctx: HandlerContext<TPayload, TMeta>) => TPrepared | Promise<TPrepared>;
 
 /**
- * A JSON-representable response body for the fixed `json` mode. A `Promise` (or any
- * class instance) is deliberately NOT assignable — a fixed body is data, not code, so
- * it provably cannot wait on or depend on the work.
+ * A JSON-representable response body for the `static` mode. A `Promise` (or any
+ * class instance) is deliberately NOT assignable — a static reply is data, not code,
+ * so it provably cannot wait on or depend on the work.
  */
 export type ResponseBody = string | number | boolean | null | { [key: string]: unknown } | unknown[];
 
@@ -56,25 +56,30 @@ export type ResponseBody = string | number | boolean | null | { [key: string]: u
  * reply derives from, and therefore when it runs — so a later maintainer reads it
  * without opening the function:
  *
- *  - `{ json: body }` — a FIXED JSON body. Sent as the 2xx reply regardless of how
- *    the jobs go (their failures are Batch/observability's concern, never the
- *    vendor's). Data, not code: it cannot wait on anything.
- *  - `{ fromRequest: (ctx) => body }` — computed from the REQUEST (handler ctx plus
- *    `ctx.prepared`). Runs alongside the jobs and can never see their results (the
- *    context doesn't carry them). Doing the work in here is legitimate — it means a
- *    throw maps to the vendor's error status (`ClientError`/`ActionError`) and the
- *    vendor's redelivery becomes the retry.
- *  - `{ fromJobs: (ctx, { jobs, ok }) => body }` — computed from the JOBS' OUTCOMES.
- *    Sequenced after they settle and handed their executions. Requires at least one
- *    job; rejected at `validate()` under a platform that answers before jobs finish.
+ *  - `{ static: body }` — Computed: from NOTHING; it is a constant. Data, not code,
+ *    so it provably cannot wait on or be changed by the work (job failures are
+ *    Batch/observability's concern, never the vendor's).
+ *  - `{ fromRequest: (ctx) => body }` — Computed: from the REQUEST (handler ctx plus
+ *    `ctx.prepared`), alongside the jobs; it can never see their results (the context
+ *    doesn't carry them). Doing the work in here is legitimate — a throw maps to the
+ *    vendor's error status (`ClientError`/`ActionError`), so the vendor's redelivery
+ *    becomes the retry.
+ *  - `{ fromJobs: (ctx, { jobs, ok }) => body }` — Computed: from the JOBS' OUTCOMES,
+ *    after they settle. Requires at least one job.
+ *
+ *  Sent: in every mode, the PLATFORM sends the reply — a foreground function replies
+ *  once the whole run settles (a serverless function cannot reply and keep working);
+ *  a background platform acks 202 up-front, which is why `{ fromJobs }` is rejected
+ *  there at `validate()`. The modes declare what the reply DERIVES FROM — never when
+ *  the wire is written.
  *
  *  Exactly one mode may be declared — the single field plus the `never`-typed
  *  cross-keys make that a compile error, and register time enforces it for JS.
  */
 export type ResponseDeclaration<TCtx = any, TResult = unknown> =
-  | { json: ResponseBody; fromRequest?: never; fromJobs?: never }
-  | { fromRequest: (ctx: TCtx) => unknown; json?: never; fromJobs?: never }
-  | { fromJobs: (ctx: TCtx, result: JobsResult<TResult>) => unknown; json?: never; fromRequest?: never };
+  | { static: ResponseBody; fromRequest?: never; fromJobs?: never }
+  | { fromRequest: (ctx: TCtx) => unknown; static?: never; fromJobs?: never }
+  | { fromJobs: (ctx: TCtx, result: JobsResult<TResult>) => unknown; static?: never; fromRequest?: never };
 
 /**
  * Optional, registration-time metadata on a module. Feeds static analysis, Flow
@@ -125,7 +130,7 @@ export interface EventModule<
    */
   jobs?: (JobDefinition<any> | JobFunction<any>)[];
   /**
-   * The response declaration (ADR-026, amended): `{ json }`, `{ fromRequest }`, or
+   * The response declaration (ADR-026, amended): `{ static }`, `{ fromRequest }`, or
    * `{ fromJobs }` — see {@link ResponseDeclaration} for the three contracts. Optional
    * and source-agnostic; the source's platform adapter maps the produced value to the
    * wire. Omit it for fire-and-forget (the platform returns its standard ack).
