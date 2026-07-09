@@ -10,6 +10,8 @@
 import { describe, it, expect } from 'vitest';
 import { callableSource, authoringHelper } from '../hasura-shared/callable-source.js';
 import { hasuraEvent, hasuraCron, hasuraAction } from '../source-hasura.js';
+import { createEventKit } from '../../index.js';
+import { hasuraUpdate } from '../../testing/index.js';
 import type { EventKitPlugin } from '../../core/index.js';
 
 interface FixtureConfig {
@@ -85,5 +87,49 @@ describe('the Hasura family keeps the callable-source contract', () => {
     const detect = () => true;
     expect(hasuraEvent.detector(detect as never)).toBe(detect);
     expect(hasuraAction.resolve(detect as never)).toBe(detect);
+  });
+});
+
+describe('source-scoped defineEvent', () => {
+  it('is attached to the bare source AND to a configured instance', () => {
+    expect(typeof hasuraEvent.defineEvent).toBe('function');
+    expect(typeof (hasuraEvent({}) as unknown as { defineEvent: unknown }).defineEvent).toBe('function');
+    expect(typeof hasuraCron.defineEvent).toBe('function');
+    expect(typeof hasuraAction.defineEvent).toBe('function');
+  });
+
+  it('is core defineEvent at runtime: brands the name, passes the module through', () => {
+    const detector = () => true;
+    const mod = hasuraEvent.defineEvent({ name: 'scoped.event', detector: detector as never, jobs: [() => 'ok'] });
+    expect(String(mod.name)).toBe('scoped.event');
+    expect(mod.detector).toBe(detector);
+    expect(mod.jobs).toHaveLength(1);
+  });
+
+  it('a scoped module runs end-to-end: the inline detector receives the ENRICHED runtime ctx', async () => {
+    const seen: string[] = [];
+    interface Row {
+      id: number;
+      status: string;
+    }
+    const kit = createEventKit(hasuraEvent).registerEvent(
+      hasuraEvent.defineEvent<Row>({
+        name: 'order.status.ready',
+        // bare inline arrow — at runtime ctx must carry the Hasura enrichment
+        detector: ctx => ctx.operation === 'UPDATE' && ctx.columnChanged('status') && ctx.newRow?.status === 'ready',
+        prepare: ctx => ({ orderId: ctx.newRow?.id }),
+        jobs: [ctx => void seen.push(`ran:${(ctx.input as { orderId?: number }).orderId}`)],
+      }),
+    );
+
+    const fired = await kit.handle(hasuraUpdate('orders', { id: 7, status: 'pending' }, { id: 7, status: 'ready' }));
+    expect(fired.events.map(e => ({ name: e.name, detected: e.detected }))).toEqual([
+      { name: 'order.status.ready', detected: true },
+    ]);
+    expect(seen).toEqual(['ran:7']);
+
+    // Non-matching update: detector (with its enriched helpers) declines cleanly.
+    const quiet = await kit.handle(hasuraUpdate('orders', { id: 8, status: 'ready' }, { id: 8, status: 'ready' }));
+    expect(quiet.events).toEqual([]);
   });
 });

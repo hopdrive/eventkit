@@ -14,9 +14,12 @@ import type {
   ResolveFunction,
   EventKitPlugin,
   EventEnvelope,
+  EventModule,
   EventSourceType,
   RequestContext,
+  SourceEventModule,
 } from '../../core/index.js';
+import { defineEvent } from '../../core/index.js';
 import type { HasuraActionPayload, HasuraActionContext, HasuraActionHandlerContext } from '../hasura-shared/types.js';
 import { normalizeHasuraAction, buildHasuraActionDetectorContext, buildHasuraActionHandlerContext } from '../hasura-shared/adapter.js';
 import { callableSource, authoringHelper } from '../hasura-shared/callable-source.js';
@@ -43,7 +46,18 @@ export interface HasuraActionSource extends EventKitPlugin {
   resolve<TInput = Record<string, unknown>, TOutput = unknown>(
     fn: (ctx: HasuraActionHandlerContext<TInput> & { prepared: Record<string, unknown> }) => TOutput | Promise<TOutput>,
   ): ResolveFunction<HasuraActionPayload<TInput>>;
+  /**
+   * Source-scoped module builder: `hasuraAction.defineEvent<Input>({ ... })`. The
+   * action-input type on THIS call types every inline seam (`ctx.actionName` /
+   * `ctx.input` / `ctx.sessionVariables`), no per-seam wrapper. Runtime = core `defineEvent`.
+   */
+  defineEvent<TInput = Record<string, unknown>, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
+    module: SourceEventModule<HasuraActionContext<TInput>, HasuraActionHandlerContext<TInput>, TPrepared>,
+  ): EventModule<HasuraActionPayload<TInput>, Record<string, unknown>, TPrepared>;
 }
+
+// Core defineEvent, re-typed so the input type on the OUTER call types every inline seam.
+const defineActionEvent = defineEvent as unknown as HasuraActionSource['defineEvent'];
 
 /** Build the plugin object; `normalize` closes over the source config (ADR-039.2). */
 function build(config: HasuraActionConfig): EventKitPlugin {
@@ -54,6 +68,7 @@ function build(config: HasuraActionConfig): EventKitPlugin {
     detector: authoringHelper,
     prepare: authoringHelper,
     resolve: authoringHelper,
+    defineEvent: defineActionEvent,
     normalize(raw: unknown, request: RequestContext): EventEnvelope {
       return normalizeHasuraAction(raw, request, config) as EventEnvelope;
     },

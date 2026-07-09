@@ -136,3 +136,86 @@ void webhook.resolve<StripeEvent>(ctx => ({ received: true, amount: ctx.body.dat
 
 // @ts-expect-error `missing` is not a key of the typed StripeEvent body
 void webhook.detector<StripeEvent>(ctx => ctx.body.missing === true);
+
+// ── Source-scoped defineEvent: the type on the OUTER call flows into bare inline seams ──
+// `hasuraEvent.defineEvent<Row>({ detector: (ctx) => … })` — one type parameter on the
+// outer call, and every inline arrow (`detector`/`prepare`/`resolve`/`respond`) receives
+// the SOURCE-enriched context. No per-seam `.detector()` wrapper needed.
+import { hasuraEvent, hasuraCron, hasuraAction } from '../plugins/source-hasura.js';
+import { createEventKit } from '../index.js';
+
+interface ScopedRow {
+  id: number;
+  status: string;
+}
+
+const scopedModule = hasuraEvent.defineEvent<ScopedRow>({
+  name: 'ok.scoped.hasura',
+  // bare inline arrow: ctx is HasuraDetectorContext<ScopedRow> — operation/columnChanged/newRow all typed
+  detector: ctx => {
+    switch (ctx.operation) {
+      case 'UPDATE':
+        return ctx.columnChanged('status') && ctx.newRow?.status === 'ready';
+      default:
+        return false;
+    }
+  },
+  // bare inline prepare: ctx is HasuraHandlerContext<ScopedRow>
+  prepare: ctx => ({ row: ctx.newRow }),
+  jobs: [work, job(work, { retries: 1 })],
+});
+// …and the result registers like any module.
+void createEventKit(hasuraEvent).registerEvent(scopedModule);
+
+// The row type really flowed into the inline arrow:
+void hasuraEvent.defineEvent<ScopedRow>({
+  name: 'bad.scoped.rowkey',
+  // @ts-expect-error ScopedRow has no `nope`
+  detector: ctx => ctx.newRow?.nope === 1,
+  jobs: [work],
+});
+
+// The ADR-025 conditional-entry guard survives the scoped form.
+void hasuraEvent.defineEvent<ScopedRow>({
+  name: 'bad.scoped.cond',
+  detector: ctx => !!ctx.newRow,
+  // @ts-expect-error a conditional entry (false | JobDefinition) is not a job entry
+  jobs: [cond && job(work)],
+});
+
+// webhook.defineEvent<TBody>: ctx.body typed from the outer call, on the BARE factory.
+void webhook.defineEvent<StripeEvent>({
+  name: 'ok.scoped.webhook',
+  detector: ctx => ctx.signatureVerified && ctx.body.type === 'payment_intent.succeeded',
+  prepare: ctx => ({ paymentIntentId: ctx.body.data.object.id }),
+  resolve: () => ({ received: true }),
+  jobs: [work],
+});
+void webhook.defineEvent<StripeEvent>({
+  name: 'bad.scoped.webhook.body',
+  // @ts-expect-error `missing` is not a key of the typed StripeEvent body
+  detector: ctx => ctx.body.missing === true,
+});
+
+// hasuraAction / hasuraCron scoped forms: default type params still give the enriched ctx.
+void hasuraAction.defineEvent({
+  name: 'ok.scoped.action',
+  detector: ctx => ctx.actionName === 'cancelAppointment',
+  resolve: ctx => ({ ok: true, by: ctx.sessionVariables.userId }),
+});
+void hasuraCron.defineEvent<{ region: string }>({
+  name: 'ok.scoped.cron',
+  detector: ctx => ctx.scheduleName === 'nightly' && ctx.payload.region === 'us',
+  jobs: [work],
+});
+
+// Full inference (no explicit type args) still threads TPrepared into resolve (D32).
+void webhook.defineEvent({
+  name: 'ok.scoped.inferred',
+  detector: ctx => ctx.signatureVerified,
+  prepare: () => ({ orderId: 42 }),
+  resolve: ctx => {
+    const n: number = ctx.prepared.orderId; // typed number, not unknown
+    return n;
+  },
+});

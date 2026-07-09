@@ -140,7 +140,7 @@ class Kit implements EventKit {
     return { envelope, req };
   }
 
-  registerEvent(module: EventModule): EventKit {
+  registerEvent(module: EventModule<any, any, any>): EventKit {
     if (!module || typeof module.name !== 'string') throw new Error('registerEvent: module must have a string name.');
     if (typeof module.detector !== 'function') throw new Error(`Event '${module.name}' is missing a detector.`);
     if (module.prepare !== undefined && typeof module.prepare !== 'function') {
@@ -205,7 +205,7 @@ class Kit implements EventKit {
     return this;
   }
 
-  registerEvents(modules: EventModule[] | Record<string, EventModule>): EventKit {
+  registerEvents(modules: EventModule<any, any, any>[] | Record<string, EventModule<any, any, any>>): EventKit {
     const list = Array.isArray(modules) ? modules : Object.values(modules);
     for (const m of list) this.registerEvent(m);
     return this;

@@ -137,8 +137,14 @@ export interface EventKit {
    * Chainable.
    */
   use(plugin: EventKitPlugin | PluginFactory, config?: unknown): EventKit;
-  registerEvent(module: EventModule): EventKit;
-  registerEvents(modules: EventModule[] | Record<string, EventModule>): EventKit;
+  /**
+   * Accepts a module with ANY payload/meta/prepared typing (`EventModule<any, any, any>`),
+   * so a source-typed module — `hasuraEvent.defineEvent<Row>(…)`, a typed `defineEvent`
+   * — registers without a variance cast. The kit stores modules heterogeneously; the
+   * per-module types did their work at authoring time.
+   */
+  registerEvent(module: EventModule<any, any, any>): EventKit;
+  registerEvents(modules: EventModule<any, any, any>[] | Record<string, EventModule<any, any, any>>): EventKit;
   /** Explicit validation; also run on first `handle()`. Throws on misconfig. */
   validate(): void;
 

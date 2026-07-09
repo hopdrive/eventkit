@@ -12,9 +12,12 @@ import type {
   PrepareFunction,
   EventKitPlugin,
   EventEnvelope,
+  EventModule,
   EventSourceType,
   RequestContext,
+  SourceEventModule,
 } from '../../core/index.js';
+import { defineEvent } from '../../core/index.js';
 import type { HasuraCronPayload, HasuraCronContext, HasuraCronHandlerContext } from '../hasura-shared/types.js';
 import { normalizeHasuraCron, buildHasuraCronDetectorContext, buildHasuraCronHandlerContext } from '../hasura-shared/adapter.js';
 import { callableSource, authoringHelper } from '../hasura-shared/callable-source.js';
@@ -37,7 +40,18 @@ export interface HasuraCronSource extends EventKitPlugin {
   prepare<TPayload = Record<string, unknown>, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
     fn: (ctx: HasuraCronHandlerContext<TPayload>) => TPrepared | Promise<TPrepared>,
   ): PrepareFunction<HasuraCronPayload<TPayload>>;
+  /**
+   * Source-scoped module builder: `hasuraCron.defineEvent<Payload>({ ... })`. The
+   * payload type on THIS call types every inline seam (`ctx.scheduleName` /
+   * `ctx.scheduledAt` / `ctx.payload`), no per-seam wrapper. Runtime = core `defineEvent`.
+   */
+  defineEvent<TPayload = Record<string, unknown>, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
+    module: SourceEventModule<HasuraCronContext<TPayload>, HasuraCronHandlerContext<TPayload>, TPrepared>,
+  ): EventModule<HasuraCronPayload<TPayload>, Record<string, unknown>, TPrepared>;
 }
+
+// Core defineEvent, re-typed so the payload type on the OUTER call types every inline seam.
+const defineCronEvent = defineEvent as unknown as HasuraCronSource['defineEvent'];
 
 /** Build the plugin object; `normalize` closes over the source config (ADR-039.2). */
 function build(config: HasuraCronConfig): EventKitPlugin {
@@ -47,6 +61,7 @@ function build(config: HasuraCronConfig): EventKitPlugin {
     sourceType: 'cron',
     detector: authoringHelper,
     prepare: authoringHelper,
+    defineEvent: defineCronEvent,
     normalize(raw: unknown, request: RequestContext): EventEnvelope {
       return normalizeHasuraCron(raw, request, config) as EventEnvelope;
     },

@@ -80,6 +80,7 @@ export { job } from './job.js';
 export type {
   EventModule,
   EventModuleMetadata,
+  SourceEventModule,
   DetectorFunction,
   PrepareFunction,
   ResolveFunction,

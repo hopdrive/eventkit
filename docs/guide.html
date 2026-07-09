@@ -476,7 +476,7 @@
     <div class="shifts">
       <div class="shift"><span class="dim">Framework identity</span><span class="was">Hasura <i>is</i> the framework</span><span class="now-val">Hasura is one <code>SourceAdapter</code> among many</span></div>
       <div class="shift"><span class="dim">Hasura sources</span><span class="was">one detector for DB events; cron handled ad hoc</span><span class="now-val">named by transport: <code>hasuraEvent</code> (DB triggers) + <code>hasuraCron</code> (Hasura scheduled triggers — a sibling payload)</span></div>
-      <div class="shift"><span class="dim">Detector input</span><span class="was"><code>(eventName, hasuraEvent)</code> + <code>parseHasuraEvent()</code></span><span class="now-val"><code>hasuraEvent.detector(ctx)</code> with typed helpers</span></div>
+      <div class="shift"><span class="dim">Detector input</span><span class="was"><code>(eventName, hasuraEvent)</code> + <code>parseHasuraEvent()</code></span><span class="now-val">inline <code>detector(ctx)</code> — typed Hasura context</span></div>
       <div class="shift"><span class="dim">Handler data</span><span class="was">re-derive <code>old/new/role</code> via <code>parseHasuraEvent</code></span><span class="now-val">typed <code>HasuraHandlerContext</code> — <code>oldRow</code>, <code>newRow</code>, <code>role</code></span></div>
       <div class="shift"><span class="dim">Job data</span><span class="was">one options bag (config + live clients + closures)</span><span class="now-val"><code>input</code> (live, never persisted) + <code>metadata</code> (serializable)</span></div>
       <div class="shift"><span class="dim">Job signature</span><span class="was"><code>(event, hasuraEvent, options)</code></span><span class="now-val"><code>(ctx)</code> — one typed context, plugin-agnostic</span></div>
@@ -659,26 +659,32 @@ module.exports.detector = <span class="k">async</span> (eventName, hasuraEvent) 
 <pre><span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources/hasura'</span>;
 <span class="k">import type</span> { AppointmentRow } <span class="k">from</span> <span class="s">'./types'</span>;
 
-<span class="k">export const</span> detector = hasuraEvent.detector<span class="k">&lt;AppointmentRow&gt;</span>((ctx) =&gt; {
-  <span class="k">const</span> { operation, newRow } = ctx;
-  <span class="k">switch</span> (operation) {
-    <span class="k">case</span> <span class="s">'INSERT'</span>: {
-      <span class="c">// Spark inserts as 'pending' first; only fire if it arrives ready.</span>
-      <span class="k">const</span> insertedReady = newRow?.status === <span class="s">'ready'</span>;
-      <span class="k">return</span> insertedReady;
+<span class="c">// the detector lives INLINE in the module; the row type on the OUTER</span>
+<span class="c">// defineEvent is what types this ctx (operation / columnChanged / newRow)</span>
+<span class="k">export default</span> hasuraEvent.defineEvent<span class="k">&lt;AppointmentRow&gt;</span>({
+  name: <span class="s">'appointment.ready'</span>,
+  detector: (ctx) =&gt; {
+    <span class="k">const</span> { operation, newRow } = ctx;
+    <span class="k">switch</span> (operation) {
+      <span class="k">case</span> <span class="s">'INSERT'</span>: {
+        <span class="c">// Spark inserts as 'pending' first; only fire if it arrives ready.</span>
+        <span class="k">const</span> insertedReady = newRow?.status === <span class="s">'ready'</span>;
+        <span class="k">return</span> insertedReady;
+      }
+      <span class="k">case</span> <span class="s">'UPDATE'</span>: {
+        <span class="k">const</span> statusChanged = ctx.columnChanged(<span class="s">'status'</span>);   <span class="c">// helper: stays on ctx</span>
+        <span class="k">const</span> isReady       = newRow?.status === <span class="s">'ready'</span>;
+        <span class="k">return</span> statusChanged &amp;&amp; isReady;
+      }
+      <span class="k">case</span> <span class="s">'DELETE'</span>:
+        <span class="k">return</span> <span class="k">false</span>;
+      <span class="hl"><span class="k">case</span> <span class="s">'MANUAL'</span>:   <span class="c">// suppress Hasura console edits</span>
+        <span class="k">return</span> <span class="k">false</span>;</span>
+      <span class="k">default</span>:
+        <span class="k">return</span> <span class="k">false</span>;
     }
-    <span class="k">case</span> <span class="s">'UPDATE'</span>: {
-      <span class="k">const</span> statusChanged = ctx.columnChanged(<span class="s">'status'</span>);   <span class="c">// helper: stays on ctx</span>
-      <span class="k">const</span> isReady       = newRow?.status === <span class="s">'ready'</span>;
-      <span class="k">return</span> statusChanged &amp;&amp; isReady;
-    }
-    <span class="k">case</span> <span class="s">'DELETE'</span>:
-      <span class="k">return</span> <span class="k">false</span>;
-    <span class="hl"><span class="k">case</span> <span class="s">'MANUAL'</span>:   <span class="c">// suppress Hasura console edits</span>
-      <span class="k">return</span> <span class="k">false</span>;</span>
-    <span class="k">default</span>:
-      <span class="k">return</span> <span class="k">false</span>;
-  }
+  },
+  <span class="c">// … prepare + jobs — the rest of the module, §03 below …</span>
 });</pre>
         </div>
       </div>
@@ -687,7 +693,7 @@ module.exports.detector = <span class="k">async</span> (eventName, hasuraEvent) 
     <!-- 3. job set -->
     <div class="cmp-block">
       <div class="cmp-title"><span class="num">03</span><h3>The job set, declared not run</h3><span class="file">events/appointment.ready</span></div>
-      <p class="cmp-note">There isn&rsquo;t a handler function anymore. The module declares its jobs as a static array and the runtime runs them (ADR-025), so there&rsquo;s no <code>run()</code> call and no function body where we branch through the work.<br><br>The shared setup that used to live in the handler, mostly the <code>sdk.apollo.initialize(...)</code> pattern that got threaded into almost every job, now becomes <code>prepare(ctx)</code>: it runs once and its result is merged into each job&rsquo;s <code>ctx.input</code> automatically, and from there a job can layer on its own input as a static object or a pure <code>(ctx) =&gt; ...</code> mapper. The jobs always run in parallel with isolated failures, so there&rsquo;s no ordering to configure. (Sequential <code>run.mode</code> is a planned future control, see below.)<br><br>There&rsquo;s no <code>resolve()</code> here, on purpose. Hasura reads the status code, not the body, so the platform adapter answers it for us: a foreground function returns <code>200</code> once the run is accepted, a background one returns <code>202</code> straight away. A failing job doesn&rsquo;t flip that to a non-2xx, because a <code>500</code> would make Hasura replay the whole event and re-fire the siblings that already succeeded. Retrying one job is Batch&rsquo; concern, not Hasura&rsquo;s. <code>resolve</code> only comes out when the caller actually keys on the response, like a vendor webhook.<br><br>The result is a declarative record. An engineer, or the flow tooling, can read it top to bottom and understand what it does without having to mentally execute a handler.<br><br><b style="color:var(--brass-2)">One typing note.</b> The row type is stated <b>once</b>, on the source helper (<code>hasuraEvent.detector&lt;AppointmentRow&gt;</code>), and <code>defineEvent</code> <b>infers</b> the module&rsquo;s types from it &mdash; there is no <code>defineEvent&lt;...&gt;</code> parameter to keep in sync. The direction matters: <code>defineEvent</code> is source-agnostic, so a bare <code>(ctx) =&gt;</code> arrow inline would only see the base context (envelope + ids) &mdash; it&rsquo;s the source helper that brings the typed <code>ctx.operation</code> / <code>ctx.columnChanged</code> / <code>ctx.newRow</code>. Inline or as a separate export, the helper is where the type lives. (A detector that reads only source fields and not the body can use the helper with no type at all &mdash; see the Spark webhook example in the integrations section.)</p>
+      <p class="cmp-note">There isn&rsquo;t a handler function anymore. The module declares its jobs as a static array and the runtime runs them (ADR-025), so there&rsquo;s no <code>run()</code> call and no function body where we branch through the work.<br><br>The shared setup that used to live in the handler, mostly the <code>sdk.apollo.initialize(...)</code> pattern that got threaded into almost every job, now becomes <code>prepare(ctx)</code>: it runs once and its result is merged into each job&rsquo;s <code>ctx.input</code> automatically, and from there a job can layer on its own input as a static object or a pure <code>(ctx) =&gt; ...</code> mapper. The jobs always run in parallel with isolated failures, so there&rsquo;s no ordering to configure. (Sequential <code>run.mode</code> is a planned future control, see below.)<br><br>There&rsquo;s no <code>resolve()</code> here, on purpose. Hasura reads the status code, not the body, so the platform adapter answers it for us: a foreground function returns <code>200</code> once the run is accepted, a background one returns <code>202</code> straight away. A failing job doesn&rsquo;t flip that to a non-2xx, because a <code>500</code> would make Hasura replay the whole event and re-fire the siblings that already succeeded. Retrying one job is Batch&rsquo; concern, not Hasura&rsquo;s. <code>resolve</code> only comes out when the caller actually keys on the response, like a vendor webhook.<br><br>The result is a declarative record. An engineer, or the flow tooling, can read it top to bottom and understand what it does without having to mentally execute a handler.<br><br><b style="color:var(--brass-2)">One typing note.</b> The row type is stated <b>once</b>, on the outer <code>hasuraEvent.defineEvent&lt;AppointmentRow&gt;</code> call, and it flows <b>down</b> into every inline <code>(ctx) =&gt;</code> arrow &mdash; <code>detector</code>, <code>prepare</code>, <code>resolve</code>/<code>respond</code> &mdash; as the fully-typed Hasura context. That&rsquo;s why the builder hangs off the <b>source</b>: the generic root <code>defineEvent</code> is source-agnostic, so it can type a bare inline arrow only with the base context (envelope + ids) &mdash; it has no way to know about <code>ctx.columnChanged</code>. Each source ships its own: <code>hasuraEvent.defineEvent&lt;Row&gt;</code>, <code>webhook.defineEvent&lt;Body&gt;</code>, <code>hasuraAction.defineEvent&lt;Input&gt;</code>, <code>hasuraCron.defineEvent&lt;Payload&gt;</code>; at runtime they ARE the root <code>defineEvent</code> &mdash; only the types differ. The root form (paired with the per-seam <code>hasuraEvent.detector&lt;Row&gt;(…)</code> helpers) remains for custom sources, and it&rsquo;s the form that fully infers <code>prepare</code>&rsquo;s return into <code>ctx.prepared</code> &mdash; with an explicit type argument on the scoped form, TypeScript stops inferring the remaining parameters, so <code>ctx.prepared</code> in <code>resolve</code>/<code>respond</code> stays <code>Record&lt;string, unknown&gt;</code> unless you state that type too.</p>
       <div class="cmp">
         <div class="pane was">
           <div class="pane-head"><span class="tagdot"></span>Now<span class="sig">handler runs the jobs</span></div>
@@ -711,26 +717,25 @@ module.exports.handler = <span class="k">async</span> (eventName, hasuraEvent) =
         </div>
         <div class="pane becomes">
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">defineEvent — declarative</span></div>
-<pre><span class="k">import</span> { defineEvent, job } <span class="k">from</span> <span class="s">'eventkit'</span>;
-<span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources/hasura'</span>;
+<pre><span class="k">import</span> { hasuraEvent } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources/hasura'</span>;
 <span class="k">import</span> { initSdk } <span class="k">from</span> <span class="s">'../~lib/sdk'</span>;
 <span class="k">import</span> { sendOfferSMS, sendAppointmentOfferedEmailToOrg } <span class="k">from</span> <span class="s">'./jobs'</span>;
 <span class="k">import type</span> { AppointmentRow } <span class="k">from</span> <span class="s">'./types'</span>;
 
-<span class="c">// no defineEvent&lt;T&gt; — the module's types are INFERRED from the typed helpers inside</span>
-<span class="k">export default</span> defineEvent({
+<span class="c">// the row type is stated ONCE, on the outer call — every inline (ctx) =&gt; below</span>
+<span class="c">// gets the typed Hasura context from it. No per-seam wrapper, no restatement.</span>
+<span class="k">export default</span> hasuraEvent.defineEvent<span class="k">&lt;AppointmentRow&gt;</span>({
   name: <span class="s">'appointment.ready'</span>,
-  <span class="c">// the §01 switch, inline. &lt;AppointmentRow&gt; is stated ONCE, here — it types</span>
-  <span class="c">// ctx for the detector AND flows up into the module (no restatement).</span>
-  detector: hasuraEvent.detector<span class="k">&lt;AppointmentRow&gt;</span>((ctx) =&gt; {
+  <span class="c">// the §01 switch, inline — ctx.operation / ctx.columnChanged / ctx.newRow all typed</span>
+  detector: (ctx) =&gt; {
     <span class="k">switch</span> (ctx.operation) {
       <span class="k">case</span> <span class="s">'INSERT'</span>: <span class="k">return</span> ctx.newRow?.status === <span class="s">'ready'</span>;
       <span class="k">case</span> <span class="s">'UPDATE'</span>: <span class="k">return</span> ctx.columnChanged(<span class="s">'status'</span>) &amp;&amp; ctx.newRow?.status === <span class="s">'ready'</span>;
       <span class="k">default</span>:      <span class="k">return</span> <span class="k">false</span>;   <span class="c">// DELETE + MANUAL stay suppressed</span>
     }
-  }),
+  },
   <span class="hl"><span class="c">// runs ONCE; its result is merged into every job's ctx.input</span>
-  prepare: hasuraEvent.prepare<span class="k">&lt;AppointmentRow&gt;</span>((ctx) =&gt; ({ sdk: initSdk(), appointment: ctx.newRow })),
+  prepare: (ctx) =&gt; ({ sdk: initSdk(), appointment: ctx.newRow }),
   <span class="c">// a STATIC list, the runtime runs them. no run() call, no body to branch in.</span>
   <span class="c">// a bare function reference IS a job; only wrap with job() to pass options.</span>
   jobs: [
@@ -860,7 +865,7 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
 
     <div class="cmp-block" style="margin-top:8px">
       <div class="cmp-title"><span class="num">↪</span><h3>A vendor webhook event</h3><span class="file">stripe.payment_intent.succeeded</span></div>
-      <p class="cmp-note">The business event keeps a business-semantic name, <code>stripe.payment_intent.succeeded</code>, not an HTTP route. Detection becomes explicit and observable.<br><br>Three things are webhook-specific. Stripe carries its event type <b>in the body</b>, not a header &mdash; so the module types the body <b>once</b> with <code>webhook.detector&lt;StripePaymentEvent&gt;(...)</code> and the detector reads <code>ctx.body.type</code> with real types, alongside <code>ctx.signatureVerified</code>. (Header-routed vendors like Twilio use <code>eventTypeHeader</code> and read <code>ctx.eventType</code> instead.) Second, Stripe redelivers on <b>any non-2xx</b> for up to ~72&nbsp;hours &mdash; so the module&rsquo;s <code>resolve</code> returns the 2xx ack fast, and the real work stays a durable job retried on its own. Delivery is at-least-once: write the jobs idempotent. Third, Stripe sends <i>every</i> event type on the endpoint&rsquo;s subscription &mdash; a type with no registered module simply fires nothing and falls through to the standard 200 ack, which is exactly what Stripe requires for events you ignore.</p>
+      <p class="cmp-note">The business event keeps a business-semantic name, <code>stripe.payment_intent.succeeded</code>, not an HTTP route. Detection becomes explicit and observable.<br><br>Three things are webhook-specific. Stripe carries its event type <b>in the body</b>, not a header &mdash; so the module types the body <b>once</b>, on the outer <code>webhook.defineEvent&lt;StripePaymentEvent&gt;({ … })</code> call, and the inline detector reads <code>ctx.body.type</code> with real types, alongside <code>ctx.signatureVerified</code>. (Header-routed vendors like Twilio use <code>eventTypeHeader</code> and read <code>ctx.eventType</code> instead.) Second, Stripe redelivers on <b>any non-2xx</b> for up to ~72&nbsp;hours &mdash; so the module&rsquo;s <code>resolve</code> returns the 2xx ack fast, and the real work stays a durable job retried on its own. Delivery is at-least-once: write the jobs idempotent. Third, Stripe sends <i>every</i> event type on the endpoint&rsquo;s subscription &mdash; a type with no registered module simply fires nothing and falls through to the standard 200 ack, which is exactly what Stripe requires for events you ignore.</p>
       <div class="cmp">
         <div class="pane was">
           <div class="pane-head"><span class="tagdot"></span>Now<span class="sig">bespoke function</span></div>
@@ -892,7 +897,7 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
         <div class="pane becomes">
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">webhook source adapter</span></div>
 <pre><span class="c">// events/stripe.payment_intent.succeeded.ts</span>
-<span class="k">import</span> { defineEvent, job } <span class="k">from</span> <span class="s">'eventkit'</span>;
+<span class="k">import</span> { job } <span class="k">from</span> <span class="s">'eventkit'</span>;
 <span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources'</span>;
 <span class="k">import</span> { markAppointmentPaid, publishEventLog } <span class="k">from</span> <span class="s">'./jobs'</span>;
 
@@ -907,21 +912,21 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
   } };
 }
 
-<span class="c">// no defineEvent&lt;T&gt; — the module's types are INFERRED from the typed helpers inside</span>
-<span class="k">export default</span> defineEvent({
+<span class="c">// the body type on the OUTER call types ctx.body in every inline seam below —</span>
+<span class="c">// on the BARE webhook factory, no vendor config needed here (that's the entry file's)</span>
+<span class="k">export default</span> <span class="hl">webhook.defineEvent<span class="k">&lt;StripePaymentEvent&gt;</span></span>({
   name: <span class="s">'stripe.payment_intent.succeeded'</span>,
-  <span class="c">// webhook.detector&lt;TBody&gt; types ctx.body — on the BARE factory, no vendor config needed here</span>
-  detector: <span class="hl">webhook.detector<span class="k">&lt;StripePaymentEvent&gt;</span></span>((ctx) =&gt; {
+  detector: (ctx) =&gt; {
     <span class="k">const</span> isVerified         = ctx.signatureVerified;                          <span class="c">// one HMAC check, done in the source</span>
     <span class="k">const</span> isPaymentSucceeded = ctx.body.type === <span class="s">'payment_intent.succeeded'</span>;  <span class="c">// typed — a typo won't compile</span>
     <span class="k">const</span> isOurAppointment   = !!ctx.body.data.object.metadata.appointmentId;
     <span class="k">return</span> isVerified &amp;&amp; isPaymentSucceeded &amp;&amp; isOurAppointment;   <span class="c">// forged requests never fire</span>
-  }),
-  prepare: webhook.prepare<span class="k">&lt;StripePaymentEvent&gt;</span>((ctx) =&gt; ({
+  },
+  prepare: (ctx) =&gt; ({
     paymentIntentId: ctx.body.data.object.id,
     appointmentId:   ctx.body.data.object.metadata.appointmentId!,
     amountReceived:  ctx.body.data.object.amount_received,
-  })),
+  }),
   <span class="hl"><span class="c">// resolve owns the reply Stripe keys on: ANY non-2xx is redelivered (~72h).</span>
   <span class="c">// Return the ack fast — the real work is durable jobs, retried on their own.</span>
   resolve: () =&gt; ({ received: <span class="k">true</span> }),</span>
@@ -1041,22 +1046,23 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
         <div class="pane becomes">
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">hasuraAction source adapter</span></div>
 <pre><span class="c">// events/cancelAppointment.ts</span>
-<span class="k">import</span> { defineEvent, ActionError } <span class="k">from</span> <span class="s">'eventkit'</span>;
+<span class="k">import</span> { ActionError } <span class="k">from</span> <span class="s">'eventkit'</span>;
 <span class="k">import</span> { hasuraAction } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources/hasura'</span>;
 <span class="k">import</span> { cancelAppointment, notifyCustomer } <span class="k">from</span> <span class="s">'./jobs'</span>;
 
-<span class="k">export default</span> defineEvent({
+<span class="c">// hasuraAction.defineEvent types every inline seam with the action context</span>
+<span class="k">export default</span> hasuraAction.defineEvent({
   name: <span class="s">'cancelAppointment'</span>,
-  detector: hasuraAction.detector((ctx) =&gt; ctx.actionName === <span class="s">'cancelAppointment'</span>),
+  detector: (ctx) =&gt; ctx.actionName === <span class="s">'cancelAppointment'</span>,
   <span class="hl"><span class="c">// Hasura already authenticated the caller and checked the action's</span>
   <span class="c">// role permissions. sessionVariables is VERIFIED identity — trust it.</span>
-  resolve: hasuraAction.resolve((ctx) =&gt; {
+  resolve: (ctx) =&gt; {
     <span class="k">const</span> { role, userId } = ctx.sessionVariables;
     <span class="k">const</span> { appointmentId } = ctx.input;
     <span class="k">if</span> (!appointmentId)
       <span class="k">throw new</span> ActionError(<span class="s">'appointmentId required'</span>, <span class="s">'bad-input'</span>);  <span class="c">// → 4xx GraphQL error</span>
     <span class="k">return</span> { ok: <span class="k">true</span>, cancelledBy: userId };          <span class="c">// → 2xx + the action's output type</span>
-  }),</span>
+  },</span>
   jobs: [cancelAppointment, notifyCustomer],            <span class="c">// durable, correlated side effects</span>
 });</pre>
         </div>
@@ -1626,10 +1632,10 @@ module.exports = {
 };
 
 <span class="c">// the module — no wrapper, no flag, no input mapping, no run() call</span>
-<span class="hl">export default defineEvent({
+<span class="hl">export default hasuraEvent.defineEvent&lt;BatchJobRow&gt;({
   name: <span class="s">'batch.ap.ready'</span>,
-  detector: hasuraEvent.detector&lt;BatchJobRow&gt;((ctx) =&gt;
-    ctx.columnChanged(<span class="s">'status'</span>) &amp;&amp; ctx.newRow?.status === <span class="s">'ready'</span> &amp;&amp; ctx.newRow?.trigger_type === <span class="s">'ap'</span>),
+  detector: (ctx) =&gt;
+    ctx.columnChanged(<span class="s">'status'</span>) &amp;&amp; ctx.newRow?.status === <span class="s">'ready'</span> &amp;&amp; ctx.newRow?.trigger_type === <span class="s">'ap'</span>,
   jobs: [ runApBatch ],   <span class="c">// the plugin injects the row's input</span>
 });</span></pre>
         </div>
@@ -1845,21 +1851,20 @@ module.exports = {
         <div class="pane becomes">
           <div class="pane-head"><span class="tagdot"></span>Becomes<span class="sig">detector + declarative jobs</span></div>
 <pre><span class="c">// events/spark.appointment.created.ts</span>
-<span class="k">import</span> { defineEvent } <span class="k">from</span> <span class="s">'eventkit'</span>;
 <span class="k">import</span> { webhook } <span class="k">from</span> <span class="s">'hopdrive-eventkit/sources'</span>;
 <span class="k">import</span> { upsertAppointmentFromSpark } <span class="k">from</span> <span class="s">'../resolve'</span>;
 <span class="k">import</span> { syncSchedulerConfig } <span class="k">from</span> <span class="s">'../jobs'</span>;
 <span class="k">import type</span> { SparkAppointment } <span class="k">from</span> <span class="s">'../types'</span>;
 
-<span class="hl"><span class="k">export default</span> defineEvent({
+<span class="hl"><span class="k">export default</span> webhook.defineEvent<span class="k">&lt;SparkAppointment&gt;</span>({
   name: <span class="s">'spark.appointment.created'</span>,
-  detector: webhook.detector((ctx) =&gt; {
+  detector: (ctx) =&gt; {
     <span class="k">const</span> { signatureVerified, vendor, eventType } = ctx;
     <span class="k">return</span> signatureVerified
       &amp;&amp; vendor === <span class="s">'spark'</span>
       &amp;&amp; eventType === <span class="s">'appointment.created'</span>;
-  }),
-  prepare: webhook.prepare<span class="k">&lt;SparkAppointment&gt;</span>((ctx) =&gt; ({ payload: ctx.body })),
+  },
+  prepare: (ctx) =&gt; ({ payload: ctx.body }),   <span class="c">// ctx.body is SparkAppointment — from the outer call</span>
   resolve: upsertAppointmentFromSpark,   <span class="c">// owns the response Spark retries on</span>
   jobs: [ syncSchedulerConfig ],         <span class="c">// fire-and-forget side effect</span>
 });</span></pre>
@@ -2100,11 +2105,12 @@ kit.registerEvents(modules[] | record): EventKit</div>
       <h3>Event module — <code>defineEvent</code></h3>
       <p class="ghint">A declarative record (ADR-025): the runtime runs the declared jobs. There is no handler function.</p>
       <div class="refentry">
-        <div class="rsig">defineEvent({ name, detector, prepare?, jobs?, resolve?, respond?, run?, metadata? }): EventModule</div>
+        <div class="rsig">&lt;source&gt;.defineEvent&lt;T&gt;({ name, detector, prepare?, jobs?, resolve?, respond?, run?, metadata? }): EventModule</div>
         <ul class="rfields">
-          <li><b>Typing</b> — you normally pass <b>no type parameter</b>: the module&rsquo;s types are <b>inferred</b> from the source-typed helpers inside it (<code>detector: hasuraEvent.detector&lt;Row&gt;((ctx) =&gt; …)</code>), and <code>prepare</code>&rsquo;s inferred return flows into <code>resolve</code>/<code>respond</code>&rsquo;s <code>ctx.prepared</code> (D32). State the row/body type once, on the helper — not on <code>defineEvent</code>. (A bare <code>(ctx) =&gt;</code> without the helper only sees the base source-agnostic context; <code>defineEvent&lt;TPayload&gt;</code> exists but types the raw envelope payload, not the source&rsquo;s enriched <code>ctx</code>.)</li>
+          <li><b>Authoring form</b> — use the <b>source-scoped</b> builder: <code>hasuraEvent.defineEvent&lt;Row&gt;({ … })</code>, <code>webhook.defineEvent&lt;Body&gt;({ … })</code>, <code>hasuraAction.defineEvent&lt;Input&gt;({ … })</code>, <code>hasuraCron.defineEvent&lt;Payload&gt;({ … })</code>. The one type parameter on the <b>outer call</b> flows into every inline <code>(ctx) =&gt;</code> seam — <code>detector</code>, <code>prepare</code>, <code>resolve</code>/<code>respond</code> — as the source&rsquo;s fully-typed context (<code>ctx.columnChanged</code> / <code>ctx.body</code> / <code>ctx.input</code>…), no per-seam wrapper. At runtime it IS the root <code>defineEvent</code> (name branding only).</li>
+          <li><b>Root <code>defineEvent</code></b> — the source-agnostic form, still exported from the root: for custom/fake sources, or paired with per-seam helpers (<code>detector: hasuraEvent.detector&lt;Row&gt;(fn)</code>) when you want <b>full inference</b> — that form threads <code>prepare</code>&rsquo;s return into <code>ctx.prepared</code> (D32). On the scoped form, an explicit type argument switches the remaining parameters to their defaults (TS has no partial inference), so <code>ctx.prepared</code> is <code>Record&lt;string, unknown&gt;</code> unless you also state it.</li>
           <li><b><code>name</code></b> — the business event name (the module&rsquo;s identity; preserved verbatim across migration).</li>
-          <li><b><code>detector</code></b> — <code>(ctx) =&gt; boolean | Promise&lt;boolean&gt;</code>, usually authored inline via the source helper. House style is <code>switch (ctx.operation)</code> with named booleans.</li>
+          <li><b><code>detector</code></b> — <code>(ctx) =&gt; boolean | Promise&lt;boolean&gt;</code>, authored inline. House style is <code>switch (ctx.operation)</code> with named booleans.</li>
           <li><b><code>prepare?</code></b> — <code>(ctx) =&gt; shared</code>. Runs once before the jobs; its result merges into every job&rsquo;s <code>ctx.input</code> (shared <code>sdk</code>, fetched rows, closures).</li>
           <li><b><code>jobs?</code></b> — <code>JobDefinition[]</code>, a <i>static array literal</i> of <code>job(fn, opts?)</code>. The runtime runs them; no conditional inclusion, no fan-out, no inter-job deps. Optional only when <code>resolve</code> is present — a module must declare <code>jobs</code> and/or <code>resolve</code>.</li>
           <li><b><code>resolve?</code></b> <span class="refbadge shipped">shipped</span> — <code>(ctx) =&gt; output</code>, the <b>request/response seam</b> (ADR-026): computes the invocation&rsquo;s response value for a request/response source (<code>hasuraAction</code>, a status-contract <code>webhook</code>). Source-agnostic; the source&rsquo;s platform adapter maps the return → the wire. It MUST NOT read job results — jobs run alongside as sibling-ignorant side effects.</li>
@@ -2139,7 +2145,7 @@ kit.registerEvents(modules[] | record): EventKit</div>
       <p class="ghint">A source normalizes an inbound signal into an <code>EventEnvelope</code> and supplies the typed detector/job context. Exactly one per kit. Two classes (ADR-026): <b>fire-and-forget event</b> sources (detect → jobs; response is an ack) and <b>request/response</b> sources (detect → <code>resolve</code> a payload + optional side-effect jobs).</p>
       <div class="refentry">
         <div class="rsig">hasuraEvent <span class="refbadge shipped">shipped</span></div>
-        <p>Hasura DB event triggers (<code>sourceType:'database'</code>). Authoring helpers <code>hasuraEvent.detector&lt;Row&gt;(fn)</code> / <code>hasuraEvent.prepare&lt;Row&gt;(fn)</code> carry types. Detector context: <code>operation</code> (branch on it with a `switch`; `case 'MANUAL': return false` suppresses console edits), <code>oldRow</code>/<code>newRow</code>/<code>row</code>, <code>columnChanged()</code>/<code>columnAdded()</code>/<code>columnRemoved()</code>, <code>previousValue()</code>/<code>currentValue()</code>.</p>
+        <p>Hasura DB event triggers (<code>sourceType:'database'</code>). Author modules with <code>hasuraEvent.defineEvent&lt;Row&gt;({ … })</code> — the row type on the outer call types every inline seam; the per-seam helpers <code>hasuraEvent.detector&lt;Row&gt;(fn)</code> / <code>hasuraEvent.prepare&lt;Row&gt;(fn)</code> remain for standalone exports and full inference. Detector context: <code>operation</code> (branch on it with a `switch`; `case 'MANUAL': return false` suppresses console edits), <code>oldRow</code>/<code>newRow</code>/<code>row</code>, <code>columnChanged()</code>/<code>columnAdded()</code>/<code>columnRemoved()</code>, <code>previousValue()</code>/<code>currentValue()</code>.</p>
         <p>Every Hasura-family source is also <b>callable as a factory</b> with one uniform config shape: <code>createEventKit(hasuraEvent, { tokenField?, tokenSessionVariables? })</code> configures <b>inbound tracking-token discovery</b> (which row write-field and session variables carry a token — defaults <code>'updated_by'</code> and <code>'x-hasura-tracking-token'</code>). Bare <code>hasuraEvent</code> uses the defaults; the same config works on <code>hasuraCron</code> and <code>hasuraAction</code> (each reads only the channels its payload actually has).</p>
       </div>
       <div class="refentry">
@@ -2149,7 +2155,7 @@ kit.registerEvents(modules[] | record): EventKit</div>
       <div class="refentry">
         <div class="rsig">webhook(config) <span class="refbadge shipped">shipped</span></div>
         <p>Vendor webhooks (<code>{ vendor, verify, eventTypeHeader }</code>); context exposes <code>signatureVerified</code>, <code>vendor</code>, <code>eventType</code>, <code>body</code>. Covers <code>event-handlers</code>&rsquo; <code>webhook-*</code> (Stripe, Twilio, Dealerware) and the reverse-integration repos. Mostly fire-and-forget; a status-contract vendor (Stripe) uses <code>resolve</code> + a thrown <code>ClientError(status,…)</code> that the platform maps to the HTTP status.</p>
-        <p>Typed authoring helpers ride the <b>bare factory</b>, uniform with the Hasura family: <code>webhook.detector&lt;TBody&gt;(fn)</code> / <code>webhook.prepare&lt;TBody&gt;(fn)</code> / <code>webhook.resolve&lt;TBody&gt;(fn)</code> type <code>ctx.body</code> as <code>TBody</code>, so an event module gets full typing without knowing the entry file&rsquo;s vendor/verify config. (A configured instance carries the same helpers.) Verify presets ship alongside: <code>hmacVerify</code> (Stripe&rsquo;s <code>t=,v1=</code> scheme natively, with replay tolerance), <code>staticHeaderToken</code>, <code>sharedSecret</code>, <code>hasuraPassphrase</code>.</p>
+        <p>Typed authoring rides the <b>bare factory</b>, uniform with the Hasura family: author modules with <code>webhook.defineEvent&lt;TBody&gt;({ … })</code> (the body type on the outer call types <code>ctx.body</code> in every inline seam), or use the per-seam helpers <code>webhook.detector&lt;TBody&gt;(fn)</code> / <code>webhook.prepare&lt;TBody&gt;(fn)</code> / <code>webhook.resolve&lt;TBody&gt;(fn)</code> for standalone exports — either way the module gets full typing without knowing the entry file&rsquo;s vendor/verify config. (A configured instance carries the same members.) Verify presets ship alongside: <code>hmacVerify</code> (Stripe&rsquo;s <code>t=,v1=</code> scheme natively, with replay tolerance), <code>staticHeaderToken</code>, <code>sharedSecret</code>, <code>hasuraPassphrase</code>.</p>
       </div>
       <div class="refentry">
         <div class="rsig">hasuraAction <span class="refbadge shipped">shipped</span></div>

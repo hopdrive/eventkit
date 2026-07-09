@@ -152,6 +152,35 @@ export interface EventModule<
 }
 
 /**
+ * The module shape a SOURCE-SCOPED `defineEvent` accepts — e.g.
+ * `hasuraEvent.defineEvent<Row>({ ... })`. Same fields as `EventModule`, but every
+ * seam is typed by the SOURCE's enriched contexts instead of the generic base
+ * ones, so ONE type parameter on the outer call types every inline `(ctx) => ...`
+ * arrow (`detector`, `prepare`, `resolve`, `respond`) with no per-seam helper
+ * wrapper. Each source declares its `defineEvent` with its own detector/handler
+ * context types; the runtime is core `defineEvent` unchanged.
+ *
+ * TPrepared caveat (TS has no partial inference): when the caller passes the
+ * source type parameter explicitly, `TPrepared` falls back to its default —
+ * `resolve`/`respond` then see `ctx.prepared` as `Record<string, unknown>` unless
+ * the caller states it too. Full inference (the helper-wrapper style) keeps D32.
+ */
+export interface SourceEventModule<
+  TDetectorCtx,
+  THandlerCtx,
+  TPrepared extends Record<string, unknown> = Record<string, unknown>,
+> {
+  name: string;
+  detector: (ctx: TDetectorCtx) => boolean | Promise<boolean>;
+  prepare?: (ctx: THandlerCtx) => TPrepared | Promise<TPrepared>;
+  resolve?: (ctx: THandlerCtx & { prepared: TPrepared }) => unknown;
+  respond?: (ctx: THandlerCtx & { prepared: TPrepared }, result: JobsResult) => unknown;
+  jobs?: (JobDefinition<any> | JobFunction<any>)[];
+  run?: RunOptions;
+  metadata?: EventModuleMetadata;
+}
+
+/**
  * Typed identity helper for authoring a module (same pattern as the source
  * `.detector` helpers) — improves inference and gives one obvious construction
  * site. `defineEvent({ ... })` returns its argument unchanged; the `name` is

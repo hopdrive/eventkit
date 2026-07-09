@@ -20,16 +20,19 @@ import {
   asCorrelationId,
   asEventSourceName,
   ClientError,
+  defineEvent,
   type CrashPolicy,
   type DetectorContext,
   type DetectorFunction,
   type EventEnvelope,
   type EventKitPlugin,
+  type EventModule,
   type HandlerContext,
   type JobInputContext,
   type PrepareFunction,
   type RequestContext,
   type ResolveFunction,
+  type SourceEventModule,
 } from '../../core/index.js';
 import { randomId as sharedRandomId } from '../../core/ids.js';
 
@@ -114,11 +117,24 @@ export interface WebhookAuthoring {
   resolve<TBody = unknown, TOutput = unknown>(
     fn: (ctx: JobInputContext<TBody> & WebhookFields<TBody>) => TOutput | Promise<TOutput>,
   ): ResolveFunction<TBody>;
+  /**
+   * Source-scoped module builder: `webhook.defineEvent<Body>({ ... })`. The body
+   * type on THIS call types every inline seam — a bare `detector: (ctx) => ...`
+   * arrow gets the full webhook context (`ctx.signatureVerified` / `ctx.eventType` /
+   * `ctx.body`), no per-seam `.detector()` wrapper. Runtime = core `defineEvent`.
+   * See `SourceEventModule` for the TPrepared caveat when `TBody` is passed explicitly.
+   */
+  defineEvent<TBody = unknown, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
+    module: SourceEventModule<WebhookDetectorContext<TBody>, WebhookHandlerContext<TBody>, TPrepared>,
+  ): EventModule<TBody, Record<string, unknown>, TPrepared>;
 }
 
 export interface WebhookSource extends EventKitPlugin, WebhookAuthoring {
   sourceType: 'webhook';
 }
+
+// Core defineEvent, re-typed so the body type on the OUTER call types every inline seam.
+const defineWebhookEvent = defineEvent as unknown as WebhookAuthoring['defineEvent'];
 
 // The authoring-helper implementations — identity wrappers with the WebhookAuthoring
 // signatures, shared by every configured instance and the factory value itself.
@@ -189,6 +205,7 @@ function buildWebhook(config: WebhookConfig): WebhookSource {
     detector,
     prepare,
     resolve,
+    defineEvent: defineWebhookEvent,
     normalize(raw: unknown, request: RequestContext): EventEnvelope {
       const reqMeta = (request.meta ?? {}) as { headers?: Record<string, unknown>; query?: Record<string, unknown>; rawBody?: string };
       const headers = lowerKeys(reqMeta.headers ?? {});
@@ -253,5 +270,5 @@ function buildWebhook(config: WebhookConfig): WebhookSource {
  */
 export const webhook: ((config: WebhookConfig) => WebhookSource) & WebhookAuthoring = Object.assign(
   (config: WebhookConfig): WebhookSource => buildWebhook(config),
-  { detector, prepare, resolve },
+  { detector, prepare, resolve, defineEvent: defineWebhookEvent },
 );
