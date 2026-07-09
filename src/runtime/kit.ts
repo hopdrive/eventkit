@@ -22,6 +22,7 @@ import {
   type EventKit,
   type EventKitPlugin,
   type EventModule,
+  type EventName,
   type EventModuleMetadata,
   type EventOutcome,
   type EventSourceType,
@@ -45,13 +46,11 @@ import {
   type ResolvedOutcome,
   type SerializedError,
 } from '../core/index.js';
+import { isJobDefinition } from '../core/job.js';
 import { PluginManager } from './plugin-manager.js';
 import { runJobs, type InvocationRuntime } from './run.js';
 import { createHandlerLogger, createDetectorLogger } from './loggers.js';
 import { newInvocationId, newCorrelationId, newUuid } from './ids.js';
-
-const isJobDefinition = (x: unknown): boolean =>
-  !!x && typeof x === 'object' && (x as { __eventkitJob?: unknown }).__eventkitJob === true;
 
 /**
  * Map a thrown value from `resolve`/`prepare` into the platform-mappable shape. Reads
@@ -114,6 +113,31 @@ class Kit implements EventKit {
   use(plugin: EventKitPlugin | PluginFactory, config?: unknown): EventKit {
     this.pm.add(plugin, config);
     return this;
+  }
+
+  /**
+   * Shared inbound pipeline for `handle()` and `dryRun()`: resolve the raw payload +
+   * RequestContext (platform-aware, else pass-through), then normalize → augment →
+   * notify. Everything after this point works from the returned envelope.
+   */
+  private async intake(
+    rawPayloadOrArgs: unknown,
+    request?: RequestContext | unknown,
+  ): Promise<{ envelope: EventEnvelope; req: RequestContext }> {
+    let raw: unknown;
+    let req: RequestContext;
+    if (this.pm.platform) {
+      raw = await this.pm.platform.extractPayload?.(rawPayloadOrArgs, request);
+      req = (this.pm.platform.buildRequest?.(rawPayloadOrArgs, request) as RequestContext) ?? {};
+    } else {
+      raw = rawPayloadOrArgs;
+      req = (request as RequestContext) ?? {};
+    }
+    await this.pm.onBeforeNormalize(raw, req);
+    let envelope: EventEnvelope = this.pm.normalize(raw, req);
+    envelope = await this.pm.augmentEnvelope(envelope);
+    await this.pm.onAfterNormalize(envelope);
+    return { envelope, req };
   }
 
   registerEvent(module: EventModule): EventKit {
@@ -283,27 +307,14 @@ class Kit implements EventKit {
     // retry. Business-logic crashes (detector/handler/job) are caught downstream
     // and stay in events[] with NO top-level error → 200 → no retry.
     try {
-    // 1. Resolve raw payload + RequestContext (platform-aware).
-    let raw: unknown;
-    let req: RequestContext;
-    if (this.pm.platform) {
-      raw = await this.pm.platform.extractPayload?.(rawPayloadOrArgs, request);
-      req = (this.pm.platform.buildRequest?.(rawPayloadOrArgs, request) as RequestContext) ?? {};
-    } else {
-      raw = rawPayloadOrArgs;
-      req = (request as RequestContext) ?? {};
-    }
+    // 1–2. Resolve raw payload + RequestContext, normalize → augment (shared intake).
+    const intake = await this.intake(rawPayloadOrArgs, request);
+    const envelope: EventEnvelope = intake.envelope;
 
     const sourceType: EventSourceType = this.pm.sourceType;
 
-    // 2. Normalize → augment envelope.
-    await this.pm.onBeforeNormalize(raw, req);
-    let envelope: EventEnvelope = this.pm.normalize(raw, req);
-    envelope = await this.pm.augmentEnvelope(envelope);
-    await this.pm.onAfterNormalize(envelope);
-
     // 3. Per-request config refinement (delta), then resolve ids.
-    req = await this.pm.configureInvocation(req, envelope);
+    const req = await this.pm.configureInvocation(intake.req, envelope);
     const invocationId = req.invocationId ? asInvocationId(req.invocationId) : newInvocationId();
     // Single correlationId lever, by precedence: a plugin's augmentEnvelope (e.g.
     // loop-guard lifting the inbound token's correlation — chaining beats a
@@ -475,19 +486,9 @@ class Kit implements EventKit {
 
   async dryRun(rawPayloadOrArgs: unknown, request?: RequestContext | unknown): Promise<DryRunResult> {
     await this.ensureReady();
-    let raw: unknown;
-    let req: RequestContext;
-    if (this.pm.platform) {
-      raw = await this.pm.platform.extractPayload?.(rawPayloadOrArgs, request);
-      req = (this.pm.platform.buildRequest?.(rawPayloadOrArgs, request) as RequestContext) ?? {};
-    } else {
-      raw = rawPayloadOrArgs;
-      req = (request as RequestContext) ?? {};
-    }
-    await this.pm.onBeforeNormalize(raw, req);
-    let envelope: EventEnvelope = this.pm.normalize(raw, req);
-    envelope = await this.pm.augmentEnvelope(envelope);
-    await this.pm.onAfterNormalize(envelope);
+    // Same intake as handle(); per-request configureInvocation is deliberately skipped
+    // (detection only — no invocation is being configured).
+    const { envelope, req } = await this.intake(rawPayloadOrArgs, request);
 
     const invocationId = req.invocationId ? asInvocationId(req.invocationId) : newInvocationId();
     const correlationId = envelope.correlationId ?? newCorrelationId();
@@ -604,6 +605,28 @@ class Kit implements EventKit {
   }
 
   /**
+   * Run a module's response seam (`resolve` or `respond`) and map its outcome
+   * (ADR-026): a returned value becomes the response output; a throw becomes the
+   * wire error (`toResolvedError`), reported through `onError` at phase 'handle'.
+   */
+  private async runResponseSeam(
+    seam: () => unknown,
+    invocation: InvocationContext,
+    eventName: EventName,
+  ): Promise<{ resolved: ResolvedOutcome; error?: SerializedError }> {
+    try {
+      return { resolved: { hasResolved: true, output: await seam() } };
+    } catch (err) {
+      await this.pm.reportError(err, 'handle', {
+        invocationId: invocation.invocationId,
+        correlationId: invocation.correlationId,
+        eventName,
+      });
+      return { resolved: { hasResolved: true, error: toResolvedError(err) }, error: serializeError(err) };
+    }
+  }
+
+  /**
    * For each detected event: build its handler context, run `prepare` once (if any),
    * then hand the module's STATIC `jobs` array to the runtime executor (ADR-025 —
    * there is no handler body). `prepare`'s output is merged into every job's input.
@@ -664,18 +687,9 @@ class Kit implements EventKit {
         // job results. Await both so serverless doesn't freeze mid-side-effect.
         const jobsPromise = runJobs(runtime, event, module.jobs ?? [], module.run, jobInputCtx);
         if (module.resolve) {
-          try {
-            const output = await module.resolve(jobInputCtx);
-            moduleResolved = { hasResolved: true, output };
-          } catch (rErr) {
-            error = serializeError(rErr);
-            moduleResolved = { hasResolved: true, error: toResolvedError(rErr) };
-            await this.pm.reportError(rErr, 'handle', {
-              invocationId: invocation.invocationId,
-              correlationId: invocation.correlationId,
-              eventName: event.name,
-            });
-          }
+          const r = await this.runResponseSeam(() => module.resolve!(jobInputCtx), invocation, event.name);
+          moduleResolved = r.resolved;
+          if (r.error !== undefined) error = r.error;
         }
         jobs = await jobsPromise;
         // ADR-026 amendment: `respond` is the RESULT-DRIVEN response — sequenced AFTER the
@@ -685,18 +699,9 @@ class Kit implements EventKit {
         // durability — `respond` only reads results; a throw maps to the wire error.
         if (module.respond) {
           const ok = jobs.every(j => j.status === 'completed' || j.status === 'skipped');
-          try {
-            const output = await module.respond(jobInputCtx, { jobs, ok });
-            moduleResolved = { hasResolved: true, output };
-          } catch (rErr) {
-            error = serializeError(rErr);
-            moduleResolved = { hasResolved: true, error: toResolvedError(rErr) };
-            await this.pm.reportError(rErr, 'handle', {
-              invocationId: invocation.invocationId,
-              correlationId: invocation.correlationId,
-              eventName: event.name,
-            });
-          }
+          const r = await this.runResponseSeam(() => module.respond!(jobInputCtx, { jobs, ok }), invocation, event.name);
+          moduleResolved = r.resolved;
+          if (r.error !== undefined) error = r.error;
         }
       } catch (err) {
         // A prepare() crash — neither jobs nor a response seam produced anything. For a

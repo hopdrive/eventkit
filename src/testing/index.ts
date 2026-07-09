@@ -25,10 +25,9 @@ import {
   type RequestContext,
   type RunOptions,
 } from '../core/index.js';
-const randomId = (): string =>
-  typeof globalThis.crypto?.randomUUID === 'function'
-    ? globalThis.crypto.randomUUID()
-    : `fake-${Math.floor(Date.now()).toString(36)}-${(globalThis as { __ekc?: number }).__ekc = ((globalThis as { __ekc?: number }).__ekc ?? 0) + 1}`;
+import { randomId as sharedRandomId } from '../core/ids.js';
+
+const randomId = (): string => sharedRandomId('fake');
 
 /** Detector context the fake source exposes: the base plus the raw `payload`. */
 export interface FakeDetectorContext<TPayload = unknown> extends DetectorContext<TPayload> {

@@ -24,14 +24,14 @@ import type {
   SourceMeta,
 } from '../../core/index.js';
 import { safeSerialize } from './serialize.js';
+import { randomId } from '../../core/ids.js';
 
 // Re-export the built-in GraphQL sink so the plugin + its default sink import from
 // ONE path: `import { observability, graphqlSink } from 'eventkit/plugins/observability'`.
 // (Also available standalone at `eventkit/plugins/observability/graphql-sink`.)
 export { graphqlSink, type GraphqlSinkConfig, type StatusMap } from './graphql-sink.js';
 
-const newId = (): string =>
-  typeof globalThis.crypto?.randomUUID === 'function' ? globalThis.crypto.randomUUID() : `obs-${Date.now().toString(36)}-${Math.round(performance.now())}`;
+const newId = (): string => randomId('obs');
 
 // ── Record shapes — mirror the canonical observability schema columns ─────────
 export interface InvocationRecord {

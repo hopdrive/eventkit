@@ -3,8 +3,8 @@
 // =============================================================================
 // The complete public type surface (the §9/§11 RFC interfaces plus the helper
 // types the RFC left loose) lives here. Runtime values exported are the pure
-// leaf utilities (serialization, branded-id helpers) plus the Phase-0 stubs
-// (`job`, `run`, `createEventKit`) whose bodies land in Phase 1.
+// leaf utilities (serialization, branded-id helpers, `job`, `defineEvent`) —
+// `createEventKit` itself is runtime and re-exported from the package root.
 
 // ── Branded identifiers ────────────────────────────────────────────────────
 export type {
@@ -74,7 +74,7 @@ export type {
   JobsResult,
   RunOptions,
 } from './job.js';
-export { job, NotImplementedError } from './job.js';
+export { job } from './job.js';
 
 // ── Event modules (ADR-025: declarative; no handler) ─────────────────────────
 export type {

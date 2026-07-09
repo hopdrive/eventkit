@@ -25,9 +25,9 @@ import type {
 } from './types.js';
 import { columnAdded, columnChanged, columnRemoved, getNewRow, getOldRow, getOperation, getSession } from './payload.js';
 import { collectTokenCandidates, type HasuraTokenDiscoveryConfig } from './token-discovery.js';
+import { randomId as sharedRandomId } from '../../core/ids.js';
 
-const randomId = (): string =>
-  typeof globalThis.crypto?.randomUUID === 'function' ? globalThis.crypto.randomUUID() : `hasura-${Date.now().toString(36)}`;
+const randomId = (): string => sharedRandomId('hasura');
 
 /**
  * Hasura DB-event payload → EventEnvelope. Tolerant of malformed input: it never

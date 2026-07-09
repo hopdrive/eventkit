@@ -202,6 +202,14 @@ export interface RunOptions {
 }
 
 /**
+ * True for a value produced by `job()` — the branded backstop that keeps a module's
+ * `jobs` a statically-knowable set (ADR-025). Internal (not in the public barrel);
+ * the register-time normalizer and the executor share this one definition.
+ */
+export const isJobDefinition = (x: unknown): x is JobDefinition<any> =>
+  !!x && typeof x === 'object' && (x as { __eventkitJob?: unknown }).__eventkitJob === true;
+
+/**
  * Build a job definition. Pure constructor (no runtime execution) — the branded
  * `__eventkitJob` is what makes `jobs` a statically-knowable set (ADR-025).
  */
@@ -218,11 +226,3 @@ export function job<TInput = undefined, TResult = unknown>(
 // invocation-scoped state (plugins, signal, loggers). Per ADR-025 it is no longer a
 // consumer-facing `run()`: the runtime runs a module's declared `jobs` directly
 // during dispatch. `RunOptions` move onto the module as `run: {…}`.
-
-/** Marker for not-yet-implemented stubs whose runtime behavior is deferred to a later phase. */
-export class NotImplementedError extends Error {
-  override readonly name = 'NotImplementedError';
-  constructor(message: string) {
-    super(message);
-  }
-}

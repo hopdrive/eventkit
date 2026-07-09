@@ -31,9 +31,9 @@ import {
   type RequestContext,
   type ResolveFunction,
 } from '../../core/index.js';
+import { randomId as sharedRandomId } from '../../core/ids.js';
 
-const randomId = (): string =>
-  typeof globalThis.crypto?.randomUUID === 'function' ? globalThis.crypto.randomUUID() : `webhook-${Date.now().toString(36)}`;
+const randomId = (): string => sharedRandomId('webhook');
 
 const lowerKeys = (h: Record<string, unknown>): Record<string, string> => {
   const out: Record<string, string> = {};

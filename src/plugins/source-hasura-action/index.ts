@@ -19,6 +19,7 @@ import type {
 } from '../../core/index.js';
 import type { HasuraActionPayload, HasuraActionContext, HasuraActionHandlerContext } from '../hasura-shared/types.js';
 import { normalizeHasuraAction, buildHasuraActionDetectorContext, buildHasuraActionHandlerContext } from '../hasura-shared/adapter.js';
+import { callableSource, authoringHelper } from '../hasura-shared/callable-source.js';
 import type { HasuraTokenDiscoveryConfig } from '../hasura-shared/token-discovery.js';
 
 /** Source config for `hasuraAction` — the second arg of `createEventKit`. */
@@ -44,25 +45,15 @@ export interface HasuraActionSource extends EventKitPlugin {
   ): ResolveFunction<HasuraActionPayload<TInput>>;
 }
 
-function detector(fn: unknown): DetectorFunction {
-  return fn as unknown as DetectorFunction;
-}
-function prepare(fn: unknown): PrepareFunction {
-  return fn as unknown as PrepareFunction;
-}
-function resolve(fn: unknown): ResolveFunction {
-  return fn as unknown as ResolveFunction;
-}
-
 /** Build the plugin object; `normalize` closes over the source config (ADR-039.2). */
 function build(config: HasuraActionConfig): EventKitPlugin {
   return {
     name: 'source-hasura-action',
     provides: ['source', 'source:hasura-action'],
     sourceType: 'action',
-    detector,
-    prepare,
-    resolve,
+    detector: authoringHelper,
+    prepare: authoringHelper,
+    resolve: authoringHelper,
     normalize(raw: unknown, request: RequestContext): EventEnvelope {
       return normalizeHasuraAction(raw, request, config) as EventEnvelope;
     },
@@ -75,9 +66,4 @@ function build(config: HasuraActionConfig): EventKitPlugin {
   } as EventKitPlugin;
 }
 
-const factory = (config: HasuraActionConfig = {}): EventKitPlugin => build(config);
-const defaults = build({});
-const { name: pluginName, ...rest } = defaults;
-Object.assign(factory, rest, { detector, prepare, resolve });
-Object.defineProperty(factory, 'name', { value: pluginName, configurable: true });
-export const hasuraAction = factory as HasuraActionSource;
+export const hasuraAction = callableSource<HasuraActionConfig, HasuraActionSource>(build);

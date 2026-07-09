@@ -2052,6 +2052,10 @@ kit.registerEvents(modules[] | record): EventKit</div>
         <p>Manual entry — forward raw platform args; the adapter extracts payload + time budget. Use when you need to wrap dispatch yourself.</p>
       </div>
       <div class="refentry">
+        <div class="rsig">kit.dryRun(rawPayloadOrArgs, request?): Promise&lt;DryRunResult&gt;</div>
+        <p>Detection <b>only</b>: the same intake pipeline as <code>handle()</code> (extract → normalize → augment → detect, including the kit-level <code>prepare</code> so detectors that read <code>ctx.provided</code> behave identically) — but <b>no job, <code>resolve</code>, or module <code>prepare</code> runs</b>. Returns which events would fire and the job names each would dispatch. Powers <code>eventkit-flow simulate</code> and &ldquo;would this payload fire?&rdquo; tests.</p>
+      </div>
+      <div class="refentry">
         <div class="rsig">kit.validate(): void          kit.shutdown(): Promise&lt;void&gt;</div>
         <p><code>validate()</code> runs plugin/capability resolution + module checks (also run on first <code>handle</code>). <code>shutdown()</code> flushes and tears down plugins.</p>
       </div>
@@ -2104,6 +2108,7 @@ kit.registerEvents(modules[] | record): EventKit</div>
       <div class="refentry">
         <div class="rsig">hasuraEvent <span class="refbadge shipped">shipped</span></div>
         <p>Hasura DB event triggers (<code>sourceType:'database'</code>). Authoring helpers <code>hasuraEvent.detector&lt;Row&gt;(fn)</code> / <code>hasuraEvent.prepare&lt;Row&gt;(fn)</code> carry types. Detector context: <code>operation</code> (branch on it with a `switch`; `case 'MANUAL': return false` suppresses console edits), <code>oldRow</code>/<code>newRow</code>/<code>row</code>, <code>columnChanged()</code>/<code>columnAdded()</code>/<code>columnRemoved()</code>, <code>previousValue()</code>/<code>currentValue()</code>.</p>
+        <p>Every Hasura-family source is also <b>callable as a factory</b> with one uniform config shape: <code>createEventKit(hasuraEvent, { tokenField?, tokenSessionVariables? })</code> configures <b>inbound tracking-token discovery</b> (which row write-field and session variables carry a token — defaults <code>'updated_by'</code> and <code>'x-hasura-tracking-token'</code>). Bare <code>hasuraEvent</code> uses the defaults; the same config works on <code>hasuraCron</code> and <code>hasuraAction</code> (each reads only the channels its payload actually has).</p>
       </div>
       <div class="refentry">
         <div class="rsig">hasuraCron <span class="refbadge shipped">shipped</span></div>

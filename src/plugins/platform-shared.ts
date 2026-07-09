@@ -177,5 +177,9 @@ export const httpResponse = (result: InvocationResult): { statusCode: number; bo
 /** HTTP-style short-circuit (classic/lambda/background): { statusCode, body }. */
 export const httpRejection = (r: HandlerShortCircuit) => ({ statusCode: r.status, body: r.body ?? '' });
 
+/** Web-`Response` short-circuit (the v2 adapters) — a hand-shaped `{ statusCode }` would be a malformed v2 reply. */
+export const webRejection = (r: HandlerShortCircuit): Response =>
+  new Response(r.body ?? '', { status: r.status, headers: r.headers ?? {} });
+
 export const env = (): Record<string, string | undefined> =>
   typeof process !== 'undefined' && process.env ? process.env : {};
