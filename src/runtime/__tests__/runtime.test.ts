@@ -415,6 +415,23 @@ describe('ADR-026: resolve (request/response) is source-agnostic; jobs run along
     expect(err.resolved?.headers).toBeUndefined();
   });
 
+  it('one wire reply per invocation: the FIRST detected module with a response wins, and the discard is LOUD', async () => {
+    const warns: Array<Record<string, unknown> | undefined> = [];
+    const spy = { name: 'log-spy', onLog: (e: { level: string; message: string; data?: Record<string, unknown> }) => {
+      if (e.level === 'warn' && e.message.includes('one slot')) warns.push(e.data);
+    } };
+    const result = await createEventKit(fakeSource())
+      .use(spy)
+      .registerEvents([
+        defineEvent({ name: 'first.reply', detector: always, response: { static: { from: 'first' } } }),
+        defineEvent({ name: 'second.reply', detector: always, response: { static: { from: 'second' } } }),
+      ])
+      .handle('go');
+
+    expect(result.resolved?.output).toEqual({ from: 'first' }); // registration order wins
+    expect(warns).toEqual([{ kept: 'first.reply', discarded: 'second.reply' }]); // never silent
+  });
+
   it('register-time (JS guard): malformed ResponseWire fields are rejected', () => {
     const badStatus = { name: asName('bad.status'), detector: always, response: { static: { a: 1 }, status: '201' } } as unknown as ReturnType<typeof defineEvent>;
     expect(() => createEventKit(fakeSource()).registerEvents([badStatus])).toThrow(/'response.status' must be an integer/);

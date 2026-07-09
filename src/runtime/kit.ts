@@ -721,9 +721,12 @@ class Kit implements EventKit {
     runtime: InvocationRuntime,
   ): Promise<{ events: EventOutcome[]; resolved?: ResolvedOutcome }> {
     const events: EventOutcome[] = [];
-    // The FIRST detected module with a `response` provides the invocation's reply
-    // (ADR-026). Captured here and surfaced on InvocationResult for the platform.
+    // ONE wire reply per invocation: the FIRST detected module with a `response`
+    // provides it (ADR-026). On a request/response source, detectors should PARTITION
+    // the request space (exactly one module detects), so this is normally the unique
+    // match — the fallback below only arbitrates overlapping detectors, and LOUDLY.
     let resolved: ResolvedOutcome | undefined;
+    let resolvedBy: EventName | undefined;
     for (const entry of detected) {
       const { module, event } = entry;
 
@@ -813,7 +816,18 @@ class Kit implements EventKit {
         if (module.responseWire.status !== undefined) moduleResolved.status = module.responseWire.status;
         if (module.responseWire.headers !== undefined) moduleResolved.headers = module.responseWire.headers;
       }
-      if (moduleResolved && !resolved) resolved = moduleResolved; // first resolve wins
+      if (moduleResolved && !resolved) {
+        resolved = moduleResolved; // first detected module with a response wins
+        resolvedBy = event.name;
+      } else if (moduleResolved && resolved) {
+        // A SECOND detected module also produced a reply. The wire has one slot, so it
+        // is discarded — but never silently: overlapping detectors on a request/response
+        // source are a design smell the author must see (§3 no-silent-behavior).
+        invocation.log.warn('Multiple detected modules produced a response; the wire has one slot — first registered wins', {
+          kept: String(resolvedBy),
+          discarded: String(event.name),
+        });
+      }
     }
     return resolved ? { events, resolved } : { events };
   }
