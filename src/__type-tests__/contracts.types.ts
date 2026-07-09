@@ -67,7 +67,7 @@ void defineEvent({ name: 'bad.null', detector, jobs: [null] });
 
 // ── ADR-026 (re-amended): a module does NOT accept a response — it moved to kit.handler ──
 // @ts-expect-error `response` is not a module field — declare kit.handler({ after })
-void defineEvent({ name: 'bad.module.response', detector, jobs: [job(work)], response: { static: { a: 1 } } });
+void defineEvent({ name: 'bad.module.response', detector, jobs: [job(work)], response: { body: { a: 1 } } });
 // @ts-expect-error the removed `resolve` field is rejected too
 void defineEvent({ name: 'bad.module.resolve', detector, jobs: [job(work)], resolve: () => 1 });
 // @ts-expect-error the removed `respond` field is rejected too
@@ -77,7 +77,7 @@ void defineEvent({ name: 'bad.module.respond', detector, jobs: [job(work)], resp
 import { fakeSource } from '../testing/index.js';
 const kitFor = () => createEventKit(fakeSource()).registerEvent(defineEvent({ name: 'ok.k', detector, jobs: [job(work)] }));
 // constant reply, with the web-standard ResponseInit fields as data:
-void kitFor().handler({ after: { static: '<Response/>', status: 201, headers: { 'content-type': 'text/xml' } } });
+void kitFor().handler({ after: { body: '<Response/>', status: 201, headers: { 'content-type': 'text/xml' } } });
 // dynamic reply: fromResults receives the PRESCRIBED typed rollup (InvocationResult)
 void kitFor().handler({
   after: {
@@ -89,15 +89,15 @@ void kitFor().handler({
   },
 });
 // the modes are structurally exclusive:
-// @ts-expect-error `static` and `fromResults` are mutually exclusive on one declaration
-void kitFor().handler({ after: { static: { a: 1 }, fromResults: () => 'x' } });
-// a `static` body is DATA — a Promise is not assignable:
-// @ts-expect-error a Promise is not a ResponseBody — a static reply cannot wait on work
-void kitFor().handler({ after: { static: (async () => ({ ok: true }))() } });
+// @ts-expect-error `body` and `fromResults` are mutually exclusive on one declaration
+void kitFor().handler({ after: { body: { a: 1 }, fromResults: () => 'x' } });
+// a constant `body` is DATA — a Promise is not assignable:
+// @ts-expect-error a Promise is not a ResponseBody — a constant reply cannot wait on work
+void kitFor().handler({ after: { body: (async () => ({ ok: true }))() } });
 
 // ── ADR-026 guard: the reply is INVOCATION-level, not a per-job option ───────
 // @ts-expect-error `after` is not a JobOptions field — it belongs on kit.handler
-void job(work, { after: { static: 'nope' } });
+void job(work, { after: { body: 'nope' } });
 
 // (A module with neither `jobs` nor a `response` is a do-nothing config error — caught at
 // REGISTER time, not by the type, now that both are optional. See runtime tests.)

@@ -265,7 +265,7 @@ describe("crash-policy 'signalRetry' (ADR-038)", () => {
     const handler = createEventKit(signalRetrySource())
       .use(recorder.plugin)
       .registerEvents([mod])
-      .handler({ after: { static: { received: true } } });
+      .handler({ after: { body: { received: true } } });
 
     const result = (await handler({ hello: 'world' })) as Awaited<ReturnType<typeof kitHandle>>;
 

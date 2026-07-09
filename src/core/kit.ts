@@ -14,8 +14,8 @@ import type { KitDescription } from './flow.js';
 export type PluginFactory = (config?: unknown) => EventKitPlugin;
 
 /**
- * A JSON-representable response body for the `static` mode. A `Promise` (or any
- * class instance) is deliberately NOT assignable — a static reply is data, not code,
+ * A JSON-representable response body for the constant `body` mode. A `Promise` (or any
+ * class instance) is deliberately NOT assignable — a constant reply is data, not code,
  * so it provably cannot wait on or depend on the work.
  */
 export type ResponseBody = string | number | boolean | null | { [key: string]: unknown } | unknown[];
@@ -43,7 +43,7 @@ export interface ResponseWire {
  * modules detect and run jobs; the handler declares how the endpoint answers the
  * original HTTP caller once the run settles. Two self-naming modes:
  *
- *  - `{ static: body }` — Computed: from NOTHING; a constant. Data, not code, so it
+ *  - `{ body }` — Computed: from NOTHING; a constant. Data, not code, so it
  *    provably cannot wait on or be changed by the work (job failures stay
  *    Batch/observability's concern).
  *  - `{ fromResults: (result) => body }` — Computed: from the FULL `InvocationResult` —
@@ -63,8 +63,8 @@ export interface ResponseWire {
  *  status — `after` shapes only a normally-completed invocation's reply.
  */
 export type HandlerResponse =
-  | ({ static: ResponseBody; fromResults?: never } & ResponseWire)
-  | ({ fromResults: (result: InvocationResult) => unknown; static?: never } & ResponseWire);
+  | ({ body: ResponseBody; fromResults?: never } & ResponseWire)
+  | ({ fromResults: (result: InvocationResult) => unknown; body?: never } & ResponseWire);
 
 /**
  * A platform-agnostic short-circuit response from a `handler({ before })` pre-check

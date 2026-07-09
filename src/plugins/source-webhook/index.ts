@@ -11,7 +11,7 @@
 // bad signature; the detector decides what an unverified webhook means (§7.1). It also
 // reads the vendor's event-type header into `ctx.eventType` for routing. Most webhooks
 // are fire-and-forget; a status-contract vendor (Stripe) declares the endpoint's reply
-// at the INVOCATION layer — `kit.handler({ after: { static } })` for a constant ack, or
+// at the INVOCATION layer — `kit.handler({ after: { body } })` for a constant ack, or
 // `{ fromResults }` throwing `ClientError(4xx)` — mapped to the HTTP status (ADR-026). Signatures (HMAC) are computed synchronously, so `verify` is sync.
 //
 // Headers (and, where the platform preserves it, the raw body) reach the adapter via

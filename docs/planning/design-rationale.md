@@ -65,8 +65,9 @@ context extension exposing `operation`/`oldRow`/`newRow` + session-derived `role
 ### Fully declarative modules — no handler body, no conditional jobs, no fan-out — ADR-025
 **Why:** conditional job inclusion (`cond && job()`) was the idiom that made a typed jobs array unsafe.
 Rather than defensively tolerate falsy entries, the design **removes the place to write the condition**:
-a module is `defineEvent({ name, detector, prepare?, jobs, resolve? })` with a *static* `jobs` array the
-runtime runs — there is no handler function. A condition now lives in the **detector** (it is a distinct
+a module is `defineEvent({ name, detector, prepare?, jobs })` with a *static* `jobs` array the
+runtime runs — there is no handler function, and the wire reply is declared at the invocation layer
+(not by the module — see the request/response section below). A condition now lives in the **detector** (it is a distinct
 business event) or **inside a job body** (input-driven short-circuit). The branded `JobDefinition`
 backstops the one still-expressible mistake. `prepare(ctx)` runs once and is merged into every job's
 `input`, replacing the legacy "init the sdk once, thread it into each job" pattern. This supersedes the
@@ -130,16 +131,49 @@ the team's existing house style: `switch (ctx.operation)` with named booleans pe
 module relies on — is preserved by the switch, not by a helper. `columnChanged/columnAdded/columnRemoved`
 remain.
 
-### Request/response capability: a module-level `resolve` mapper — ADR-026
+### Request/response capability: the reply is an invocation-layer declaration — `kit.handler({ after })` — ADR-026 (re-amended, ADR-044)
 **Why:** Hasura Actions (and similar RPC-shaped sources) must return a synchronous value, but EventKit
-modules are fire-and-forget job sets. Rather than overload a job's output as the response, a module adds
-a single source-agnostic `resolve(ctx) => output`; `jobs` remain optional side effects that run alongside
-and are **sibling-ignorant** (`resolve` never reads their results). The response contract
-(`resolve` → 2xx; `ClientError(status, …)`/`ActionError(message, code?, …)` → status + `{message,
-extensions}`) **composes onto the generic platforms** via `InvocationResult.resolved` — there is **no
-dedicated `hasuraActionPlatform`**, which would have forced a `contract × transport` matrix. Two error
-classes are kept separate because a status-contract webhook needs an HTTP status (the vendor's retry
-contract) while a GraphQL action needs an error `code` the client reads and never sees a status for.
+modules are fire-and-forget job sets. ADR-026 first placed the response on the *module* as a `resolve(ctx)`
+mapper (later `respond`, ADR-029). That seam was **structurally in the wrong place**, and the re-amendment
+moves it to the **invocation layer**: the reply is declared once at `kit.handler({ after })`, and a module
+that declares `resolve`/`respond`/`response` now **throws at register time**.
+
+The positioning argument: one invocation produces exactly **one** wire reply, but a module is
+**sibling-ignorant** and *any number* of modules may detect on a single payload — so no module can own the
+single reply without arbitrating against its siblings, which the declarative model forbids it from even
+seeing. The reply is therefore a property of the *invocation*, not of a module. And a real reply often
+**composes from the full rollup across every detected event** — a per-module seam structurally couldn't see
+that, because it only ever held its own `ctx`. The invocation layer is the only place with the whole picture.
+
+So `after` is the source-agnostic invocation-layer reply, in one of two **self-naming, mutually-exclusive**
+modes that declare the reply's data-dependency *at the definition site*:
+- `{ body }` — a **constant** reply; data, not code, so the work provably cannot change it. This is
+  the fast ack (e.g. Stripe's 2xx receipt). It is **independent of the run** — job failures stay
+  Batch/observability's concern.
+- `{ fromResults: (result) => body }` — business logic over the **full, typed `InvocationResult`** the
+  runtime builds: every detector's `EventOutcome { name, detected, jobs, error? }` and every job's
+  `JobExecution { jobName, status, output, error, … }`, spanning **all** detected events. Throw
+  `ClientError(status, …)`/`ActionError(message, code?, …)` for the error mapping.
+
+Request/response sources (webhook, `hasuraAction`) do their real work as durable **jobs**; the reply is then
+**composed from those job outputs** via `after: { fromResults }` — there is **no dedicated
+`hasuraActionPlatform`**, which would have forced a `contract × transport` matrix. `after` still surfaces
+through `InvocationResult.resolved` for the platform adapter to map: the `after` reply → 2xx (with optional
+`status`/`headers` = `ResponseWire`, web-standard `ResponseInit` fields as data); a thrown
+`ClientError`/`ActionError` → the error status + `{message, extensions}`. Two error classes stay separate
+because a status-contract webhook needs an HTTP status (the vendor's retry contract) while a GraphQL action
+needs an error `code` the client reads and never sees a status for.
+
+The layer split is also what makes the reply *sequencing-correct*. `after` runs **after the run settles**,
+is **skipped on a framework 500** (the retry contract owns that path), and **never clobbers a pre-dispatch
+client rejection** (a webhook `rejectUnverified` 401). The complementary pre-dispatch gate is
+`handler({ before })`: an auth/HTTP-method check on the **raw platform args before normalize** — so it
+deliberately cannot see the parsed envelope or `signatureVerified` — returning `{ status, body?, headers? }`
+to short-circuit or `void` to proceed. And "202 now, then work" is a **platform** choice
+(`netlifyBackgroundPlatform`), not an `after` mode — under a deferred platform `{ fromResults }` is rejected,
+because its value could never reach the wire. Removed with the re-amendment:
+`ResolveFunction`/`RespondFunction`/`FlowResponseKind` and the per-module `resolve` (ADR-026) / `respond`
+(ADR-029) seams.
 
 ---
 

@@ -117,7 +117,7 @@ hasuraEvent.defineEvent<Row>({   // the source-scoped builder types every inline
 //   kit.handler({
 //     before?,     // pre-dispatch gate (auth / method); returning a value short-circuits
 //     after?,      // the reply declaration:
-//                  //   { static: body }              a constant; the work can't change it
+//                  //   { body }              a constant; the work can't change it
 //                  //   { fromResults: (result) => output }  business logic over the typed
 //                  //       rollup (InvocationResult: every EventOutcome + JobExecution)
 //                  //   + optional status/headers (web-standard ResponseInit, as data)
@@ -214,7 +214,7 @@ kit** (the positional arg to `createEventKit`).
   (before `normalize`) and annotates `signatureVerified`; the detector decides. Set
   `rejectUnverified: true` (ADR-030) to instead reject a bad signature with 401 before any
   module runs. A status-contract vendor (Stripe) declares the reply at the invocation
-  layer — `kit.handler({ after: { static } })` for a constant receipt, or `{ fromResults }`
+  layer — `kit.handler({ after: { body } })` for a constant receipt, or `{ fromResults }`
   with a thrown `ClientError(status, ...)`.
 - **`hasuraAction`**. A **request/response** source for Hasura Actions
   (`sourceType:'action'`, gated by Hasura's permission model). Context: `actionName`,

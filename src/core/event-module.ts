@@ -13,7 +13,7 @@
 //
 // A module does NOT declare an HTTP reply (ADR-026, re-amended): one invocation has
 // one wire reply and it belongs to the INVOCATION layer — `kit.handler({ after })`
-// declares it (a constant `{ static }` body, or `{ fromResults }` composing from the
+// declares it (a constant `{ body }`, or `{ fromResults }` composing from the
 // full InvocationResult across every detected event). Modules own detection + jobs;
 // with no `respond` declared the platform returns its standard ack once jobs finish.
 

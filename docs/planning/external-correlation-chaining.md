@@ -254,7 +254,7 @@ exactly like `sink`/`store` (ADR-024).
 The same seam covers actions, in both directions:
 
 - **Action as chain *root* that calls a vendor:** identical to §3/§4 — the action's
-  `resolve`/jobs stamp `ctx.trackingToken` onto the vendor call (A) or persist the mapping
+  jobs (and detectors/prepare as applicable) stamp `ctx.trackingToken` onto the vendor call (A) or persist the mapping
   (B); the eventual webhook reconnects.
 - **Action *joining* an existing chain:** a client that already holds a correlation id
   passes it as `x-correlation-id` (or `x-request-id`). loop-guard's `extractFromSession`

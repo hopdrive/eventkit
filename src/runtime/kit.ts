@@ -67,22 +67,22 @@ function toResolvedError(err: unknown): ResolvedError {
 }
 
 /**
- * Validate a handler-level `respond` declaration for untyped JS callers (the TS type
- * already enforces this): exactly one of { static } / { fromResults }, a DATA-only
- * static body, and well-formed ResponseWire fields.
+ * Validate a handler-level `after` declaration for untyped JS callers (the TS type
+ * already enforces this): exactly one of { body } / { fromResults }, a DATA-only
+ * constant body, and well-formed ResponseWire fields.
  */
 function validateHandlerResponse(after: HandlerResponse): void {
-  const r = after as { static?: unknown; fromResults?: unknown; status?: unknown; headers?: unknown };
-  const modes = (['static', 'fromResults'] as const).filter(k => r?.[k] !== undefined);
+  const r = after as { body?: unknown; fromResults?: unknown; status?: unknown; headers?: unknown };
+  const modes = (['body', 'fromResults'] as const).filter(k => r?.[k] !== undefined);
   if (typeof after !== 'object' || after === null || modes.length !== 1) {
-    throw new Error(`handler({ after }): declare exactly one of { static }, { fromResults }.`);
+    throw new Error(`handler({ after }): declare exactly one of { body }, { fromResults }.`);
   }
-  if (modes[0] === 'static') {
-    const body = r.static;
-    // A static body is DATA — a function or thenable means the author wanted a
+  if (modes[0] === 'body') {
+    const body = r.body;
+    // A constant body is DATA — a function or thenable means the author wanted a
     // computed reply; that contract is { fromResults }.
     if (typeof body === 'function' || (body !== null && typeof (body as { then?: unknown })?.then === 'function')) {
-      throw new Error(`handler({ after }): 'static' is a CONSTANT body (data, not code) — use { fromResults: fn } for a computed reply.`);
+      throw new Error(`handler({ after }): 'body' is a CONSTANT reply (data, not code) — use { fromResults: fn } for a computed reply.`);
     }
   } else if (typeof r.fromResults !== 'function') {
     throw new Error(`handler({ after }): 'fromResults' must be a function.`);
@@ -183,7 +183,7 @@ class Kit implements EventKit {
     if (legacy.resolve !== undefined || legacy.respond !== undefined || legacy.response !== undefined) {
       throw new Error(
         `Event '${module.name}': a module does not declare an HTTP reply — declare it at the invocation layer: ` +
-          `kit.handler({ after: { static: body } }) or kit.handler({ after: { fromResults: (result) => body } }).`,
+          `kit.handler({ after: { body } }) or kit.handler({ after: { fromResults: (result) => body } }).`,
       );
     }
     // ADR-025: a module declares `jobs` — a module with none does nothing (a config error).
@@ -301,7 +301,7 @@ class Kit implements EventKit {
       if (opts?.after && 'fromResults' in opts.after && this.pm.platform?.deferredResponse) {
         throw new Error(
           `handler({ after: { fromResults } }) is incompatible with platform '${this.pm.platform.name}', ` +
-            `which responds before the run finishes. Use { static } (or no after), or a non-deferred platform.`,
+            `which responds before the run finishes. Use { body } (or no after), or a non-deferred platform.`,
         );
       }
       if (opts?.before) {
@@ -327,7 +327,7 @@ class Kit implements EventKit {
 
   /**
    * Produce the invocation's reply from the handler-level `after` declaration:
-   * `{ static }` is the constant body; `{ fromResults }` runs over the full
+   * `{ body }` is the constant reply; `{ fromResults }` runs over the full
    * InvocationResult — a throw (ClientError/ActionError) maps to the wire error,
    * reported through onError at phase 'handle'. Declared `ResponseWire` fields
    * attach to a successfully produced reply only.
@@ -342,7 +342,7 @@ class Kit implements EventKit {
         return { hasResolved: true, error: toResolvedError(err) };
       }
     } else {
-      outcome = { hasResolved: true, output: after.static };
+      outcome = { hasResolved: true, output: after.body };
     }
     if (after.status !== undefined) outcome.status = after.status;
     if (after.headers !== undefined) outcome.headers = after.headers;

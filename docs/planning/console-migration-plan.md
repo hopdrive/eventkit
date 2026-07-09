@@ -51,7 +51,7 @@ Vite + React 18 SPA (`packages/console` in the legacy repo): Apollo Client → H
 - **U3 — no server-side facets**: status/function/operation/source-system filters exist only as client-side filters over the 1,000-row window.
 - **U4 — no deep links** for search/filters (only `/flow?invocationId=`); sharing an investigation means screenshots.
 - **U5 — undetected events** (245 detectors × every invocation) dominate the data but the UI only has a hide/show toggle; no per-detector stats ("this detector never fires — dead code?").
-- **U6 — no eventkit-vocabulary rendering**: `source_system` (`'hasura'`, `'webhook:stripe'`), cron/action/webhook sources, `resolve`/`respond` outcomes, and `skipped`/`cancelled` job statuses arrive with the migration and need first-class display.
+- **U6 — no eventkit-vocabulary rendering**: `source_system` (`'hasura'`, `'webhook:stripe'`), cron/action/webhook sources, the invocation's produced reply (`InvocationResult.resolved` from `kit.handler({ after })`), and `skipped`/`cancelled` job statuses arrive with the migration and need first-class display.
 - **U7 — job logs**: neither the legacy plugin nor eventkit's graphql-sink persists per-job logs to the DB (`job_logs` has no writer; JOB_COLUMNS has no logs field). The console's only log source is Grafana Loki. Decision D-CON-4 below.
 
 ## 3. Target architecture in this repo

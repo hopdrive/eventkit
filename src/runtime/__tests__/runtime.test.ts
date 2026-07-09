@@ -306,7 +306,7 @@ describe('plugin lifecycle + capability validation', () => {
 });
 
 describe("ADR-026 (re-amended): the invocation reply is declared at kit.handler({ after })", () => {
-  it('{ static }: the constant body becomes the reply; job failures cannot change it', async () => {
+  it('{ body }: the constant body becomes the reply; job failures cannot change it', async () => {
     const handler = createEventKit(fakeSource())
       .registerEvents([
         defineEvent({
@@ -315,7 +315,7 @@ describe("ADR-026 (re-amended): the invocation reply is declared at kit.handler(
           jobs: [job(() => { throw new Error('job blew up'); }, { name: 'boom' })],
         }),
       ])
-      .handler({ after: { static: { received: true } } });
+      .handler({ after: { body: { received: true } } });
     const result = (await handler('go')) as Awaited<ReturnType<ReturnType<typeof createEventKit>['handle']>>;
 
     expect(result.resolved).toMatchObject({ hasResolved: true, output: { received: true } });
@@ -364,7 +364,7 @@ describe("ADR-026 (re-amended): the invocation reply is declared at kit.handler(
   it('ResponseWire: declared status/headers land on the PRODUCED reply only', async () => {
     const ok = (await createEventKit(fakeSource())
       .registerEvents([defineEvent({ name: 'twiml', detector: always, jobs: [job(() => 1)] })])
-      .handler({ after: { static: '<Response/>', status: 201, headers: { 'content-type': 'text/xml' } } })('go')) as Awaited<ReturnType<ReturnType<typeof createEventKit>['handle']>>;
+      .handler({ after: { body: '<Response/>', status: 201, headers: { 'content-type': 'text/xml' } } })('go')) as Awaited<ReturnType<ReturnType<typeof createEventKit>['handle']>>;
     expect(ok.resolved).toMatchObject({ output: '<Response/>', status: 201, headers: { 'content-type': 'text/xml' } });
 
     // On a throw, the error mapping owns the wire — declared wire fields are NOT attached.
@@ -384,7 +384,7 @@ describe("ADR-026 (re-amended): the invocation reply is declared at kit.handler(
     } as EventKitPlugin;
     const result = (await createEventKit(brokenSource)
       .registerEvents([defineEvent({ name: 'e', detector: always, jobs: [job(() => 1)] })])
-      .handler({ after: { static: { received: true } } })('go')) as Awaited<ReturnType<ReturnType<typeof createEventKit>['handle']>>;
+      .handler({ after: { body: { received: true } } })('go')) as Awaited<ReturnType<ReturnType<typeof createEventKit>['handle']>>;
 
     expect(result.error?.message).toContain('normalize blew up'); // still the retryable framework error
     expect(result.resolved).toBeUndefined(); // the ack did NOT mask it
@@ -393,12 +393,12 @@ describe("ADR-026 (re-amended): the invocation reply is declared at kit.handler(
   it('handler creation fails fast on a malformed after declaration', () => {
     const kit = () => createEventKit(fakeSource()).registerEvents([defineEvent({ name: 'e', detector: always, jobs: [job(() => 1)] })]);
     expect(() => kit().handler({ after: {} as never })).toThrow(/exactly one of/);
-    expect(() => kit().handler({ after: { static: { a: 1 }, fromResults: () => 1 } as never })).toThrow(/exactly one of/);
-    expect(() => kit().handler({ after: { static: (() => 1) as never } })).toThrow(/CONSTANT body/);
-    expect(() => kit().handler({ after: { static: Promise.resolve(1) as never } })).toThrow(/CONSTANT body/);
+    expect(() => kit().handler({ after: { body: { a: 1 }, fromResults: () => 1 } as never })).toThrow(/exactly one of/);
+    expect(() => kit().handler({ after: { body: (() => 1) as never } })).toThrow(/CONSTANT reply/);
+    expect(() => kit().handler({ after: { body: Promise.resolve(1) as never } })).toThrow(/CONSTANT reply/);
     expect(() => kit().handler({ after: { fromResults: 'nope' as never } })).toThrow(/must be a function/);
-    expect(() => kit().handler({ after: { static: { a: 1 }, status: '201' as never } })).toThrow(/integer HTTP status/);
-    expect(() => kit().handler({ after: { static: { a: 1 }, headers: ['x'] as never } })).toThrow(/record of header strings/);
+    expect(() => kit().handler({ after: { body: { a: 1 }, status: '201' as never } })).toThrow(/integer HTTP status/);
+    expect(() => kit().handler({ after: { body: { a: 1 }, headers: ['x'] as never } })).toThrow(/record of header strings/);
   });
 
   it('register-time: a module carrying the removed resolve/respond/response fields points at kit.handler({ after })', () => {

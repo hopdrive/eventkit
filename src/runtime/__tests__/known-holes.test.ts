@@ -111,12 +111,12 @@ describe('rejectUnverified: NO invocation record + a framework warn', () => {
 });
 
 describe('handler({ after }) under a deferredResponse platform', () => {
-  it('after { static } is permitted under netlifyBackgroundPlatform; { fromResults } is rejected', async () => {
+  it('after { body } is permitted under netlifyBackgroundPlatform; { fromResults } is rejected', async () => {
     const mod = () => defineEvent({ name: 'bg.mod', detector: always, jobs: [job(() => 1)] });
-    // { static } = run-independent constant reply → fine on a background/202 platform
+    // { body } = run-independent constant reply → fine on a background/202 platform
     // (the platform ignores the body anyway; nothing waits on the run).
     const okHandler = createEventKit(fakeSource()).use(netlifyBackgroundPlatform).registerEvents([mod()])
-      .handler({ after: { static: { received: true } } });
+      .handler({ after: { body: { received: true } } });
     await expect(okHandler('go')).resolves.toBeDefined();
 
     // { fromResults } composes from the settled run → its value could never reach a

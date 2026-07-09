@@ -96,9 +96,10 @@ Given a detected event `E` and a job definition `J` (identity = the module's reg
 5. Jobs named `'anonymous'` (unnamed bare functions) are matchable only by that literal
    string; the Console warns when a selection targets or omits anonymous jobs (§10.6).
 
-Selection affects **job execution only**. Detectors, `prepare`, `resolve`, `respond`, and
-all plugins run exactly as normal. `respond` receives the executions including skipped ones;
-its `ok` is unchanged in meaning (skipped counts as ok — existing predicate).
+Selection affects **job execution only**. Detectors, `prepare`, the `after` reply fn, and
+all plugins run exactly as normal. An `after: { fromResults }` fn receives the executions
+including skipped ones on the `InvocationResult` rollup; `result.ok` is unchanged in meaning
+(skipped counts as ok — existing predicate).
 
 ### 3.4 Error responses
 
@@ -247,8 +248,8 @@ Normative semantics:
 - Lifecycle log line: `emitRunEnd` already renders `⊘` for `'skipped'` (`run.ts:58`). No
   change.
 
-`InvocationResult.ok` and `respond`'s `ok` need no change (skipped already counts ok —
-`kit.ts:358`, `:636`).
+`InvocationResult.ok` and the `after: { fromResults }` reply's `result.ok` need no change
+(skipped already counts ok — `kit.ts:358`, `:636`).
 
 ---
 
@@ -645,7 +646,7 @@ Before enabling Submit, the modal checks and, on failure, disables with a reason
 - `runOne` replay-skip: hooks emitted in order, status `'skipped'`, reason + replayOf on
   `exec.metadata`, job fn NOT called, retries not engaged, `ok` true.
 - Filter + suppress-dispatch: suppression wins (no job rows at all).
-- `respond` receives skipped executions; `ok` semantics unchanged.
+- an `after: { fromResults }` fn receives skipped executions; `result.ok` semantics unchanged.
 - `emitRunEnd` renders `⊘`.
 
 **Plugin:**
