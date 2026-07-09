@@ -305,226 +305,112 @@ describe('plugin lifecycle + capability validation', () => {
   });
 });
 
-describe('ADR-026: resolve (request/response) is source-agnostic; jobs run alongside', () => {
-  it("surfaces resolve's return on result.resolved while a fire-and-forget job runs too", async () => {
-    let jobRan = false;
-    const mod = defineEvent({
-      name: 'rpc.compute',
-      detector: always,
-      prepare: () => ({ base: 10 }),
-      response: { fromRequest: ctx => ({ total: (ctx.prepared as { base: number }).base + 5 }) },
-      jobs: [job(() => void (jobRan = true), { name: 'sideEffect' })],
-    });
-    const result = await createEventKit(fakeSource()).registerEvents([mod]).handle('go');
-
-    expect(result.resolved?.hasResolved).toBe(true);
-    expect(result.resolved?.output).toEqual({ total: 15 }); // resolve saw prepare output
-    expect(jobRan).toBe(true);
-    expect(result.events[0]!.jobs[0]!.status).toBe('completed');
-    expect(result.ok).toBe(true);
-  });
-
-  it('a fire-and-forget module (no resolve) leaves result.resolved undefined', async () => {
-    const mod = defineEvent({ name: 'plain', detector: always, jobs: [job(() => 'ok')] });
-    const result = await createEventKit(fakeSource()).registerEvents([mod]).handle('go');
-    expect(result.resolved).toBeUndefined();
-  });
-
-  it('a resolve throw → result.resolved.error; jobs still ran; ok stays job-status-only', async () => {
-    let jobRan = false;
-    const mod = defineEvent({
-      name: 'rpc.fails',
-      detector: always,
-      response: { fromRequest: () => { throw new Error('compute failed'); } },
-      jobs: [job(() => void (jobRan = true))],
-    });
-    const result = await createEventKit(fakeSource()).registerEvents([mod]).handle('go');
-
-    expect(result.resolved?.error?.message).toBe('compute failed');
-    expect(result.resolved?.output).toBeUndefined();
-    expect(jobRan).toBe(true);
-    expect(result.ok).toBe(true); // resolve error maps to the wire, not to a job-failure retry
-  });
-
-  it('carries ClientError.status and ActionError.code onto resolved.error (duck-typed)', async () => {
-    const ce = await createEventKit(fakeSource())
-      .registerEvents([defineEvent({ name: 'pay', detector: always, response: { fromRequest: () => { throw new ClientError(402, 'payment required'); } } })])
-      .handle('go');
-    expect(ce.resolved?.error).toMatchObject({ message: 'payment required', status: 402 });
-
-    const ae = await createEventKit(fakeSource())
-      .registerEvents([defineEvent({ name: 'act', detector: always, response: { fromRequest: () => { throw new ActionError('nope', 'BAD_INPUT', { field: 'email' }); } } })])
-      .handle('go');
-    expect(ae.resolved?.error).toMatchObject({ message: 'nope', code: 'BAD_INPUT', extensions: { field: 'email' } });
-  });
-
-  it('register-time: a module with neither jobs nor resolve throws', () => {
-    const bad = { name: asName('does.nothing'), detector: always } as unknown as ReturnType<typeof defineEvent>;
-    expect(() => createEventKit(fakeSource()).registerEvents([bad])).toThrow(/must declare 'jobs' and\/or a 'response'/);
-  });
-
-  it("response { static }: the constant body becomes resolved.output; the work can't change it", async () => {
-    const result = await createEventKit(fakeSource())
+describe("ADR-026 (re-amended): the invocation reply is declared at kit.handler({ after })", () => {
+  it('{ static }: the constant body becomes the reply; job failures cannot change it', async () => {
+    const handler = createEventKit(fakeSource())
       .registerEvents([
         defineEvent({
           name: 'fixed.ack',
           detector: always,
-          response: { static: { received: true } },
           jobs: [job(() => { throw new Error('job blew up'); }, { name: 'boom' })],
         }),
       ])
-      .handle('go');
+      .handler({ after: { static: { received: true } } });
+    const result = (await handler('go')) as Awaited<ReturnType<ReturnType<typeof createEventKit>['handle']>>;
 
-    expect(result.resolved?.hasResolved).toBe(true);
-    expect(result.resolved?.output).toEqual({ received: true }); // fixed — the failed job didn't touch it
+    expect(result.resolved).toMatchObject({ hasResolved: true, output: { received: true } });
     expect(result.resolved?.error).toBeUndefined();
     expect(result.ok).toBe(false); // the job failure still shows in job status (Batch's concern)
   });
 
-  it('register-time (JS guard): a function/thenable in response.static is rejected — that contract is fromRequest', () => {
-    const asFn = { name: asName('bad.static.fn'), detector: always, response: { static: () => ({ a: 1 }) } } as unknown as ReturnType<typeof defineEvent>;
-    expect(() => createEventKit(fakeSource()).registerEvents([asFn])).toThrow(/CONSTANT body/);
-    const asPromise = { name: asName('bad.static.thenable'), detector: always, response: { static: Promise.resolve({ a: 1 }) } } as unknown as ReturnType<typeof defineEvent>;
-    expect(() => createEventKit(fakeSource()).registerEvents([asPromise])).toThrow(/CONSTANT body/);
+  it('{ fromResults }: receives the FULL typed rollup — every detected event and all job executions', async () => {
+    const handler = createEventKit(fakeSource())
+      .registerEvents([
+        defineEvent({ name: 'payment.received', detector: always, jobs: [job(() => ({ charged: 42 }), { name: 'charge' })] }),
+        defineEvent({ name: 'payment.audit.logged', detector: always, jobs: [job(() => 'audited', { name: 'audit' })] }),
+      ])
+      .handler({
+        after: {
+          fromResults: result => ({
+            ok: result.ok,
+            events: result.events.map(e => e.name),
+            charged: (result.events[0]!.jobs[0]!.output as { charged: number }).charged,
+          }),
+        },
+      });
+    const result = (await handler('go')) as Awaited<ReturnType<ReturnType<typeof createEventKit>['handle']>>;
+
+    expect(result.resolved?.output).toEqual({
+      ok: true,
+      events: ['payment.received', 'payment.audit.logged'], // cross-event composition
+      charged: 42,
+    });
+  });
+
+  it('{ fromResults } throw: ClientError/ActionError map to the wire error (duck-typed)', async () => {
+    const make = (afterFn: () => never) =>
+      createEventKit(fakeSource())
+        .registerEvents([defineEvent({ name: 'e', detector: always, jobs: [job(() => 1)] })])
+        .handler({ after: { fromResults: afterFn } });
+
+    const ce = (await make(() => { throw new ClientError(402, 'payment required'); })('go')) as Awaited<ReturnType<ReturnType<typeof createEventKit>['handle']>>;
+    expect(ce.resolved?.error).toMatchObject({ message: 'payment required', status: 402 });
+
+    const ae = (await make(() => { throw new ActionError('nope', 'BAD_INPUT', { field: 'email' }); })('go')) as Awaited<ReturnType<ReturnType<typeof createEventKit>['handle']>>;
+    expect(ae.resolved?.error).toMatchObject({ message: 'nope', code: 'BAD_INPUT', extensions: { field: 'email' } });
+    expect(ae.ok).toBe(true); // an after error maps to the wire, never to a job-failure retry
   });
 
   it('ResponseWire: declared status/headers land on the PRODUCED reply only', async () => {
-    const ok = await createEventKit(fakeSource())
-      .registerEvents([
-        defineEvent({
-          name: 'twiml.reply',
-          detector: always,
-          response: { static: '<Response/>', status: 201, headers: { 'content-type': 'text/xml' } },
-        }),
-      ])
-      .handle('go');
-    expect(ok.resolved).toMatchObject({ hasResolved: true, output: '<Response/>', status: 201, headers: { 'content-type': 'text/xml' } });
+    const ok = (await createEventKit(fakeSource())
+      .registerEvents([defineEvent({ name: 'twiml', detector: always, jobs: [job(() => 1)] })])
+      .handler({ after: { static: '<Response/>', status: 201, headers: { 'content-type': 'text/xml' } } })('go')) as Awaited<ReturnType<ReturnType<typeof createEventKit>['handle']>>;
+    expect(ok.resolved).toMatchObject({ output: '<Response/>', status: 201, headers: { 'content-type': 'text/xml' } });
 
     // On a throw, the error mapping owns the wire — declared wire fields are NOT attached.
-    const err = await createEventKit(fakeSource())
-      .registerEvents([
-        defineEvent({
-          name: 'wire.error',
-          detector: always,
-          response: { fromRequest: () => { throw new ClientError(422, 'nope'); }, status: 201, headers: { 'x-a': '1' } },
-        }),
-      ])
-      .handle('go');
+    const err = (await createEventKit(fakeSource())
+      .registerEvents([defineEvent({ name: 'e', detector: always, jobs: [job(() => 1)] })])
+      .handler({ after: { fromResults: () => { throw new ClientError(422, 'nope'); }, status: 201, headers: { 'x-a': '1' } } })('go')) as Awaited<ReturnType<ReturnType<typeof createEventKit>['handle']>>;
     expect(err.resolved?.error).toMatchObject({ status: 422 });
     expect(err.resolved?.status).toBeUndefined();
     expect(err.resolved?.headers).toBeUndefined();
   });
 
-  it('co-detection is normal: a fire-and-forget module rides the same request as the response declarer — no warning', async () => {
-    const warns: string[] = [];
-    const spy = { name: 'log-spy', onLog: (e: { level: string; message: string }) => {
-      if (e.level === 'warn') warns.push(e.message);
-    } };
-    let auditRan = false;
-    const result = await createEventKit(fakeSource())
-      .use(spy)
-      .registerEvents([
-        defineEvent({ name: 'payment.received', detector: always, response: { static: { received: true } } }),
-        // a sibling that detects on the SAME request but declares no response — the normal pattern
-        defineEvent({ name: 'payment.audit.logged', detector: always, jobs: [() => void (auditRan = true)] }),
-      ])
-      .handle('go');
+  it('after is SKIPPED on a framework error — the 500 retry contract is load-bearing', async () => {
+    const brokenSource: EventKitPlugin = {
+      name: 'broken',
+      provides: ['source'],
+      normalize: () => { throw new Error('normalize blew up'); },
+    } as EventKitPlugin;
+    const result = (await createEventKit(brokenSource)
+      .registerEvents([defineEvent({ name: 'e', detector: always, jobs: [job(() => 1)] })])
+      .handler({ after: { static: { received: true } } })('go')) as Awaited<ReturnType<ReturnType<typeof createEventKit>['handle']>>;
 
-    expect(result.events.map(e => e.name)).toEqual(['payment.received', 'payment.audit.logged']); // both detected
-    expect(result.resolved?.output).toEqual({ received: true }); // the declaring module owns the reply
-    expect(auditRan).toBe(true); // the fire-and-forget sibling did its work
-    expect(warns).toEqual([]); // nothing to warn about — this is the intended shape
+    expect(result.error?.message).toContain('normalize blew up'); // still the retryable framework error
+    expect(result.resolved).toBeUndefined(); // the ack did NOT mask it
   });
 
-  it('one wire reply per invocation: the FIRST detected module with a response wins, and the discard is LOUD', async () => {
-    const warns: Array<Record<string, unknown> | undefined> = [];
-    const spy = { name: 'log-spy', onLog: (e: { level: string; message: string; data?: Record<string, unknown> }) => {
-      if (e.level === 'warn' && e.message.includes('one slot')) warns.push(e.data);
-    } };
-    const result = await createEventKit(fakeSource())
-      .use(spy)
-      .registerEvents([
-        defineEvent({ name: 'first.reply', detector: always, response: { static: { from: 'first' } } }),
-        defineEvent({ name: 'second.reply', detector: always, response: { static: { from: 'second' } } }),
-      ])
-      .handle('go');
-
-    expect(result.resolved?.output).toEqual({ from: 'first' }); // registration order wins
-    expect(warns).toEqual([{ kept: 'first.reply', discarded: 'second.reply' }]); // never silent
+  it('handler creation fails fast on a malformed after declaration', () => {
+    const kit = () => createEventKit(fakeSource()).registerEvents([defineEvent({ name: 'e', detector: always, jobs: [job(() => 1)] })]);
+    expect(() => kit().handler({ after: {} as never })).toThrow(/exactly one of/);
+    expect(() => kit().handler({ after: { static: { a: 1 }, fromResults: () => 1 } as never })).toThrow(/exactly one of/);
+    expect(() => kit().handler({ after: { static: (() => 1) as never } })).toThrow(/CONSTANT body/);
+    expect(() => kit().handler({ after: { static: Promise.resolve(1) as never } })).toThrow(/CONSTANT body/);
+    expect(() => kit().handler({ after: { fromResults: 'nope' as never } })).toThrow(/must be a function/);
+    expect(() => kit().handler({ after: { static: { a: 1 }, status: '201' as never } })).toThrow(/integer HTTP status/);
+    expect(() => kit().handler({ after: { static: { a: 1 }, headers: ['x'] as never } })).toThrow(/record of header strings/);
   });
 
-  it('register-time (JS guard): malformed ResponseWire fields are rejected', () => {
-    const badStatus = { name: asName('bad.status'), detector: always, response: { static: { a: 1 }, status: '201' } } as unknown as ReturnType<typeof defineEvent>;
-    expect(() => createEventKit(fakeSource()).registerEvents([badStatus])).toThrow(/'response.status' must be an integer/);
-    const badHeaders = { name: asName('bad.headers'), detector: always, response: { static: { a: 1 }, headers: ['x'] } } as unknown as ReturnType<typeof defineEvent>;
-    expect(() => createEventKit(fakeSource()).registerEvents([badHeaders])).toThrow(/'response.headers' must be a record/);
+  it('register-time: a module carrying the removed resolve/respond/response fields points at kit.handler({ after })', () => {
+    for (const field of ['resolve', 'respond', 'response'] as const) {
+      const legacy = { name: asName('old.' + field), detector: always, jobs: [job(() => 1)], [field]: () => 1 } as unknown as ReturnType<typeof defineEvent>;
+      expect(() => createEventKit(fakeSource()).registerEvents([legacy])).toThrow(/declare it at the invocation layer/);
+    }
   });
 
-  it('register-time (JS guard): the removed resolve/respond fields point at the migration', () => {
-    const legacy = { name: asName('old.style'), detector: always, resolve: () => 1 } as unknown as ReturnType<typeof defineEvent>;
-    expect(() => createEventKit(fakeSource()).registerEvents([legacy])).toThrow(/replaced by the declarative 'response'/);
-  });
-});
-
-describe('ADR-026 amendment: respond (result-driven response) runs after jobs and reads results', () => {
-  it('sequences respond AFTER the jobs settle and hands it their executions + ok', async () => {
-    const order: string[] = [];
-    const mod = defineEvent({
-      name: 'rpc.afterjobs',
-      detector: always,
-      jobs: [
-        job(() => { order.push('a'); return 2; }, { name: 'a' }),
-        job(() => { order.push('b'); return 3; }, { name: 'b' }),
-      ],
-      response: { fromJobs: (_ctx, { jobs, ok }) => {
-        order.push('respond');
-        const sum = jobs.reduce((n, j) => n + ((j.output as number) ?? 0), 0);
-        return { ok, sum, ran: jobs.length };
-      } },
-    });
-    const result = await createEventKit(fakeSource()).registerEvents([mod]).handle('go');
-
-    expect(order).toEqual(['a', 'b', 'respond']); // respond runs last, after both jobs
-    expect(result.resolved?.hasResolved).toBe(true);
-    expect(result.resolved?.output).toEqual({ ok: true, sum: 5, ran: 2 }); // composed from job outputs
-    expect(result.ok).toBe(true);
-  });
-
-  it('respond sees a failed job (ok=false) and can map it to an error response', async () => {
-    const mod = defineEvent({
-      name: 'rpc.partialfail',
-      detector: always,
-      jobs: [
-        job(() => 'ok', { name: 'good' }),
-        job(() => { throw new Error('boom'); }, { name: 'bad' }),
-      ],
-      response: { fromJobs: (_ctx, { jobs, ok }) => {
-        if (!ok) throw new ClientError(502, `failed: ${jobs.filter(j => j.status !== 'completed').map(j => j.jobName).join(',')}`);
-        return { ok: true };
-      } },
-    });
-    const result = await createEventKit(fakeSource()).registerEvents([mod]).handle('go');
-
-    expect(result.resolved?.error).toMatchObject({ status: 502 });
-    expect(result.resolved?.error?.message).toContain('bad');
-    expect(result.ok).toBe(false); // a job genuinely failed (job-status-only)
-  });
-
-  it('register-time: declaring both resolve and respond throws (one response timing)', () => {
-    // two modes in one declaration — rejected at register time (and a compile error in TS)
-    const bad = defineEvent({ name: 'both', detector: always, jobs: [job(() => 1)], response: { static: { a: 1 }, fromJobs: () => 2 } as never });
-    expect(() => createEventKit(fakeSource()).registerEvents([bad])).toThrow(/exactly one of/);
-  });
-
-  it('register-time: respond without jobs throws (it reads job results)', () => {
-    const bad = defineEvent({ name: 'norjobs', detector: always, response: { fromJobs: () => 1 } });
-    expect(() => createEventKit(fakeSource()).registerEvents([bad])).toThrow(/fromJobs } requires at least one job/);
-  });
-
-  it('validate(): respond is rejected under a deferredResponse (background/202) platform', () => {
-    const mod = defineEvent({ name: 'bg', detector: always, jobs: [job(() => 1)], response: { fromJobs: () => 1 } });
-    const kit = createEventKit(fakeSource()).use(netlifyBackgroundPlatform).registerEvents([mod]);
-    expect(() => kit.validate()).toThrow(/incompatible with platform/);
+  it('register-time: a module with no jobs throws (a module does nothing without them)', () => {
+    const bad = { name: asName('does.nothing'), detector: always } as unknown as ReturnType<typeof defineEvent>;
+    expect(() => createEventKit(fakeSource()).registerEvents([bad])).toThrow(/must declare 'jobs'/);
   });
 });
 

@@ -10,9 +10,9 @@
 // envelope and surfaces the result as `ctx.signatureVerified` — it NEVER throws on a
 // bad signature; the detector decides what an unverified webhook means (§7.1). It also
 // reads the vendor's event-type header into `ctx.eventType` for routing. Most webhooks
-// are fire-and-forget; a status-contract vendor (Stripe) declares a `response` —
-// `{ json }` for a fixed ack, `{ fromRequest }` computing/throwing `ClientError(4xx)`
-// — and the platform adapter maps it to the HTTP status (ADR-026). Signatures (HMAC) are computed synchronously, so `verify` is sync.
+// are fire-and-forget; a status-contract vendor (Stripe) declares the endpoint's reply
+// at the INVOCATION layer — `kit.handler({ after: { static } })` for a constant ack, or
+// `{ fromResults }` throwing `ClientError(4xx)` — mapped to the HTTP status (ADR-026). Signatures (HMAC) are computed synchronously, so `verify` is sync.
 //
 // Headers (and, where the platform preserves it, the raw body) reach the adapter via
 // `request.meta` — the HTTP platform adapters surface them there, source-agnostically.

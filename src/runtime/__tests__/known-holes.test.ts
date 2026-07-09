@@ -110,17 +110,20 @@ describe('rejectUnverified: NO invocation record + a framework warn', () => {
   });
 });
 
-describe('resolve is permitted under a deferredResponse platform (respond is not)', () => {
-  it('a resolve module validates + runs under netlifyBackgroundPlatform; a respond module is rejected at validate()', () => {
-    // { static } = job-independent constant reply → fine on a background/202 platform.
-    const okMod = defineEvent({ name: 'bg.ok', detector: always, jobs: [job(() => 1)], response: { static: { received: true } } });
-    const okKit = createEventKit(fakeSource()).use(netlifyBackgroundPlatform).registerEvents([okMod]);
-    expect(() => okKit.validate()).not.toThrow();
+describe('handler({ after }) under a deferredResponse platform', () => {
+  it('after { static } is permitted under netlifyBackgroundPlatform; { fromResults } is rejected', async () => {
+    const mod = () => defineEvent({ name: 'bg.mod', detector: always, jobs: [job(() => 1)] });
+    // { static } = run-independent constant reply → fine on a background/202 platform
+    // (the platform ignores the body anyway; nothing waits on the run).
+    const okHandler = createEventKit(fakeSource()).use(netlifyBackgroundPlatform).registerEvents([mod()])
+      .handler({ after: { static: { received: true } } });
+    await expect(okHandler('go')).resolves.toBeDefined();
 
-    // { fromJobs } = result-driven → rejected, the response can't reflect jobs that haven't run.
-    const badMod = defineEvent({ name: 'bg.bad', detector: always, jobs: [job(() => 1)], response: { fromJobs: () => 1 } });
-    const badKit = createEventKit(fakeSource()).use(netlifyBackgroundPlatform).registerEvents([badMod]);
-    expect(() => badKit.validate()).toThrow(/incompatible with platform/);
+    // { fromResults } composes from the settled run → its value could never reach a
+    // reply that was already sent. Rejected loudly on the deferred platform.
+    const badHandler = createEventKit(fakeSource()).use(netlifyBackgroundPlatform).registerEvents([mod()])
+      .handler({ after: { fromResults: () => 1 } });
+    await expect(badHandler('go')).rejects.toThrow(/incompatible with platform/);
   });
 });
 

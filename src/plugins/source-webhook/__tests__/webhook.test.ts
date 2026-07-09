@@ -114,21 +114,30 @@ describe('webhook source', () => {
     expect(fired).toEqual(['sms.delivered']);
   });
 
-  it('status-contract vendor: resolve ack → 200; a thrown ClientError → that status (paired with netlifyV2Platform)', async () => {
+  it('status-contract vendor: after {fromResults} ack → 200; a thrown ClientError → that status (netlifyV2Platform)', async () => {
     const stripe = webhook({ vendor: 'stripe', eventTypeHeader: 'stripe-event', verify: () => true });
     const ackMod = defineEvent({
       name: 'stripe.ack',
       detector: stripe.detector((ctx: WebhookDetectorContext) => ctx.eventType === 'ok'),
-      response: { static: { received: true } },
+      jobs: [job(() => 'processed', { name: 'process' })],
     });
     const rejectMod = defineEvent({
       name: 'stripe.reject',
       detector: stripe.detector((ctx: WebhookDetectorContext) => ctx.eventType === 'bad'),
-      response: { fromRequest: (_ctx: WebhookHandlerContext & { prepared: Record<string, unknown> }) => {
-        throw new ClientError(400, 'unprocessable webhook');
-      } },
+      jobs: [job(() => 'seen', { name: 'see' })],
     });
-    const handler = createEventKit(stripe).use(netlifyV2Platform).registerEvents([ackMod, rejectMod]).handler();
+    const handler = createEventKit(stripe)
+      .use(netlifyV2Platform)
+      .registerEvents([ackMod, rejectMod])
+      .handler({
+        after: {
+          // one invocation-level reply, composed from the typed rollup
+          fromResults: result => {
+            if (result.events.some(e => e.name === 'stripe.reject')) throw new ClientError(400, 'unprocessable webhook');
+            return { received: true };
+          },
+        },
+      });
 
     const ok = (await handler(v2Request({ id: 1 }, { 'stripe-event': 'ok' }))) as Response;
     expect(ok.status).toBe(200);

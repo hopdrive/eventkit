@@ -11,9 +11,9 @@
 // backstop against the one expressible form, `cond && job(...)` inside the array
 // literal (type `false | JobDefinition`), and against non-job entries.
 //
-// ADR-026 (amended): a request/response module adds a module-level `response`
-// declaration and `jobs` become optional (a response-only module is valid). The
-// response is NOT a job option. ADR-020 covers the typed job-context contribution.
+// ADR-026 (re-amended): the HTTP reply is NOT a module concern — it is declared at
+// the invocation layer via kit.handler({ after }). The response is NOT a job option
+// either. ADR-020 covers the typed job-context contribution.
 
 import { job, defineEvent } from '../index.js';
 import { webhook } from '../plugins/source-webhook/index.js';
@@ -65,36 +65,39 @@ void defineEvent({ name: 'bad.null', detector, jobs: [null] });
 // job inclusion is impossible by construction. A condition lives in the `detector` (a
 // distinct business event) or inside a job body (input-driven). See ADR-025 §19.1.
 
-// ── ADR-026: a request/response module compiles with a `response` and NO `jobs` ──
-void defineEvent({ name: 'ok.response', detector, response: { fromRequest: () => ({ accessToken: 't', userId: 1 }) } });
-// …and the static (constant) mode is pure data:
-void defineEvent({ name: 'ok.response.static', detector, response: { static: { received: true } } });
-// ── ResponseWire: the web-standard ResponseInit fields ride BESIDE the mode key ──
-void defineEvent({
-  name: 'ok.response.wire',
-  detector,
-  response: { static: '<Response/>', status: 201, headers: { 'content-type': 'text/xml' } },
+// ── ADR-026 (re-amended): a module does NOT accept a response — it moved to kit.handler ──
+// @ts-expect-error `response` is not a module field — declare kit.handler({ after })
+void defineEvent({ name: 'bad.module.response', detector, jobs: [job(work)], response: { static: { a: 1 } } });
+// @ts-expect-error the removed `resolve` field is rejected too
+void defineEvent({ name: 'bad.module.resolve', detector, jobs: [job(work)], resolve: () => 1 });
+// @ts-expect-error the removed `respond` field is rejected too
+void defineEvent({ name: 'bad.module.respond', detector, jobs: [job(work)], respond: () => 1 });
+
+// ── the invocation-level `after` declaration (kit.handler) ──────────────────
+import { fakeSource } from '../testing/index.js';
+const kitFor = () => createEventKit(fakeSource()).registerEvent(defineEvent({ name: 'ok.k', detector, jobs: [job(work)] }));
+// constant reply, with the web-standard ResponseInit fields as data:
+void kitFor().handler({ after: { static: '<Response/>', status: 201, headers: { 'content-type': 'text/xml' } } });
+// dynamic reply: fromResults receives the PRESCRIBED typed rollup (InvocationResult)
+void kitFor().handler({
+  after: {
+    fromResults: result => ({
+      ok: result.ok,
+      names: result.events.map(e => e.name),
+      firstJobStatus: result.events[0]?.jobs[0]?.status,
+    }),
+  },
 });
-void defineEvent({
-  name: 'ok.response.wire.fn',
-  detector,
-  response: { fromRequest: () => '<html/>', headers: { 'content-type': 'text/html' } },
-});
-
-// ── ADR-026: a `response` + optional `jobs` (fire-and-forget side effects) compiles ──
-void defineEvent({ name: 'ok.response.jobs', detector, response: { fromRequest: () => 'ok' }, jobs: [job(work)] });
-
-// ── the modes are structurally exclusive — declaring two at once fails to compile ──
-// @ts-expect-error `static` and `fromRequest` are mutually exclusive on one declaration
-void defineEvent({ name: 'bad.dual.mode', detector, response: { static: { a: 1 }, fromRequest: () => 'x' } });
-
-// ── a `static` body is DATA — a Promise (i.e. an async computation) is not assignable ──
+// the modes are structurally exclusive:
+// @ts-expect-error `static` and `fromResults` are mutually exclusive on one declaration
+void kitFor().handler({ after: { static: { a: 1 }, fromResults: () => 'x' } });
+// a `static` body is DATA — a Promise is not assignable:
 // @ts-expect-error a Promise is not a ResponseBody — a static reply cannot wait on work
-void defineEvent({ name: 'bad.static.promise', detector, response: { static: (async () => ({ ok: true }))() } });
+void kitFor().handler({ after: { static: (async () => ({ ok: true }))() } });
 
-// ── ADR-026 guard: the response is MODULE-level, not a per-job option ────────
-// @ts-expect-error `response` is not a JobOptions field — it belongs on the module
-void job(work, { response: { fromRequest: () => 'nope' } });
+// ── ADR-026 guard: the reply is INVOCATION-level, not a per-job option ───────
+// @ts-expect-error `after` is not a JobOptions field — it belongs on kit.handler
+void job(work, { after: { static: 'nope' } });
 
 // (A module with neither `jobs` nor a `response` is a do-nothing config error — caught at
 // REGISTER time, not by the type, now that both are optional. See runtime tests.)
@@ -122,30 +125,15 @@ const deadContext: EventKitPlugin = {
 };
 void deadContext;
 
-// ── D32: `prepare`'s inferred return type flows into the response fns' ctx.prepared ──
-// The inferred TPrepared is threaded through defineEvent, so these seams read prepared
-// data with NO cast and NO restatement. A missing/misspelled prepared key is a compile error.
+// ── a per-job `input` MAPPER sees `ctx.prepared` (module-independent typing) ──
+// JobOptions is deliberately independent of any one module's TPrepared (a job(fn, opts)
+// can be reused across modules), so a mapper's `ctx.prepared` is Record<string, unknown>.
 void defineEvent({
-  name: 'ok.typed.prepare.fromRequest',
+  name: 'ok.mapper.prepared',
   detector,
-  prepare: () => ({ base: 10, label: 'x' }),
-  // ctx.prepared is typed as { base: number; label: string } — arithmetic + string ops type-check
-  response: { fromRequest: ctx => ({ total: ctx.prepared.base + 5, upper: ctx.prepared.label.toUpperCase() }) },
+  prepare: () => ({ base: 10 }),
+  jobs: [job((c: JobContext<{ raw: unknown }>) => void c, { input: ctx => ({ raw: ctx.prepared['base'] }) })],
 });
-
-void defineEvent({
-  name: 'ok.typed.prepare.fromJobs',
-  detector,
-  prepare: async () => ({ threshold: 3 }),
-  jobs: [job(work)],
-  response: { fromJobs: (ctx, { ok }) => ({ ok, over: ctx.prepared.threshold > 0 }) },
-});
-
-// @ts-expect-error `missing` is not a key of the inferred prepared type { base: number }
-void defineEvent({ name: 'bad.prepared.key', detector, prepare: () => ({ base: 1 }), response: { fromRequest: ctx => ctx.prepared.missing } });
-
-// @ts-expect-error prepared.base is a number — `.toUpperCase()` is not a number method
-void defineEvent({ name: 'bad.prepared.type', detector, prepare: () => ({ base: 1 }), response: { fromRequest: ctx => ctx.prepared.base.toUpperCase() } });
 
 // ── Webhook authoring generics: `webhook.detector<TBody>` types ctx.body on the BARE factory ──
 // The helpers are attached to the factory value itself (uniform with the Hasura family),
@@ -208,7 +196,6 @@ void webhook.defineEvent<StripeEvent>({
   name: 'ok.scoped.webhook',
   detector: ctx => ctx.signatureVerified && ctx.body.type === 'payment_intent.succeeded',
   prepare: ctx => ({ paymentIntentId: ctx.body.data.object.id }),
-  response: { static: { received: true } },
   jobs: [work],
 });
 void webhook.defineEvent<StripeEvent>({
@@ -221,7 +208,7 @@ void webhook.defineEvent<StripeEvent>({
 void hasuraAction.defineEvent({
   name: 'ok.scoped.action',
   detector: ctx => ctx.actionName === 'cancelAppointment',
-  response: { fromRequest: ctx => ({ ok: true, by: ctx.sessionVariables.userId }) },
+  jobs: [work],
 });
 void hasuraCron.defineEvent<{ region: string }>({
   name: 'ok.scoped.cron',
@@ -229,13 +216,10 @@ void hasuraCron.defineEvent<{ region: string }>({
   jobs: [work],
 });
 
-// Full inference (no explicit type args) still threads TPrepared into the response fn (D32).
+// Full inference (no explicit type args): prepare still types itself; jobs run the work.
 void webhook.defineEvent({
   name: 'ok.scoped.inferred',
   detector: ctx => ctx.signatureVerified,
   prepare: () => ({ orderId: 42 }),
-  response: { fromRequest: ctx => {
-    const n: number = ctx.prepared.orderId; // typed number, not unknown
-    return n;
-  } },
+  jobs: [work],
 });

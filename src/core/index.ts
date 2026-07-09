@@ -81,9 +81,6 @@ export type {
   EventModule,
   EventModuleMetadata,
   SourceEventModule,
-  ResponseBody,
-  ResponseDeclaration,
-  ResponseWire,
   DetectorFunction,
   PrepareFunction,
 } from './event-module.js';
@@ -102,14 +99,13 @@ export type {
 } from './plugin.js';
 
 // ── Kit / entry point (types only; createEventKit + run are runtime, re-exported from the root) ──
-export type { EventKit, InvocationResult, EventOutcome, ResolvedOutcome, ResolvedError, PluginFactory, HandlerShortCircuit, HttpRequestEvent, DryRunResult, DryRunEvent } from './kit.js';
+export type { EventKit, HandlerResponse, InvocationResult, EventOutcome, ResolvedOutcome, ResolvedError, ResponseBody, ResponseWire, PluginFactory, HandlerShortCircuit, HttpRequestEvent, DryRunResult, DryRunEvent } from './kit.js';
 
 // ── Flow description + manifest vocabulary (§14–§16) ─────────────────────────
 export type {
   KitDescription,
   KitEventDescription,
   KitJobDescription,
-  FlowResponseKind,
   FlowManifest,
   FlowNode,
   FlowEdge,

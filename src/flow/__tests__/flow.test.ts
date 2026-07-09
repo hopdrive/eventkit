@@ -6,7 +6,7 @@ import { netlifyPlatform } from '../../plugins/platforms.js';
 import { describeKit, toFlowGraph, toFlowYaml } from '../graph.js';
 import { toYaml } from '../yaml.js';
 
-// A kit exercising all three response kinds, job options, side-effect metadata,
+// A kit exercising job options, side-effect metadata,
 // and module metadata — so introspection has something to reflect.
 function buildKit() {
   const fireAndForget = defineEvent({
@@ -22,14 +22,12 @@ function buildKit() {
   const requestResponse = defineEvent({
     name: 'billing.quote',
     detector: hasuraEvent.detector(() => true),
-    response: { fromRequest: () => ({ ok: true }) },
     jobs: [job(() => {}, { name: 'logQuote' })],
   });
 
   const resultDriven = defineEvent({
     name: 'billing.charge',
     detector: hasuraEvent.detector(() => true),
-    response: { fromJobs: (_ctx, { ok }) => ({ ok }) },
     jobs: [job(() => {}, { name: 'charge' })],
   });
 
@@ -48,7 +46,6 @@ describe('kit.describe()', () => {
     expect(d.plugins).toEqual(['loop-guard']); // source + platform excluded
 
     const ready = d.events.find(e => e.name === 'appointment.ready')!;
-    expect(ready.response).toBe('none');
     expect(ready.description).toBe('Appointment became ready');
     expect(ready.owner).toBe('scheduling');
     expect(ready.flowHints).toEqual({ flow: 'mobile-service' });
@@ -56,8 +53,6 @@ describe('kit.describe()', () => {
     expect(ready.jobs[1]).toMatchObject({ name: 'notifyOrg', retries: 3 });
     expect(ready.jobs[0]!.metadata).toEqual({ sideEffect: 'sms' });
 
-    expect(d.events.find(e => e.name === 'billing.quote')!.response).toBe('from-request');
-    expect(d.events.find(e => e.name === 'billing.charge')!.response).toBe('from-jobs');
   });
 
   it('is pure — introspecting does not execute a job (the throwing job never runs)', () => {
@@ -95,7 +90,6 @@ describe('toFlowYaml()', () => {
     expect(a).toContain('platform: platform-netlify');
     expect(a).toContain('plugins: [loop-guard]'); // scalar array → flow style
     expect(a).toContain('name: appointment.ready');
-    expect(a).toContain('response: from-request');
     expect(a).toContain('retries: 3');
   });
 });

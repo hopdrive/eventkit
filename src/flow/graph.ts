@@ -164,7 +164,7 @@ export function toFlowYaml(kit: EventKit, opts: { title?: string } & FlowOrigin 
   kitBlock['plugins'] = d.plugins;
 
   const events = d.events.map(ev => {
-    const out: Record<string, unknown> = { name: ev.name, response: ev.response };
+    const out: Record<string, unknown> = { name: ev.name };
     if (ev.description) out['description'] = ev.description;
     if (ev.owner) out['owner'] = ev.owner;
     if (ev.tags) out['tags'] = ev.tags;

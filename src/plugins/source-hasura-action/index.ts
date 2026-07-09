@@ -3,9 +3,9 @@
 // =============================================================================
 // The `hasuraAction` request/response source plugin — Hasura Actions (§7.2, ADR-026).
 // `provides: ['source']`; folder name === plugin `name` (`source-hasura-action`).
-// A module declares its reply via `response: { fromRequest: (ctx) => output }` —
-// throw `ActionError`/`ClientError` inside it for a 4xx. Shared parsing / types /
-// context builders live in `../hasura-shared`.
+// The action's work runs as JOBS; the reply is declared at the invocation layer —
+// `kit.handler({ after: { fromResults } })`, throwing `ActionError`/`ClientError` for
+// a 4xx. Shared parsing / types / context builders live in `../hasura-shared`.
 import type {
   DetectorContext,
   DetectorFunction,

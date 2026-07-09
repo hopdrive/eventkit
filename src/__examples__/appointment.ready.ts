@@ -91,10 +91,8 @@ const notifyCustomer = (ctx: JobContext<OfferInput>) => {
 // The module is a declarative record: detector + prepare + a STATIC jobs array.
 // No conditional inclusion is possible — there is no handler body to branch in.
 //
-// D32: `prepare`'s inferred return type is threaded through `defineEvent` into
-// the response fn's `ctx.prepared` — no cast, no restatement. See the compile-checked
-// fixtures in `src/__type-tests__/contracts.types.ts` (`ok.typed.prepare.fromRequest` /
-// `ok.typed.prepare.fromJobs`) for that guarantee under test.
+// The HTTP reply is NOT a module concern (ADR-026, re-amended): the entry file's
+// `kit.handler({ after })` declares it. This module is pure detection + jobs.
 export const appointmentReady = defineEvent({
   name: 'appointment.ready',
   detector,

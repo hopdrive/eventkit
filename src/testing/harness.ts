@@ -40,7 +40,7 @@ export interface TestInvocationResult {
   jobs: JobExecution[];
   /** A single job execution by name (first match), or undefined. */
   job(name: string): JobExecution | undefined;
-  /** The response a `resolve`/`respond` produced (output or error), if any. */
+  /** The reply the invocation produced (a pre-dispatch client rejection), if any. */
   resolved: ResolvedOutcome | undefined;
   /** Every framework + job log entry captured via onLog/onJobLog, in order. */
   logs: LogEntry[];
@@ -336,8 +336,6 @@ export interface FlowEventAssertion {
   hasJobs(...names: string[]): FlowEventAssertion;
   /** Assert the event declares a job with this name. */
   hasJob(name: string): FlowEventAssertion;
-  /** Assert the event's response kind ('none' | 'resolve' | 'respond'). */
-  respondsWith(kind: 'none' | 'resolve' | 'respond'): FlowEventAssertion;
   /** The declared job names for this event. */
   jobNames(): string[];
 }
@@ -395,13 +393,6 @@ export function expectFlow(kit: EventKit): FlowAssertion {
           const expected = names.slice().sort();
           if (actual.length !== expected.length || actual.some((n, i) => n !== expected[i])) {
             throw new Error(`expectFlow.event('${name}').hasJobs: mismatch.\n  expected: ${expected.join(', ')}\n  actual:   ${actual.join(', ')}`);
-          }
-          return assertion;
-        },
-        respondsWith(kind) {
-          assertion.exists();
-          if (ev!.response !== kind) {
-            throw new Error(`expectFlow.event('${name}').respondsWith('${kind}'): actual response is '${ev!.response}'.`);
           }
           return assertion;
         },

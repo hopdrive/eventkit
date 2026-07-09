@@ -13,9 +13,6 @@
 //     graph (from a KitDescription) proves STRUCTURE. They share this vocabulary
 //     so a generated graph can be diffed against — or promoted into — a manifest.
 
-/** How a module produces its synchronous response (ADR-026) — derived from its `response` declaration, never authored. */
-export type FlowResponseKind = 'none' | 'static' | 'from-request' | 'from-jobs';
-
 /**
  * A declared side effect a job performs, carried in `job(..., { metadata: { effects } })`.
  * RESERVED SCHEMA (ADR-037): a future org-level aggregator infers cross-kit edges from
@@ -41,8 +38,6 @@ export interface KitJobDescription {
 /** One registered event module, flattened to its structural facts. */
 export interface KitEventDescription {
   name: string;
-  /** `none` (fire-and-forget), `static` (constant body), `from-request` (request-computed), or `from-jobs` (result-driven). */
-  response: FlowResponseKind;
   jobs: KitJobDescription[];
   /** Run mode for the job set, when the module pins one. */
   runMode?: 'parallel' | 'series';

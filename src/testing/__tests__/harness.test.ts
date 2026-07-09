@@ -183,7 +183,7 @@ describe('expectFlow', () => {
       jobs: [job(() => {}, { name: 'notify' }), job(() => {}, { name: 'email' })],
     });
     const kit = createEventKit(hasuraEvent).registerEvents([mod]);
-    expectFlow(kit).hasEvents('appt.ready').event('appt.ready').exists().hasJobs('notify', 'email').hasJob('email').respondsWith('none');
+    expectFlow(kit).hasEvents('appt.ready').event('appt.ready').exists().hasJobs('notify', 'email').hasJob('email');
   });
 
   it('throws on a job-set mismatch', () => {
@@ -198,7 +198,6 @@ describe('expectFlow', () => {
     expect(() => expectFlow(kit).event('nope').exists()).toThrow(/no such event/);
     expect(() => expectFlow(kit).hasEvents('e', 'other')).toThrow(/events mismatch/);
     expect(() => expectFlow(kit).event('e').hasJob('missing')).toThrow(/not found/);
-    expect(() => expectFlow(kit).event('e').respondsWith('resolve')).toThrow(/response is 'none'/);
     // happy accessors
     expect(expectFlow(kit).eventNames()).toEqual(['e']);
     expect(expectFlow(kit).event('e').jobNames()).toEqual(['a']);
