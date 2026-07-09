@@ -415,6 +415,27 @@ describe('ADR-026: resolve (request/response) is source-agnostic; jobs run along
     expect(err.resolved?.headers).toBeUndefined();
   });
 
+  it('co-detection is normal: a fire-and-forget module rides the same request as the response declarer — no warning', async () => {
+    const warns: string[] = [];
+    const spy = { name: 'log-spy', onLog: (e: { level: string; message: string }) => {
+      if (e.level === 'warn') warns.push(e.message);
+    } };
+    let auditRan = false;
+    const result = await createEventKit(fakeSource())
+      .use(spy)
+      .registerEvents([
+        defineEvent({ name: 'payment.received', detector: always, response: { static: { received: true } } }),
+        // a sibling that detects on the SAME request but declares no response — the normal pattern
+        defineEvent({ name: 'payment.audit.logged', detector: always, jobs: [() => void (auditRan = true)] }),
+      ])
+      .handle('go');
+
+    expect(result.events.map(e => e.name)).toEqual(['payment.received', 'payment.audit.logged']); // both detected
+    expect(result.resolved?.output).toEqual({ received: true }); // the declaring module owns the reply
+    expect(auditRan).toBe(true); // the fire-and-forget sibling did its work
+    expect(warns).toEqual([]); // nothing to warn about — this is the intended shape
+  });
+
   it('one wire reply per invocation: the FIRST detected module with a response wins, and the discard is LOUD', async () => {
     const warns: Array<Record<string, unknown> | undefined> = [];
     const spy = { name: 'log-spy', onLog: (e: { level: string; message: string; data?: Record<string, unknown> }) => {

@@ -722,9 +722,10 @@ class Kit implements EventKit {
   ): Promise<{ events: EventOutcome[]; resolved?: ResolvedOutcome }> {
     const events: EventOutcome[] = [];
     // ONE wire reply per invocation: the FIRST detected module with a `response`
-    // provides it (ADR-026). On a request/response source, detectors should PARTITION
-    // the request space (exactly one module detects), so this is normally the unique
-    // match — the fallback below only arbitrates overlapping detectors, and LOUDLY.
+    // provides it (ADR-026). ANY number of modules may detect on one request — that is
+    // the point of detection (fire-and-forget modules ride the same signal freely).
+    // The partition expectation applies only to RESPONSE-DECLARING modules: at most one
+    // should detect per request. The fallback below arbitrates a violation, and LOUDLY.
     let resolved: ResolvedOutcome | undefined;
     let resolvedBy: EventName | undefined;
     for (const entry of detected) {
