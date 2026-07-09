@@ -86,7 +86,7 @@ describe('the Hasura family keeps the callable-source contract', () => {
   it('authoring helpers return the authored function unchanged', () => {
     const detect = () => true;
     expect(hasuraEvent.detector(detect as never)).toBe(detect);
-    expect(hasuraAction.resolve(detect as never)).toBe(detect);
+    expect(hasuraAction.prepare(detect as never)).toBe(detect);
   });
 });
 

@@ -81,10 +81,10 @@ export type {
   EventModule,
   EventModuleMetadata,
   SourceEventModule,
+  ResponseBody,
+  ResponseDeclaration,
   DetectorFunction,
   PrepareFunction,
-  ResolveFunction,
-  RespondFunction,
 } from './event-module.js';
 export { defineEvent } from './event-module.js';
 

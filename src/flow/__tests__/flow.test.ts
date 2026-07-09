@@ -22,14 +22,14 @@ function buildKit() {
   const requestResponse = defineEvent({
     name: 'billing.quote',
     detector: hasuraEvent.detector(() => true),
-    resolve: () => ({ ok: true }),
+    response: { fromRequest: () => ({ ok: true }) },
     jobs: [job(() => {}, { name: 'logQuote' })],
   });
 
   const resultDriven = defineEvent({
     name: 'billing.charge',
     detector: hasuraEvent.detector(() => true),
-    respond: (_ctx, { ok }) => ({ ok }),
+    response: { fromJobs: (_ctx, { ok }) => ({ ok }) },
     jobs: [job(() => {}, { name: 'charge' })],
   });
 
@@ -56,8 +56,8 @@ describe('kit.describe()', () => {
     expect(ready.jobs[1]).toMatchObject({ name: 'notifyOrg', retries: 3 });
     expect(ready.jobs[0]!.metadata).toEqual({ sideEffect: 'sms' });
 
-    expect(d.events.find(e => e.name === 'billing.quote')!.response).toBe('resolve');
-    expect(d.events.find(e => e.name === 'billing.charge')!.response).toBe('respond');
+    expect(d.events.find(e => e.name === 'billing.quote')!.response).toBe('from-request');
+    expect(d.events.find(e => e.name === 'billing.charge')!.response).toBe('from-jobs');
   });
 
   it('is pure — introspecting does not execute a job (the throwing job never runs)', () => {
@@ -95,7 +95,7 @@ describe('toFlowYaml()', () => {
     expect(a).toContain('platform: platform-netlify');
     expect(a).toContain('plugins: [loop-guard]'); // scalar array → flow style
     expect(a).toContain('name: appointment.ready');
-    expect(a).toContain('response: resolve');
+    expect(a).toContain('response: from-request');
     expect(a).toContain('retries: 3');
   });
 });

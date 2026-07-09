@@ -10,9 +10,9 @@
 // envelope and surfaces the result as `ctx.signatureVerified` — it NEVER throws on a
 // bad signature; the detector decides what an unverified webhook means (§7.1). It also
 // reads the vendor's event-type header into `ctx.eventType` for routing. Most webhooks
-// are fire-and-forget; a status-contract vendor (Stripe) adds a `resolve` that returns
-// an ack or throws `ClientError(4xx)` — the platform adapter maps that to the HTTP
-// status (ADR-026). Signatures (HMAC) are computed synchronously, so `verify` is sync.
+// are fire-and-forget; a status-contract vendor (Stripe) declares a `response` —
+// `{ json }` for a fixed ack, `{ fromRequest }` computing/throwing `ClientError(4xx)`
+// — and the platform adapter maps it to the HTTP status (ADR-026). Signatures (HMAC) are computed synchronously, so `verify` is sync.
 //
 // Headers (and, where the platform preserves it, the raw body) reach the adapter via
 // `request.meta` — the HTTP platform adapters surface them there, source-agnostically.
@@ -28,10 +28,8 @@ import {
   type EventKitPlugin,
   type EventModule,
   type HandlerContext,
-  type JobInputContext,
   type PrepareFunction,
   type RequestContext,
-  type ResolveFunction,
   type SourceEventModule,
 } from '../../core/index.js';
 import { randomId as sharedRandomId } from '../../core/ids.js';
@@ -114,9 +112,6 @@ export interface WebhookAuthoring {
   prepare<TBody = unknown, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
     fn: (ctx: WebhookHandlerContext<TBody>) => TPrepared | Promise<TPrepared>,
   ): PrepareFunction<TBody, Record<string, unknown>, TPrepared>;
-  resolve<TBody = unknown, TOutput = unknown>(
-    fn: (ctx: JobInputContext<TBody> & WebhookFields<TBody>) => TOutput | Promise<TOutput>,
-  ): ResolveFunction<TBody>;
   /**
    * Source-scoped module builder: `webhook.defineEvent<Body>({ ... })`. The body
    * type on THIS call types every inline seam — a bare `detector: (ctx) => ...`
@@ -147,11 +142,6 @@ function prepare<TBody = unknown, TPrepared extends Record<string, unknown> = Re
   fn: (ctx: WebhookHandlerContext<TBody>) => TPrepared | Promise<TPrepared>,
 ): PrepareFunction<TBody, Record<string, unknown>, TPrepared> {
   return fn as unknown as PrepareFunction<TBody, Record<string, unknown>, TPrepared>;
-}
-function resolve<TBody = unknown, TOutput = unknown>(
-  fn: (ctx: JobInputContext<TBody> & WebhookFields<TBody>) => TOutput | Promise<TOutput>,
-): ResolveFunction<TBody> {
-  return fn as unknown as ResolveFunction<TBody>;
 }
 
 const fieldsFromMeta = <TBody>(envelope: EventEnvelope<TBody>): WebhookFields<TBody> => {
@@ -204,7 +194,6 @@ function buildWebhook(config: WebhookConfig): WebhookSource {
     // Authoring helpers — the shared identity wrappers carrying the vendor-typed context.
     detector,
     prepare,
-    resolve,
     defineEvent: defineWebhookEvent,
     normalize(raw: unknown, request: RequestContext): EventEnvelope {
       const reqMeta = (request.meta ?? {}) as { headers?: Record<string, unknown>; query?: Record<string, unknown>; rawBody?: string };
@@ -270,5 +259,5 @@ function buildWebhook(config: WebhookConfig): WebhookSource {
  */
 export const webhook: ((config: WebhookConfig) => WebhookSource) & WebhookAuthoring = Object.assign(
   (config: WebhookConfig): WebhookSource => buildWebhook(config),
-  { detector, prepare, resolve, defineEvent: defineWebhookEvent },
+  { detector, prepare, defineEvent: defineWebhookEvent },
 );

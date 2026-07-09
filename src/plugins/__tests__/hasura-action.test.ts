@@ -35,24 +35,23 @@ describe('hasuraAction source — payload parse + session extraction (§7.2)', (
 });
 
 describe('hasuraAction over the generic netlifyPlatform — resolve → 2xx; ActionError → 4xx {message,extensions}', () => {
-  const buildLoginKit = (resolve: HasuraActionSourceResolve) =>
+  type LoginCtx = HasuraActionHandlerContext & { prepared: Record<string, unknown> };
+  const buildLoginKit = (fromRequest: (ctx: LoginCtx) => unknown) =>
     createEventKit(hasuraAction)
       .use(netlifyPlatform)
       .registerEvents([
         defineEvent({
           name: 'login',
           detector: hasuraAction.detector((ctx: HasuraActionContext) => ctx.actionName === 'login'),
-          resolve,
+          response: { fromRequest },
         }),
       ]);
 
   it("resolve's return becomes the 2xx body (the action's declared output type)", async () => {
-    const handler = buildLoginKit(
-      hasuraAction.resolve((ctx: HasuraActionHandlerContext & { prepared: Record<string, unknown> }) => ({
-        accessToken: 'tok-' + (ctx.input as { email: string }).email,
-        userId: 42,
-      })),
-    ).handler();
+    const handler = buildLoginKit(ctx => ({
+      accessToken: 'tok-' + (ctx.input as { email: string }).email,
+      userId: 42,
+    })).handler();
     const res = (await handler(actionEvent(loginPayload()), { functionName: 'app-login' })) as { statusCode: number; body: string };
 
     expect(res.statusCode).toBe(200);
@@ -60,11 +59,9 @@ describe('hasuraAction over the generic netlifyPlatform — resolve → 2xx; Act
   });
 
   it('a thrown ActionError → 4xx + { message, extensions: { code } } (Hasura contract)', async () => {
-    const handler = buildLoginKit(
-      hasuraAction.resolve(() => {
-        throw new ActionError('invalid credentials', 'INVALID_CREDENTIALS');
-      }),
-    ).handler();
+    const handler = buildLoginKit(() => {
+      throw new ActionError('invalid credentials', 'INVALID_CREDENTIALS');
+    }).handler();
     const res = (await handler(actionEvent(loginPayload()), {})) as { statusCode: number; body: string };
 
     expect(res.statusCode).toBe(400);
@@ -99,7 +96,7 @@ describe('resolve + jobs run alongside (sibling-ignorant)', () => {
         name: 'login',
         detector: hasuraAction.detector((ctx: HasuraActionContext) => ctx.actionName === 'login'),
         prepare: hasuraAction.prepare(() => ({ sdk: { token: () => 'T' } })),
-        resolve: hasuraAction.resolve(ctx => ({ accessToken: (ctx.prepared as { sdk: { token: () => string } }).sdk.token() })),
+        response: { fromRequest: (ctx: HasuraActionHandlerContext & { prepared: Record<string, unknown> }) => ({ accessToken: (ctx.prepared as { sdk: { token: () => string } }).sdk.token() }) },
         jobs: [job((c: JobContext) => { jobRan = true; void c; })],
       }),
     ]);
@@ -113,4 +110,4 @@ describe('resolve + jobs run alongside (sibling-ignorant)', () => {
   });
 });
 
-type HasuraActionSourceResolve = ReturnType<typeof hasuraAction.resolve>;
+

@@ -11,9 +11,9 @@
 // backstop against the one expressible form, `cond && job(...)` inside the array
 // literal (type `false | JobDefinition`), and against non-job entries.
 //
-// ADR-026: a request/response module adds a module-level `resolve` and `jobs` become
-// optional (a resolve-only module is valid). `resolve` is NOT a job option. ADR-020
-// covers the typed job-context contribution.
+// ADR-026 (amended): a request/response module adds a module-level `response`
+// declaration and `jobs` become optional (a response-only module is valid). The
+// response is NOT a job option. ADR-020 covers the typed job-context contribution.
 
 import { job, defineEvent } from '../index.js';
 import { webhook } from '../plugins/source-webhook/index.js';
@@ -65,17 +65,27 @@ void defineEvent({ name: 'bad.null', detector, jobs: [null] });
 // job inclusion is impossible by construction. A condition lives in the `detector` (a
 // distinct business event) or inside a job body (input-driven). See ADR-025 §19.1.
 
-// ── ADR-026: a request/response module compiles with `resolve` and NO `jobs` ──
-void defineEvent({ name: 'ok.resolve', detector, resolve: () => ({ accessToken: 't', userId: 1 }) });
+// ── ADR-026: a request/response module compiles with a `response` and NO `jobs` ──
+void defineEvent({ name: 'ok.response', detector, response: { fromRequest: () => ({ accessToken: 't', userId: 1 }) } });
+// …and the fixed-body mode is pure data:
+void defineEvent({ name: 'ok.response.json', detector, response: { json: { received: true } } });
 
-// ── ADR-026: `resolve` + optional `jobs` (fire-and-forget side effects) compiles ──
-void defineEvent({ name: 'ok.resolve.jobs', detector, resolve: () => 'ok', jobs: [job(work)] });
+// ── ADR-026: a `response` + optional `jobs` (fire-and-forget side effects) compiles ──
+void defineEvent({ name: 'ok.response.jobs', detector, response: { fromRequest: () => 'ok' }, jobs: [job(work)] });
 
-// ── ADR-026 guard: `resolve` is MODULE-level, not a per-job option ──────────
-// @ts-expect-error `resolve` is not a JobOptions field — it belongs on the module
-void job(work, { resolve: () => 'nope' });
+// ── the modes are structurally exclusive — declaring two at once fails to compile ──
+// @ts-expect-error `json` and `fromRequest` are mutually exclusive on one declaration
+void defineEvent({ name: 'bad.dual.mode', detector, response: { json: { a: 1 }, fromRequest: () => 'x' } });
 
-// (A module with neither `jobs` nor `resolve` is a do-nothing config error — caught at
+// ── a fixed `json` body is DATA — a Promise (i.e. an async computation) is not assignable ──
+// @ts-expect-error a Promise is not a ResponseBody — a fixed body cannot wait on work
+void defineEvent({ name: 'bad.json.promise', detector, response: { json: (async () => ({ ok: true }))() } });
+
+// ── ADR-026 guard: the response is MODULE-level, not a per-job option ────────
+// @ts-expect-error `response` is not a JobOptions field — it belongs on the module
+void job(work, { response: { fromRequest: () => 'nope' } });
+
+// (A module with neither `jobs` nor a `response` is a do-nothing config error — caught at
 // REGISTER time, not by the type, now that both are optional. See runtime tests.)
 
 // ── ADR-020: a valid job-context contribution type-checks ───────────────────
@@ -101,30 +111,30 @@ const deadContext: EventKitPlugin = {
 };
 void deadContext;
 
-// ── D32: `prepare`'s inferred return type flows into `resolve`/`respond`'s ctx.prepared ──
+// ── D32: `prepare`'s inferred return type flows into the response fns' ctx.prepared ──
 // The inferred TPrepared is threaded through defineEvent, so these seams read prepared
 // data with NO cast and NO restatement. A missing/misspelled prepared key is a compile error.
 void defineEvent({
-  name: 'ok.typed.prepare.resolve',
+  name: 'ok.typed.prepare.fromRequest',
   detector,
   prepare: () => ({ base: 10, label: 'x' }),
   // ctx.prepared is typed as { base: number; label: string } — arithmetic + string ops type-check
-  resolve: ctx => ({ total: ctx.prepared.base + 5, upper: ctx.prepared.label.toUpperCase() }),
+  response: { fromRequest: ctx => ({ total: ctx.prepared.base + 5, upper: ctx.prepared.label.toUpperCase() }) },
 });
 
 void defineEvent({
-  name: 'ok.typed.prepare.respond',
+  name: 'ok.typed.prepare.fromJobs',
   detector,
   prepare: async () => ({ threshold: 3 }),
   jobs: [job(work)],
-  respond: (ctx, { ok }) => ({ ok, over: ctx.prepared.threshold > 0 }),
+  response: { fromJobs: (ctx, { ok }) => ({ ok, over: ctx.prepared.threshold > 0 }) },
 });
 
 // @ts-expect-error `missing` is not a key of the inferred prepared type { base: number }
-void defineEvent({ name: 'bad.prepared.key', detector, prepare: () => ({ base: 1 }), resolve: ctx => ctx.prepared.missing });
+void defineEvent({ name: 'bad.prepared.key', detector, prepare: () => ({ base: 1 }), response: { fromRequest: ctx => ctx.prepared.missing } });
 
 // @ts-expect-error prepared.base is a number — `.toUpperCase()` is not a number method
-void defineEvent({ name: 'bad.prepared.type', detector, prepare: () => ({ base: 1 }), resolve: ctx => ctx.prepared.base.toUpperCase() });
+void defineEvent({ name: 'bad.prepared.type', detector, prepare: () => ({ base: 1 }), response: { fromRequest: ctx => ctx.prepared.base.toUpperCase() } });
 
 // ── Webhook authoring generics: `webhook.detector<TBody>` types ctx.body on the BARE factory ──
 // The helpers are attached to the factory value itself (uniform with the Hasura family),
@@ -132,14 +142,13 @@ void defineEvent({ name: 'bad.prepared.type', detector, prepare: () => ({ base: 
 type StripeEvent = { type: string; data: { object: { id: string; amount: number } } };
 void webhook.detector<StripeEvent>(ctx => ctx.signatureVerified && ctx.body.type === 'payment_intent.succeeded');
 void webhook.prepare<StripeEvent>(ctx => ({ paymentIntentId: ctx.body.data.object.id }));
-void webhook.resolve<StripeEvent>(ctx => ({ received: true, amount: ctx.body.data.object.amount }));
 
 // @ts-expect-error `missing` is not a key of the typed StripeEvent body
 void webhook.detector<StripeEvent>(ctx => ctx.body.missing === true);
 
 // ── Source-scoped defineEvent: the type on the OUTER call flows into bare inline seams ──
 // `hasuraEvent.defineEvent<Row>({ detector: (ctx) => … })` — one type parameter on the
-// outer call, and every inline arrow (`detector`/`prepare`/`resolve`/`respond`) receives
+// outer call, and every inline arrow (`detector`/`prepare`/the `response` fns) receives
 // the SOURCE-enriched context. No per-seam `.detector()` wrapper needed.
 import { hasuraEvent, hasuraCron, hasuraAction } from '../plugins/source-hasura.js';
 import { createEventKit } from '../index.js';
@@ -188,7 +197,7 @@ void webhook.defineEvent<StripeEvent>({
   name: 'ok.scoped.webhook',
   detector: ctx => ctx.signatureVerified && ctx.body.type === 'payment_intent.succeeded',
   prepare: ctx => ({ paymentIntentId: ctx.body.data.object.id }),
-  resolve: () => ({ received: true }),
+  response: { json: { received: true } },
   jobs: [work],
 });
 void webhook.defineEvent<StripeEvent>({
@@ -201,7 +210,7 @@ void webhook.defineEvent<StripeEvent>({
 void hasuraAction.defineEvent({
   name: 'ok.scoped.action',
   detector: ctx => ctx.actionName === 'cancelAppointment',
-  resolve: ctx => ({ ok: true, by: ctx.sessionVariables.userId }),
+  response: { fromRequest: ctx => ({ ok: true, by: ctx.sessionVariables.userId }) },
 });
 void hasuraCron.defineEvent<{ region: string }>({
   name: 'ok.scoped.cron',
@@ -209,13 +218,13 @@ void hasuraCron.defineEvent<{ region: string }>({
   jobs: [work],
 });
 
-// Full inference (no explicit type args) still threads TPrepared into resolve (D32).
+// Full inference (no explicit type args) still threads TPrepared into the response fn (D32).
 void webhook.defineEvent({
   name: 'ok.scoped.inferred',
   detector: ctx => ctx.signatureVerified,
   prepare: () => ({ orderId: 42 }),
-  resolve: ctx => {
+  response: { fromRequest: ctx => {
     const n: number = ctx.prepared.orderId; // typed number, not unknown
     return n;
-  },
+  } },
 });

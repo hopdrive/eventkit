@@ -66,20 +66,21 @@ export interface EventOutcome {
 }
 
 /**
- * The response a request/response module's `resolve` produced (ADR-026), surfaced so
- * the source's platform adapter can map it to the wire. Exactly one of `output`
- * (resolve returned) or `error` (resolve, or its `prepare`, threw) is set.
+ * The value a module's `response` declaration produced (ADR-026), surfaced so the
+ * source's platform adapter can map it to the wire. Exactly one of `output` (the
+ * response fn returned / the fixed `json` body) or `error` (the fn, or the `prepare`
+ * before it, threw) is set.
  */
 export interface ResolvedOutcome {
-  /** The value `resolve(ctx)` returned — the success response body. `hasResolved` distinguishes a returned `undefined` from "no resolve". */
+  /** The produced success body. `hasResolved` distinguishes a produced `undefined` from "no response declared". */
   output?: unknown;
-  /** True when a `resolve` ran (success or error) — lets the platform tell "resolved to undefined" from a fire-and-forget invocation. */
+  /** True when a response was produced (success or error) — lets the platform tell "produced undefined" from a fire-and-forget invocation. */
   hasResolved: boolean;
-  /** Set when `resolve` (or the `prepare` before it) threw — mapping data for the error response. */
+  /** Set when the response fn (or the `prepare` before it) threw — mapping data for the error reply. */
   error?: ResolvedError;
 }
 
-/** A `resolve`/`prepare` throw, with the fields a platform maps to the wire error. */
+/** A response-fn/`prepare` throw, with the fields a platform maps to the wire error. */
 export interface ResolvedError {
   message: string;
   /** From a thrown `ClientError(status, …)` — the exact HTTP status to respond with. */
@@ -99,8 +100,8 @@ export interface InvocationResult {
   timedOut?: boolean;
   error?: SerializedError;
   /**
-   * The request/response value (ADR-026), if a detected module declared `resolve`. The
-   * FIRST detected module with a `resolve` provides it; fire-and-forget invocations leave
+   * The request/response value (ADR-026), if a detected module declared a `response`. The
+   * FIRST detected module with one provides it; fire-and-forget invocations leave
    * it undefined. The source's platform adapter reads this to shape the wire response.
    */
   resolved?: ResolvedOutcome;

@@ -13,8 +13,8 @@
 //     graph (from a KitDescription) proves STRUCTURE. They share this vocabulary
 //     so a generated graph can be diffed against — or promoted into — a manifest.
 
-/** How a module produces its synchronous response (ADR-026). */
-export type FlowResponseKind = 'none' | 'resolve' | 'respond';
+/** How a module produces its synchronous response (ADR-026) — derived from its `response` declaration, never authored. */
+export type FlowResponseKind = 'none' | 'json' | 'from-request' | 'from-jobs';
 
 /**
  * A declared side effect a job performs, carried in `job(..., { metadata: { effects } })`.
@@ -41,7 +41,7 @@ export interface KitJobDescription {
 /** One registered event module, flattened to its structural facts. */
 export interface KitEventDescription {
   name: string;
-  /** `none` (fire-and-forget), `resolve` (job-independent), or `respond` (result-driven). */
+  /** `none` (fire-and-forget), `json` (fixed body), `from-request` (request-computed), or `from-jobs` (result-driven). */
   response: FlowResponseKind;
   jobs: KitJobDescription[];
   /** Run mode for the job set, when the module pins one. */

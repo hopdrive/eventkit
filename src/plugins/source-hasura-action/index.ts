@@ -3,15 +3,14 @@
 // =============================================================================
 // The `hasuraAction` request/response source plugin — Hasura Actions (§7.2, ADR-026).
 // `provides: ['source']`; folder name === plugin `name` (`source-hasura-action`).
-// Adds `.resolve` (computes the action's synchronous response body) alongside
-// `.detector`/`.prepare`. Shared parsing / types / context builders live in
-// `../hasura-shared`.
+// A module declares its reply via `response: { fromRequest: (ctx) => output }` —
+// throw `ActionError`/`ClientError` inside it for a 4xx. Shared parsing / types /
+// context builders live in `../hasura-shared`.
 import type {
   DetectorContext,
   DetectorFunction,
   HandlerContext,
   PrepareFunction,
-  ResolveFunction,
   EventKitPlugin,
   EventEnvelope,
   EventModule,
@@ -42,10 +41,6 @@ export interface HasuraActionSource extends EventKitPlugin {
   prepare<TInput = Record<string, unknown>, TPrepared extends Record<string, unknown> = Record<string, unknown>>(
     fn: (ctx: HasuraActionHandlerContext<TInput>) => TPrepared | Promise<TPrepared>,
   ): PrepareFunction<HasuraActionPayload<TInput>>;
-  /** Computes the action's synchronous response body (§7.2). Throw `ActionError`/`ClientError` for a 4xx. */
-  resolve<TInput = Record<string, unknown>, TOutput = unknown>(
-    fn: (ctx: HasuraActionHandlerContext<TInput> & { prepared: Record<string, unknown> }) => TOutput | Promise<TOutput>,
-  ): ResolveFunction<HasuraActionPayload<TInput>>;
   /**
    * Source-scoped module builder: `hasuraAction.defineEvent<Input>({ ... })`. The
    * action-input type on THIS call types every inline seam (`ctx.actionName` /
@@ -67,7 +62,6 @@ function build(config: HasuraActionConfig): EventKitPlugin {
     sourceType: 'action',
     detector: authoringHelper,
     prepare: authoringHelper,
-    resolve: authoringHelper,
     defineEvent: defineActionEvent,
     normalize(raw: unknown, request: RequestContext): EventEnvelope {
       return normalizeHasuraAction(raw, request, config) as EventEnvelope;

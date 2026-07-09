@@ -103,18 +103,19 @@ A module is a declarative record. There's no handler function. You declare the j
 the runtime runs them.
 
 ```ts
-defineEvent<TPayload>({
+hasuraEvent.defineEvent<Row>({   // the source-scoped builder types every inline (ctx) => seam
   name,           // business event name (the identity)
   detector,       // (ctx) => boolean. the predicate, keep the switch house style
   prepare?,       // (ctx) => shared. runs once, merges into every job's input
   jobs?,          // a STATIC list of bare functions (or job(fn, opts) when you need options)
-  resolve?,       // (ctx) => output. request/response seam (ADR-026), runs concurrent with jobs
-  respond?,       // (ctx, { jobs, ok }) => output. result-driven response (ADR-029): runs AFTER
-                  //   jobs settle so the reply reflects their outcome. mutually exclusive with resolve
+  response?,      // the RESPONSE DECLARATION (ADR-026, amended) — the key states the contract:
+                  //   { json: body }                       fixed reply; the work can't change it
+                  //   { fromRequest: (ctx) => output }     computed from the request; runs alongside jobs
+                  //   { fromJobs: (ctx, {jobs, ok}) => output }  computed from results; runs AFTER jobs
   run?,           // RunOptions for the batch (timeoutMs / metadata). jobs always run parallel;
                   //   mode:'series' + continueOnFailure are a planned future control (ADR-031)
   metadata?,      // registration-time hints for tooling
-});  // a module must declare jobs and/or a response seam (resolve or respond)
+});  // a module must declare jobs and/or a response
 ```
 
 Three rules keep every event chain deterministic and analyzable:
@@ -205,11 +206,11 @@ kit** (the positional arg to `createEventKit`).
   The context exposes `signatureVerified`, `vendor`, `eventType`, `body`. `verify` runs once
   (before `normalize`) and annotates `signatureVerified`; the detector decides. Set
   `rejectUnverified: true` (ADR-030) to instead reject a bad signature with 401 before any
-  module runs. A status-contract vendor (Stripe) uses `resolve` plus a thrown
-  `ClientError(status, ...)`.
+  module runs. A status-contract vendor (Stripe) declares a `response` — `{ json }` for a
+  fixed receipt, or `{ fromRequest }` with a thrown `ClientError(status, ...)`.
 - **`hasuraAction`**. A **request/response** source for Hasura Actions
   (`sourceType:'action'`, gated by Hasura's permission model). Context: `actionName`,
-  `input`, `sessionVariables`, `requestQuery?`. A module's `resolve` returns the output,
+  `input`, `sessionVariables`, `requestQuery?`. A module's `response: { fromRequest }` returns the output,
   and the generic platform adapter you register (`netlifyV2Platform`/`netlifyPlatform`/
   `lambdaPlatform`) maps it to 2xx. A thrown `ActionError(message, code?)` maps to 4xx
   `{ message, extensions: { code? } }` (no dedicated action platform). The bespoke `app-*`

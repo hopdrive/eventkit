@@ -23,7 +23,6 @@ describe('factory-attached authoring helpers', () => {
     const fn = () => true;
     expect(webhook.detector(fn as never)).toBe(fn);
     expect(webhook.prepare(fn as never)).toBe(fn);
-    expect(webhook.resolve(fn as never)).toBe(fn);
   });
 
   it('a configured instance carries the same helpers (identity, same behavior as the factory)', () => {
@@ -31,7 +30,6 @@ describe('factory-attached authoring helpers', () => {
     const fn = () => true;
     expect(src.detector(fn as never)).toBe(fn);
     expect(src.prepare(fn as never)).toBe(fn);
-    expect(src.resolve(fn as never)).toBe(fn);
   });
 
   it('a typed detector authored via the bare factory runs against a real invocation', async () => {
@@ -121,14 +119,14 @@ describe('webhook source', () => {
     const ackMod = defineEvent({
       name: 'stripe.ack',
       detector: stripe.detector((ctx: WebhookDetectorContext) => ctx.eventType === 'ok'),
-      resolve: stripe.resolve(() => ({ received: true })),
+      response: { json: { received: true } },
     });
     const rejectMod = defineEvent({
       name: 'stripe.reject',
       detector: stripe.detector((ctx: WebhookDetectorContext) => ctx.eventType === 'bad'),
-      resolve: stripe.resolve((_ctx: WebhookHandlerContext & { prepared: Record<string, unknown> }) => {
+      response: { fromRequest: (_ctx: WebhookHandlerContext & { prepared: Record<string, unknown> }) => {
         throw new ClientError(400, 'unprocessable webhook');
-      }),
+      } },
     });
     const handler = createEventKit(stripe).use(netlifyV2Platform).registerEvents([ackMod, rejectMod]).handler();
 

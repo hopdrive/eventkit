@@ -122,7 +122,7 @@ const rows: Row[] = [
         name: 'test.resolvecrash',
         detector: () => true,
         jobs: [job(() => { ran.value = true; return 'ok'; }, { name: 'marker' })],
-        resolve: () => { throw new ClientError(422, 'nope'); },
+        response: { fromRequest: () => { throw new ClientError(422, 'nope'); } },
       });
       const kit = createEventKit(fakeSource()).use(recorder.plugin).registerEvents([mod]);
       return { kit, recorder, jobRan: () => ran.value };
@@ -138,7 +138,7 @@ const rows: Row[] = [
         name: 'test.respondcrash',
         detector: () => true,
         jobs: [job(() => { ran.value = true; return 'ok'; }, { name: 'marker' })],
-        respond: () => { throw new ClientError(400, 'bad'); },
+        response: { fromJobs: () => { throw new ClientError(400, 'bad'); } },
       });
       const kit = createEventKit(fakeSource()).use(recorder.plugin).registerEvents([mod]);
       return { kit, recorder, jobRan: () => ran.value };
@@ -291,7 +291,7 @@ describe("crash-policy 'signalRetry' (ADR-038)", () => {
       name: 'test.resolvecrash',
       detector: () => true,
       jobs: [job(() => 'ok', { name: 'marker' })],
-      resolve: () => { throw new ClientError(422, 'nope'); },
+      response: { fromRequest: () => { throw new ClientError(422, 'nope'); } },
     });
     const kit = createEventKit(signalRetrySource()).use(recorder.plugin).registerEvents([mod]);
 

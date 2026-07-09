@@ -92,9 +92,9 @@ const notifyCustomer = (ctx: JobContext<OfferInput>) => {
 // No conditional inclusion is possible — there is no handler body to branch in.
 //
 // D32: `prepare`'s inferred return type is threaded through `defineEvent` into
-// `resolve`/`respond`'s `ctx.prepared` — no cast, no restatement. See the compile-checked
-// fixtures in `src/__type-tests__/contracts.types.ts` (`ok.typed.prepare.resolve` /
-// `ok.typed.prepare.respond`) for that guarantee under test.
+// the response fn's `ctx.prepared` — no cast, no restatement. See the compile-checked
+// fixtures in `src/__type-tests__/contracts.types.ts` (`ok.typed.prepare.fromRequest` /
+// `ok.typed.prepare.fromJobs`) for that guarantee under test.
 export const appointmentReady = defineEvent({
   name: 'appointment.ready',
   detector,
