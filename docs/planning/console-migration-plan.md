@@ -209,3 +209,57 @@ Shipped from live design feedback on the flow page:
   (rAF stops) behaves like a pause instead of skipping to the end. Between execution
   bursts nothing is marked running — truthful: the chain is waiting on event delivery
   or debounce in the queue, not executing in any node.
+
+## 14. Export model: shipping the console as a package subpath (2026-07-12)
+
+The original plan (§5/§7) deployed the console straight from this repo to a HopDrive Netlify site via `console-ci.yml`. Once eventkit went open source, baking a HopDrive-specific deploy (and its secrets) into the public repo stopped making sense. A consumer needs to stand the console up against **their** observability DB, on **their** host.
+
+**Decision (D-CON-5):** ship the console as a mountable component from the existing package — `hopdrive-eventkit/console` — not as a second published package, and not as a repo you fork. A consumer writes a tiny host wrapper that owns config + hosting and imports the UI. We provide that wrapper as a scaffoldable template.
+
+### Why a subpath and not a second package
+
+We considered a separate `hopdrive-eventkit-console` package. Rejected: it means two publishes to keep in lockstep and more release ceremony. A subpath keeps one package, one version, one `changeset publish`.
+
+The one real hazard of a subpath is dependency hygiene: a single `package.json` can't install the heavy UI libs (react, antd, reactflow, apollo, ...) for a console consumer while keeping them out of a server/library consumer of the core. Tree-shaking doesn't help — it trims bundled code, not installed `node_modules`.
+
+Resolved by making every UI lib an **optional peerDependency**:
+- `peerDependenciesMeta.<lib>.optional = true` → modern npm does **not** auto-install them, so `npm i hopdrive-eventkit` inside an event-handler function stays lean (the core has zero real deps).
+- The wrapper template lists the same libs as real `dependencies`, so a console host gets them with one install.
+- The library build **externalizes** all of them (`vite.lib.config.ts`), so the published artifact never bundles a second copy of React et al.
+
+### Shape
+
+```
+console/
+  src/
+    config.tsx           # EventKitConsoleConfig + context (all env coupling lives here)
+    EventKitConsole.tsx  # the exported component (was App.tsx); builds Apollo from config
+    index.ts             # library entry (barrel) → built by vite.lib.config.ts
+    index.tsx            # standalone dev app entry (reads env, mounts the component)
+  vite.lib.config.ts     # library build → root dist/console (externalizes UI peers)
+  tsconfig.lib.json      # emits index.d.ts alongside
+  netlify/functions/
+    grafanaProxyCore.ts  # host-agnostic Loki proxy (pure fn)
+    grafana-proxy.ts     # thin Netlify adapter over the core
+  template/              # the wrapper a consumer scaffolds (degit)
+
+package.json (root):
+  exports "./console" + "./console/style.css"
+  optional peerDependencies (UI libs) + peerDependenciesMeta
+  sideEffects: ["**/*.css"]           # so the css import isn't shaken away
+  build:console → release pipeline     # builds dist/console before changeset publish
+```
+
+Config flows in as a prop (`graphqlEndpoint`, `headers`/`getHeaders`, `basename`, `grafanaProxyPath`); nothing reads `import.meta.env`. That puts the env boundary in the wrapper's build, so no runtime config.json or container is needed — one built artifact runs against any endpoint.
+
+### What changed vs §5/§7
+
+- `console-ci.yml` no longer deploys. It verifies both builds (standalone app + library) and checks the library artifact exists. HopDrive's own production console becomes a private wrapper repo built from the published package — the same path any consumer walks.
+- The library is published as part of the normal release (`npm run release` → `build:console` → `dist/console` → `changeset publish`), auth via the existing OIDC Trusted Publishing.
+- The Grafana proxy is no longer Netlify-only: `grafanaProxyCore.ts` is a plain function; the Netlify function is a ~10-line adapter, and the same core drops into express/hono/any host.
+
+### Follow-ups
+
+- **D-CON-6 — `create-eventkit-console`**: promote `console/template` to an `npm create` initializer (nicer than raw degit). Low priority.
+- **Types debt**: `build:lib:types` emits declarations with `noEmitOnError:false` over the ~186 pre-existing console type errors (Phase C3). The public surface (`EventKitConsole`, `EventKitConsoleConfig`) is clean; deep component types firm up as C3 lands.
+- **Optional `./console/server` export**: if consumers want the proxy from the package instead of a copied template file, add a small Node build for `grafanaProxyCore` and a `./console/server` subpath. Deferred — the template copy is enough today.

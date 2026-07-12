@@ -124,6 +124,13 @@ function parseLokiResponse(data: any): LogEntry[] {
  */
 export class GrafanaService {
   /**
+   * Path prefix the client hits for the Loki proxy. Comes from the console
+   * config (`grafanaProxyPath`, default `/api/grafana`); the host routes it
+   * to a server-side proxy that injects basic-auth.
+   */
+  constructor(private readonly basePath: string = '/api/grafana') {}
+
+  /**
    * Query Loki for logs
    */
   async queryLogs(params: LogQueryParams): Promise<LogQueryResult> {
@@ -152,8 +159,8 @@ export class GrafanaService {
 
     // Always use the proxy endpoint — it forwards to Grafana and injects
     // basic-auth server-side (dev: vite.config.ts proxy; prod: the
-    // grafana-proxy Netlify function via netlify.toml redirect).
-    const url = `/api/grafana/loki/api/v1/query_range?${queryParams.toString()}`;
+    // grafana-proxy function via a host redirect). The prefix is config-driven.
+    const url = `${this.basePath}/loki/api/v1/query_range?${queryParams.toString()}`;
 
     try {
       const response = await fetch(url, {
@@ -260,6 +267,6 @@ export class GrafanaService {
  * function (rather than a bare `new GrafanaService()`) so call sites don't
  * need to change and a future health-check could still gate this.
  */
-export function createGrafanaService(): GrafanaService {
-  return new GrafanaService();
+export function createGrafanaService(basePath?: string): GrafanaService {
+  return new GrafanaService(basePath ?? '/api/grafana');
 }

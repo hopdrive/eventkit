@@ -1,0 +1,26 @@
+# EventKit Console wrapper — Netlify site config.
+#
+# One of several ways to host this. The build is a plain static SPA plus one
+# function (the Grafana proxy). Vercel/Cloudflare/a container work the same
+# way: serve dist/, route /api/grafana/* to the proxy, SPA-fallback the rest.
+
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+[functions]
+  directory = "netlify/functions"
+
+# Route the Loki proxy path to the function (it injects basic-auth server-side).
+# MUST come before the SPA catch-all — Netlify uses the first matching rule.
+[[redirects]]
+  from = "/api/grafana/*"
+  to = "/.netlify/functions/grafana-proxy/:splat"
+  status = 200
+  force = true
+
+# SPA fallback — react-router needs every other path to resolve to index.html.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

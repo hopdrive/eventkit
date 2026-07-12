@@ -8,6 +8,7 @@ import { DrawerShell, StatusChip, Fact, FactGrid, ErrorPanel, Collapsible, JsonB
 import { formatDuration } from '../utils/formatDuration';
 import { formatRelativeTime } from '../utils/formatTime';
 import { createGrafanaService } from '../services/GrafanaService';
+import { useConsoleConfig } from '../config';
 import LogsViewer from './LogsViewer';
 
 interface JobDetailDrawerProps {
@@ -23,6 +24,8 @@ interface JobDetailDrawerProps {
 }
 
 const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({ node, isOpen, onClose, onBack, onOpenNodeId, triggeredInvocations = [] }) => {
+  // Hook must run before the early return (rules of hooks).
+  const { grafanaProxyPath } = useConsoleConfig();
   if (!isOpen || !node || node.type !== 'job') return null;
   const d = node.data ?? {};
   const jobExecutionId = String(node.id).replace('job-', '');
@@ -97,20 +100,22 @@ const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({ node, isOpen, onClose
         <div className='text-xs text-gray-400'>No recorded result output.</div>
       )}
 
-      <Collapsible title='Logs' hint='Grafana Loki · loads on open'>
-        {() => {
-          const grafanaService = createGrafanaService();
-          const scopeId = d.scopeId || `${d.correlationId}-${d.jobName}`;
-          return (
-            <LogsViewer
-              queryFn={() => grafanaService.queryJobLogs(scopeId, jobExecutionId, 15)}
-              autoRefresh={d.status === 'running'}
-              isJobRunning={d.status === 'running'}
-              refreshInterval={5000}
-            />
-          );
-        }}
-      </Collapsible>
+      {grafanaProxyPath && (
+        <Collapsible title='Logs' hint='Grafana Loki · loads on open'>
+          {() => {
+            const grafanaService = createGrafanaService(grafanaProxyPath);
+            const scopeId = d.scopeId || `${d.correlationId}-${d.jobName}`;
+            return (
+              <LogsViewer
+                queryFn={() => grafanaService.queryJobLogs(scopeId, jobExecutionId, 15)}
+                autoRefresh={d.status === 'running'}
+                isJobRunning={d.status === 'running'}
+                refreshInterval={5000}
+              />
+            );
+          }}
+        </Collapsible>
+      )}
     </DrawerShell>
   );
 };

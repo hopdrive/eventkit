@@ -1,15 +1,15 @@
-import React, { useState, Suspense } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useLocation, useSearchParams } from 'react-router-dom';
+import React, { useMemo, useState, Suspense } from 'react';
+import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { ApolloClient, InMemoryCache, ApolloProvider, createHttpLink } from '@apollo/client';
+import { setContext } from '@apollo/client/link/context';
 import {
   HomeIcon,
   TableCellsIcon,
   ChartBarIcon,
   Cog6ToothIcon,
-  MagnifyingGlassIcon,
   ArrowPathIcon,
 } from '@heroicons/react/24/outline';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import OverviewDashboard from './components/OverviewDashboard';
 import InvocationsTable from './components/InvocationsTable';
 import Analytics from './components/Analytics';
@@ -18,45 +18,55 @@ const FlowDiagram = React.lazy(() => import('./components/FlowDiagram'));
 import Settings from './components/Settings';
 import CorrelationSearch from './components/CorrelationSearch';
 import { PollingProvider, usePolling } from './contexts/PollingContext';
+import { ConsoleConfigProvider, useConsoleConfig, type EventKitConsoleConfig } from './config';
 import { useSystemStatus } from './hooks/useSystemStatus';
 import './styles/globals.css';
 
-// Apollo Client configuration
-const httpLink = createHttpLink({
-  uri: import.meta.env.VITE_GRAPHQL_ENDPOINT || 'http://localhost:8080/v1/graphql',
-  headers: {
-    ...(import.meta.env.VITE_HASURA_ADMIN_SECRET && {
-      'x-hasura-admin-secret': import.meta.env.VITE_HASURA_ADMIN_SECRET,
-    }),
-  },
-});
+export type { EventKitConsoleConfig } from './config';
 
-const client = new ApolloClient({
-  link: httpLink,
-  cache: new InMemoryCache({
-    typePolicies: {
-      Query: {
-        fields: {
-          invocations: {
-            merge(existing = [], incoming) {
-              return incoming;
+/**
+ * Build the Apollo client from the console config. Headers come from the
+ * host wrapper (static `headers` plus an optional async `getHeaders`),
+ * resolved per request via `setContext` so a rotating JWT stays fresh. No
+ * secret is baked into the bundle — it all flows in from the wrapper's build.
+ */
+function useApolloClient() {
+  const config = useConsoleConfig();
+  return useMemo(() => {
+    const httpLink = createHttpLink({ uri: config.graphqlEndpoint });
+
+    const authLink = setContext(async (_op, { headers }) => {
+      const dynamic = config.getHeaders ? await config.getHeaders() : {};
+      return {
+        headers: { ...headers, ...config.headers, ...dynamic },
+      };
+    });
+
+    return new ApolloClient({
+      link: authLink.concat(httpLink),
+      cache: new InMemoryCache({
+        typePolicies: {
+          Query: {
+            fields: {
+              invocations: {
+                merge(_existing = [], incoming) {
+                  return incoming;
+                },
+              },
             },
           },
         },
+      }),
+      defaultOptions: {
+        watchQuery: { fetchPolicy: 'cache-and-network', errorPolicy: 'all' },
+        query: { fetchPolicy: 'cache-first', errorPolicy: 'all' },
       },
-    },
-  }),
-  defaultOptions: {
-    watchQuery: {
-      fetchPolicy: 'cache-and-network',
-      errorPolicy: 'all',
-    },
-    query: {
-      fetchPolicy: 'cache-first',
-      errorPolicy: 'all',
-    },
-  },
-});
+    });
+    // Endpoint / auth are wrapper-stable for the life of the mount; a config
+    // change remounts the console (the wrapper controls that).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.graphqlEndpoint]);
+}
 
 const navigation = [
   { name: 'Overview', href: '/', icon: HomeIcon },
@@ -266,7 +276,9 @@ function Layout({
   );
 }
 
-function App() {
+function ConsoleRoutes() {
+  const config = useConsoleConfig();
+  const client = useApolloClient();
   const [correlationSearch, setCorrelationSearch] = useState('');
 
   // Load time range from localStorage or default to '24h'
@@ -289,6 +301,7 @@ function App() {
     <ApolloProvider client={client}>
       <PollingProvider>
         <Router
+          basename={config.basename}
           future={{
             v7_startTransition: true,
             v7_relativeSplatPath: true,
@@ -324,4 +337,23 @@ function App() {
   );
 }
 
-export default App;
+/**
+ * The EventKit observability console, as a mountable component.
+ *
+ * Mount it in a host wrapper (see the `create-eventkit-console` template) and
+ * pass your endpoint + auth via `config`:
+ *
+ *   import { EventKitConsole } from 'hopdrive-eventkit/console';
+ *   import 'hopdrive-eventkit/console/style.css';
+ *
+ *   <EventKitConsole config={{ graphqlEndpoint: import.meta.env.VITE_GRAPHQL_ENDPOINT }} />
+ */
+export function EventKitConsole({ config }: { config: EventKitConsoleConfig }) {
+  return (
+    <ConsoleConfigProvider config={config}>
+      <ConsoleRoutes />
+    </ConsoleConfigProvider>
+  );
+}
+
+export default EventKitConsole;

@@ -6,7 +6,9 @@
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
   "types": "./dist/esm/index.d.ts",
-  "sideEffects": false,
+  "sideEffects": [
+    "**/*.css"
+  ],
   "exports": {
     ".": {
       "import": {
@@ -167,7 +169,14 @@
         "types": "./dist/cjs/flow/index.d.ts",
         "default": "./dist/cjs/flow/index.js"
       }
-    }
+    },
+    "./console": {
+      "import": {
+        "types": "./dist/console/index.d.ts",
+        "default": "./dist/console/index.js"
+      }
+    },
+    "./console/style.css": "./dist/console/style.css"
   },
   "bin": {
     "eventkit-flow": "bin/eventkit-flow.mjs"
@@ -191,13 +200,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:contracts": "tsc -p tsconfig.typetest.json",
     "smoke:bundle": "node scripts/bundle-smoke.cjs",
+    "build:console": "npm --prefix console ci && npm --prefix console run build:lib",
     "docs": "typedoc",
     "lint": "eslint src --ext .ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "changeset": "changeset",
     "version": "changeset version && npm install --package-lock-only --ignore-scripts",
-    "release": "npm run build && npm run smoke:bundle && changeset publish",
+    "release": "npm run build && npm run smoke:bundle && npm run build:console && changeset publish",
     "prepare": "npm run build",
     "attw": "attw --pack . --profile node16",
     "test:coverage": "vitest run --coverage",
@@ -215,6 +225,49 @@
     "access": "public"
   },
   "dependencies": {},
+  "comment:peerDependencies": "UI libs for the hopdrive-eventkit/console subpath ONLY. All optional (peerDependenciesMeta) so a server/library consumer of the core never installs them — modern npm auto-installs non-optional peers. The create-eventkit-console wrapper template lists these as real dependencies, which is how a console host actually gets them.",
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.16.0",
+    "@apollo/client": "^3.8.0",
+    "graphql": "^16.8.0",
+    "antd": "^5.10.0",
+    "@ant-design/icons": "^5.2.0",
+    "@headlessui/react": "^1.7.0",
+    "@heroicons/react": "^2.0.0",
+    "@tanstack/react-table": "^8.10.0",
+    "@tanstack/react-virtual": "^3.0.0",
+    "@microlink/react-json-view": "^1.31.21",
+    "framer-motion": "^10.16.0",
+    "recharts": "^2.9.0",
+    "reactflow": "^11.10.0",
+    "jsondiffpatch": "^0.7.2",
+    "date-fns": "^2.30.0",
+    "clsx": "^2.0.0",
+    "yaml": "^2.9.0"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true },
+    "react-dom": { "optional": true },
+    "react-router-dom": { "optional": true },
+    "@apollo/client": { "optional": true },
+    "graphql": { "optional": true },
+    "antd": { "optional": true },
+    "@ant-design/icons": { "optional": true },
+    "@headlessui/react": { "optional": true },
+    "@heroicons/react": { "optional": true },
+    "@tanstack/react-table": { "optional": true },
+    "@tanstack/react-virtual": { "optional": true },
+    "@microlink/react-json-view": { "optional": true },
+    "framer-motion": { "optional": true },
+    "recharts": { "optional": true },
+    "reactflow": { "optional": true },
+    "jsondiffpatch": { "optional": true },
+    "date-fns": { "optional": true },
+    "clsx": { "optional": true },
+    "yaml": { "optional": true }
+  },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.4",
     "@changesets/cli": "^2.27.0",
