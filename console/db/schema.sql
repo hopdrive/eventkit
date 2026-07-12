@@ -8,6 +8,12 @@
 -- constraint + idx_invocations_source_job_id index below) — do not reapply
 -- it separately.
 --
+-- Migration 002_fix_event_executions_status_constraint_up.sql is also folded
+-- in — the event_executions status CHECK below includes 'detection_failed'
+-- and 'handler_failed'. These are emitted by the legacy hasura-event-detector
+-- runtime (not by eventkit's own observability path, which maps statuses down
+-- via graphql-sink), and this schema serves both runtimes during migration.
+--
 -- This schema is now owned by this repo going forward (console/db/); the
 -- eventkit graphql-sink writes the same tables/columns with mapped
 -- statuses, so one schema serves both runtimes during the migration.
@@ -140,7 +146,7 @@ CREATE TABLE event_executions (
     jobs_failed INTEGER DEFAULT 0,
 
     -- Status tracking
-    status TEXT NOT NULL DEFAULT 'detecting' CHECK (status IN ('detecting', 'not_detected', 'handling', 'completed', 'failed'))
+    status TEXT NOT NULL DEFAULT 'detecting' CHECK (status IN ('detecting', 'not_detected', 'handling', 'completed', 'failed', 'detection_failed', 'handler_failed'))
 );
 
 -- Job execution - each async job run for detected events
