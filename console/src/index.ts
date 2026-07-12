@@ -7,4 +7,4 @@
 // wrapper template. The CSS is extracted to `hopdrive-eventkit/console/style.css`.
 export { EventKitConsole } from './EventKitConsole';
 export { EventKitConsole as default } from './EventKitConsole';
-export type { EventKitConsoleConfig } from './config';
+export type { EventKitConsoleConfig, EventKitConsoleAuth } from './config';

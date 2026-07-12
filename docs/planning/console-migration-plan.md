@@ -253,7 +253,9 @@ package.json (root):
   build:console → release pipeline     # builds dist/console before changeset publish
 ```
 
-Config flows in as a prop (`graphqlEndpoint`, `headers`/`getHeaders`, `basename`, `grafanaProxyPath`); nothing reads `import.meta.env`. That puts the env boundary in the wrapper's build, so no runtime config.json or container is needed — one built artifact runs against any endpoint.
+Config flows in as a prop (`graphqlEndpoint`, `headers`, `auth`, `basename`, `grafanaProxyPath`); nothing reads `import.meta.env`. That puts the env boundary in the wrapper's build, so no runtime config.json or container is needed — one built artifact runs against any endpoint.
+
+**Auth is injected, not owned (D-CON-8).** The console does not know how you log in. The wrapper runs its own auth (Firebase/Auth0/a password gate) and passes an `auth` strategy: `getHeaders()` (resolved before every GraphQL request, so a rotating/late JWT is always current) and optional `onUnauthenticated()` (fired when Hasura rejects the token). The console builds its Apollo client from that — an `errorLink` + `setContext` link that read the LATEST config via a ref, so a token refresh or post-login header change never rebuilds the client or drops the cache. `config.headers` (a static local-dev admin secret) merges underneath. This is the ADR-024 injected-seam pattern applied to the UI: the console owns the transport wiring, the wrapper owns the credential.
 
 ### What changed vs §5/§7
 

@@ -34,7 +34,7 @@ The console bundle inlines its UI libs (antd, reactflow, apollo, recharts, ...).
 
 - `graphqlEndpoint` — Hasura endpoint for the observability DB.
 - `headers` — static per-request headers (local `x-hasura-admin-secret` only; never in a deployed build).
-- `getHeaders` — async per-request headers, for a rotating JWT.
+- `auth` — injected auth strategy. `{ getHeaders }` resolves per-request auth headers (a rotating JWT); optional `onUnauthenticated` fires when Hasura rejects the token. The wrapper owns login; the console just uses this to authorize Apollo.
 - `basename` — mount under a sub-path (default `/`).
 - `grafanaProxyPath` — log-viewer fetch prefix (default `/api/grafana`); `null` hides logs.
 

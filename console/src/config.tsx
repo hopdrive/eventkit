@@ -8,6 +8,33 @@ import React, { createContext, useContext } from 'react';
  * (from its own env / auth) and passes it in. Nothing in the console reads
  * `import.meta.env` anymore, so one built artifact runs against any endpoint.
  */
+/**
+ * Auth strategy, defined by the host wrapper and injected into the console's
+ * Apollo client. The wrapper owns login entirely (Firebase, Auth0, a password
+ * gate, whatever); the console does not care HOW you authenticate. It only
+ * needs two things from you: the headers to put on each GraphQL request, and
+ * (optionally) a callback when Hasura rejects a request as unauthenticated.
+ *
+ * `getHeaders` is resolved BEFORE EVERY request (not once at mount), so a token
+ * that rotates or that only exists after login is always current — you do not
+ * rebuild or remount the console when the token changes.
+ */
+export interface EventKitConsoleAuth {
+  /**
+   * Auth headers for each GraphQL request, e.g.
+   * `async () => ({ Authorization: \`Bearer ${await user.getIdToken()}\` })`.
+   * Return `{}` while logged out. Merged over `config.headers`.
+   */
+  getHeaders: () => Record<string, string> | Promise<Record<string, string>>;
+
+  /**
+   * Called when Hasura rejects a request as unauthenticated (expired/invalid
+   * JWT, or a 401). Use it to refresh the token or send the user back to login.
+   * The console surfaces the error either way; this is just the hook to react.
+   */
+  onUnauthenticated?: (info: { message: string }) => void;
+}
+
 export interface EventKitConsoleConfig {
   /**
    * Hasura GraphQL endpoint for the observability source (the DB holding
@@ -17,18 +44,17 @@ export interface EventKitConsoleConfig {
 
   /**
    * Static headers merged into every GraphQL request. Use for a local-dev
-   * `x-hasura-admin-secret`, or a fixed bearer token. Do NOT ship an admin
-   * secret to a public deployment — prefer `getHeaders` with a short-lived
-   * JWT and a read-only Hasura role.
+   * `x-hasura-admin-secret`. Do NOT ship an admin secret to a public
+   * deployment — use `auth` with a short-lived JWT and a read-only Hasura role.
    */
   headers?: Record<string, string>;
 
   /**
-   * Per-request header provider, resolved before each GraphQL call and
-   * merged over `headers`. Use for JWTs that rotate (e.g. Firebase). Async
-   * so the wrapper can refresh a token on demand.
+   * How the console authenticates GraphQL requests. Omit for local dev with a
+   * static admin secret in `headers`; provide it to inject a JWT (or any
+   * per-request auth) from the wrapper. See {@link EventKitConsoleAuth}.
    */
-  getHeaders?: () => Record<string, string> | Promise<Record<string, string>>;
+  auth?: EventKitConsoleAuth;
 
   /**
    * Router basename when the console is mounted under a sub-path (e.g.

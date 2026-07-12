@@ -40,8 +40,12 @@ Everything is passed to `<EventKitConsole config={...} />` in `src/main.tsx`:
   `event_executions` / `job_executions`).
 - `headers` — static headers per GraphQL request. Fine for a local
   `x-hasura-admin-secret`; never for a deployed build.
-- `getHeaders` — async per-request headers. Use for a rotating JWT:
-  `getHeaders: async () => ({ Authorization: \`Bearer ${await getToken()}\` })`.
+- `auth` — the auth strategy you inject. This wrapper owns login (wire in
+  Firebase/Auth0/etc.); the console only calls `auth.getHeaders()` to authorize
+  each request: `auth: { getHeaders: async () => ({ Authorization: \`Bearer ${await getToken()}\` }) }`.
+  Resolved per request, so a rotating JWT stays fresh. Optional
+  `auth.onUnauthenticated` fires when Hasura rejects the token (refresh / bounce
+  to login).
 - `basename` — mount under a sub-path (default `/`).
 - `grafanaProxyPath` — where the log viewer fetches (default `/api/grafana`);
   set `null` to hide logs.
@@ -57,8 +61,8 @@ proxy). The `netlify.toml` here is one example. On any host: serve `dist/`, rout
 Do not ship an admin secret to a public deployment — anything in the client
 bundle is readable. Point the console at a read-only Hasura role
 (`observability_viewer`, select-only on the observability tables) and send a
-short-lived JWT via `getHeaders`. Grafana credentials stay server-side in the
-proxy function (`GRAFANA_*`, never `VITE_`-prefixed).
+short-lived JWT via `auth.getHeaders`. Grafana credentials stay server-side in
+the proxy function (`GRAFANA_*`, never `VITE_`-prefixed).
 
 ## Provisioning the database
 

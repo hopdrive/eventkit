@@ -1,7 +1,8 @@
-import React, { useMemo, useState, Suspense } from 'react';
+import React, { useMemo, useRef, useState, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { ApolloClient, InMemoryCache, ApolloProvider, createHttpLink } from '@apollo/client';
+import { ApolloClient, InMemoryCache, ApolloProvider, createHttpLink, from } from '@apollo/client';
 import { setContext } from '@apollo/client/link/context';
+import { onError } from '@apollo/client/link/error';
 import {
   HomeIcon,
   TableCellsIcon,
@@ -22,28 +23,57 @@ import { ConsoleConfigProvider, useConsoleConfig, type EventKitConsoleConfig } f
 import { useSystemStatus } from './hooks/useSystemStatus';
 import './styles/globals.css';
 
-export type { EventKitConsoleConfig } from './config';
+export type { EventKitConsoleConfig, EventKitConsoleAuth } from './config';
+
+/** Did Hasura reject this as unauthenticated (expired/invalid JWT, access denied)? */
+function isUnauthenticatedError(code: unknown, message: string): boolean {
+  const c = typeof code === 'string' ? code : '';
+  if (c === 'invalid-jwt' || c === 'access-denied' || c === 'invalid-headers') return true;
+  return /jwt|unauthor|not authenticated|access denied/i.test(message);
+}
 
 /**
- * Build the Apollo client from the console config. Headers come from the
- * host wrapper (static `headers` plus an optional async `getHeaders`),
- * resolved per request via `setContext` so a rotating JWT stays fresh. No
- * secret is baked into the bundle — it all flows in from the wrapper's build.
+ * Build the Apollo client from the injected auth strategy. The wrapper owns
+ * login and hands us `config.auth.getHeaders()`, which we resolve BEFORE EVERY
+ * request via `setContext` — so a rotating/late-arriving JWT is always current.
+ *
+ * The client is memoized on the endpoint only; auth is read through a ref, so a
+ * token change or post-login header does NOT rebuild Apollo (which would drop
+ * the cache). No secret is baked into the bundle; it all flows in from the
+ * wrapper. `config.headers` (a local-dev admin secret) is merged underneath.
  */
 function useApolloClient() {
   const config = useConsoleConfig();
+  // Always points at the latest config so the links below resolve current auth.
+  const configRef = useRef(config);
+  configRef.current = config;
+
   return useMemo(() => {
     const httpLink = createHttpLink({ uri: config.graphqlEndpoint });
 
-    const authLink = setContext(async (_op, { headers }) => {
-      const dynamic = config.getHeaders ? await config.getHeaders() : {};
+    const authLink = setContext(async (_op, prevContext) => {
+      const cfg = configRef.current;
+      const authHeaders = cfg.auth ? await cfg.auth.getHeaders() : {};
       return {
-        headers: { ...headers, ...config.headers, ...dynamic },
+        headers: { ...prevContext.headers, ...cfg.headers, ...authHeaders },
       };
     });
 
+    const errorLink = onError(({ graphQLErrors, networkError }) => {
+      const onUnauth = configRef.current.auth?.onUnauthenticated;
+      if (!onUnauth) return;
+      const gqlHit = graphQLErrors?.find(e =>
+        isUnauthenticatedError((e.extensions as { code?: unknown } | undefined)?.code, e.message)
+      );
+      const netHit =
+        networkError && (networkError as { statusCode?: number }).statusCode === 401;
+      if (gqlHit || netHit) {
+        onUnauth({ message: gqlHit?.message ?? (networkError?.message ?? 'Unauthenticated') });
+      }
+    });
+
     return new ApolloClient({
-      link: authLink.concat(httpLink),
+      link: from([errorLink, authLink, httpLink]),
       cache: new InMemoryCache({
         typePolicies: {
           Query: {
@@ -62,8 +92,7 @@ function useApolloClient() {
         query: { fetchPolicy: 'cache-first', errorPolicy: 'all' },
       },
     });
-    // Endpoint / auth are wrapper-stable for the life of the mount; a config
-    // change remounts the console (the wrapper controls that).
+    // Rebuild only if the endpoint changes; auth is read live via configRef.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.graphqlEndpoint]);
 }

@@ -201,8 +201,13 @@ import 'hopdrive-eventkit/console/style.css';
 <EventKitConsole
   config={{
     graphqlEndpoint: import.meta.env.VITE_GRAPHQL_ENDPOINT,
-    // production auth (see step 4): a short-lived JWT, resolved per request
-    getHeaders: async () => ({ Authorization: `Bearer ${await getToken()}` }),
+    // production auth (see step 4): your login owns getting the token; the
+    // console just puts it on each request. Resolved per request, so a rotating
+    // JWT stays fresh without remounting.
+    auth: {
+      getHeaders: async () => ({ Authorization: `Bearer ${await getToken()}` }),
+      onUnauthenticated: () => redirectToLogin(),
+    },
   }}
 />;
 ```
@@ -213,7 +218,7 @@ Config options (full list in [`../template/README.md`](../template/README.md)):
 |--------|--------------|
 | `graphqlEndpoint` | Hasura endpoint for the observability source (required). |
 | `headers` | Static per-request headers. Fine for a local `x-hasura-admin-secret`; never for a deployed build. |
-| `getHeaders` | Async per-request headers. Use for a rotating JWT. Merged over `headers`. |
+| `auth` | Injected auth strategy. `{ getHeaders }` resolves per-request auth headers (a JWT), merged over `headers`; optional `onUnauthenticated` fires on an expired/invalid token. The wrapper owns login. |
 | `basename` | Mount under a sub-path (default `/`). |
 | `grafanaProxyPath` | Log-viewer fetch prefix (default `/api/grafana`); set `null` to hide logs. |
 
