@@ -15,6 +15,16 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    // The console bundle (hopdrive-eventkit/console) externalizes react/react-dom
+    // so it shares ONE React with this host. Dedupe guarantees a single copy even
+    // if a transitive dep pulls its own; pre-bundle the console so its inlined UI
+    // libs are optimized alongside the app.
+    resolve: {
+      dedupe: ['react', 'react-dom'],
+    },
+    optimizeDeps: {
+      include: ['hopdrive-eventkit/console'],
+    },
     server: {
       port: 3000,
       open: true,

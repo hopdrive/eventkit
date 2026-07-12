@@ -9,37 +9,27 @@ import path from 'path';
 // output into the ROOT package's dist so it ships in the npm tarball
 // (root package.json `files: ["dist", ...]`).
 //
-// Every heavy UI dep is EXTERNALIZED: it is not bundled, it resolves from the
-// host wrapper's node_modules at the wrapper's build time. That is why these
-// are optional peerDependencies of hopdrive-eventkit and real dependencies of
-// the create-eventkit-console template. Bundling them would ship a second copy
-// of React et al. into every consumer.
+// Externalization strategy: bundle EVERYTHING except React itself.
+//
+// We tried externalizing all the UI libs (antd, reactflow, apollo, ...) as
+// optional peerDependencies. That broke consumer builds: marking a dep
+// `optional` in peerDependenciesMeta tells Vite 8 / rolldown "this might be
+// absent," so it replaces each import with a `__vite-optional-peer-dep:...`
+// stub — even when the consumer HAS it installed — and the console fails to
+// mount. A single package.json can't say "optional for a core/server consumer"
+// and "required for a console consumer" at the same time.
+//
+// So the console bundle is self-contained: antd/reactflow/recharts/apollo/etc.
+// are inlined. Only react + react-dom stay external, because they MUST be a
+// single instance shared with the host (two Reacts break hooks/context). The
+// consumer dedupes them via resolve.dedupe (the template does this). This keeps
+// the core install lean too — react/react-dom are the only peers now, and
+// they're optional so a server consumer of the core never installs them.
 
-// Match a bare specifier or any subpath of it (e.g. '@apollo/client/link/context',
-// 'react/jsx-runtime'). Order/exactness matters: 'react' must not swallow
-// 'react-dom' or 'react-router-dom' — the `/` boundary in the startsWith guard
-// keeps `react/...` distinct from `react-...`.
-const EXTERNAL_PACKAGES = [
-  'react',
-  'react-dom',
-  'react-router-dom',
-  '@apollo/client',
-  'graphql',
-  'antd',
-  '@ant-design/icons',
-  '@headlessui/react',
-  '@heroicons/react',
-  '@tanstack/react-table',
-  '@tanstack/react-virtual',
-  '@microlink/react-json-view',
-  'framer-motion',
-  'recharts',
-  'reactflow',
-  'jsondiffpatch',
-  'date-fns',
-  'clsx',
-  'yaml',
-];
+// External iff it's react / react-dom or a subpath of them (react/jsx-runtime,
+// react-dom/client). The `/` boundary keeps `react/...` from matching
+// `react-router-dom` (which we DO bundle).
+const EXTERNAL_PACKAGES = ['react', 'react-dom'];
 
 function isExternal(id: string): boolean {
   return EXTERNAL_PACKAGES.some(pkg => id === pkg || id.startsWith(pkg + '/'));

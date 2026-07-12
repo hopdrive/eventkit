@@ -51,7 +51,7 @@
     "build": "node node_modules/vite/bin/vite.js build",
     "build:lib": "npm run build:lib:js && npm run build:lib:types",
     "build:lib:js": "node node_modules/vite/bin/vite.js build --config vite.lib.config.ts",
-    "build:lib:types": "node node_modules/typescript/bin/tsc -p tsconfig.lib.json || true",
+    "build:lib:types": "node node_modules/typescript/bin/tsc -p tsconfig.lib.json; test -s ../dist/console/index.d.ts && test -s ../dist/console/config.d.ts && test -s ../dist/console/EventKitConsole.d.ts",
     "preview": "node node_modules/vite/bin/vite.js preview",
     "codegen": "graphql-codegen --config codegen.ts",
     "codegen:watch": "graphql-codegen --config codegen.ts --watch",

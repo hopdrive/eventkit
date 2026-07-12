@@ -222,10 +222,13 @@ We considered a separate `hopdrive-eventkit-console` package. Rejected: it means
 
 The one real hazard of a subpath is dependency hygiene: a single `package.json` can't install the heavy UI libs (react, antd, reactflow, apollo, ...) for a console consumer while keeping them out of a server/library consumer of the core. Tree-shaking doesn't help — it trims bundled code, not installed `node_modules`.
 
-Resolved by making every UI lib an **optional peerDependency**:
-- `peerDependenciesMeta.<lib>.optional = true` → modern npm does **not** auto-install them, so `npm i hopdrive-eventkit` inside an event-handler function stays lean (the core has zero real deps).
-- The wrapper template lists the same libs as real `dependencies`, so a console host gets them with one install.
-- The library build **externalizes** all of them (`vite.lib.config.ts`), so the published artifact never bundles a second copy of React et al.
+**First attempt (failed):** mark every UI lib an **optional peerDependency**, externalize them all in the library build, and have the template list them as real deps. This kept the core lean, but broke consumer builds. Marking a dep `optional` in `peerDependenciesMeta` tells Vite 8 / rolldown "this might be absent," so it replaces each external import with a `__vite-optional-peer-dep:<pkg>:hopdrive-eventkit` stub — **even when the consumer has the lib installed** — and the console never mounts. `resolve.dedupe` rescued `react`, but the rest stayed stubbed. A single `package.json` can't say "optional for a server consumer" and "required for a console consumer" for the same dep, and the bundler resolves against the importer's manifest, not the subpath.
+
+**Resolution (D-CON-7): bundle everything except React.** The console library inlines all its UI libs (antd, reactflow, recharts, apollo, framer-motion, ...); only `react` + `react-dom` stay external, because they MUST be a single instance shared with the host (two Reacts break hooks/context). Then:
+- The bundle has no optional-peer imports left to stub — `react`/`react/jsx-runtime` are the only externals, and the template dedupes them (`resolve.dedupe`).
+- `react` + `react-dom` are the **only** peers now, still optional, so `npm i hopdrive-eventkit` in a function installs neither (the core has zero real deps).
+- The wrapper only needs `react`, `react-dom`, and `hopdrive-eventkit` — no 17-line UI dep list to keep in range.
+- Cost: `dist/console` is now ~1.7 MB (it carries antd/reactflow/etc.), and that ships in the one package tarball to every consumer. It's inert bytes on download, not installed dependencies or a second React, so a server consumer's `node_modules` graph and cold start are unaffected. Acceptable trade for a working single-package console.
 
 ### Shape
 
@@ -236,8 +239,8 @@ console/
     EventKitConsole.tsx  # the exported component (was App.tsx); builds Apollo from config
     index.ts             # library entry (barrel) → built by vite.lib.config.ts
     index.tsx            # standalone dev app entry (reads env, mounts the component)
-  vite.lib.config.ts     # library build → root dist/console (externalizes UI peers)
-  tsconfig.lib.json      # emits index.d.ts alongside
+  vite.lib.config.ts     # library build → root dist/console (externalizes ONLY react/react-dom)
+  tsconfig.lib.json      # emits index.d.ts alongside (build:lib:types asserts it shipped)
   netlify/functions/
     grafanaProxyCore.ts  # host-agnostic Loki proxy (pure fn)
     grafana-proxy.ts     # thin Netlify adapter over the core
@@ -245,7 +248,7 @@ console/
 
 package.json (root):
   exports "./console" + "./console/style.css"
-  optional peerDependencies (UI libs) + peerDependenciesMeta
+  optional peerDependencies: react + react-dom only
   sideEffects: ["**/*.css"]           # so the css import isn't shaken away
   build:console → release pipeline     # builds dist/console before changeset publish
 ```
@@ -261,5 +264,5 @@ Config flows in as a prop (`graphqlEndpoint`, `headers`/`getHeaders`, `basename`
 ### Follow-ups
 
 - **D-CON-6 — `create-eventkit-console`**: promote `console/template` to an `npm create` initializer (nicer than raw degit). Low priority.
-- **Types debt**: `build:lib:types` emits declarations with `noEmitOnError:false` over the ~186 pre-existing console type errors (Phase C3). The public surface (`EventKitConsole`, `EventKitConsoleConfig`) is clean; deep component types firm up as C3 lands.
+- **Types debt**: `build:lib:types` emits declarations with `noEmitOnError:false` over the pre-existing console type errors (Phase C3) — tsc exits non-zero but still writes the `.d.ts`. The step ignores that exit and instead **asserts** `dist/console/{index,config,EventKitConsole}.d.ts` shipped, so a real emit failure fails the build loudly (the earlier `tsc || true` silently shipped a typeless package). The public surface (`EventKitConsole`, `EventKitConsoleConfig`) is clean; deep component types firm up as C3 lands.
 - **Optional `./console/server` export**: if consumers want the proxy from the package instead of a copied template file, add a small Node build for `grafanaProxyCore` and a `./console/server` subpath. Deferred — the template copy is enough today.

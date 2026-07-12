@@ -26,7 +26,7 @@ import 'hopdrive-eventkit/console/style.css';
 <EventKitConsole config={{ graphqlEndpoint: import.meta.env.VITE_GRAPHQL_ENDPOINT }} />
 ```
 
-The UI libs (react, antd, reactflow, apollo, ...) are **optional peerDependencies** of `hopdrive-eventkit`, so a server/library consumer of the core never installs them. The wrapper template lists them as real dependencies — that is how a console host actually gets them. See `template/` and `docs/planning/console-migration-plan.md` §14.
+The console bundle inlines its UI libs (antd, reactflow, apollo, recharts, ...). Only `react` and `react-dom` are external — they must be a single instance shared with the host — and they are **optional peerDependencies** of `hopdrive-eventkit`, so a server/library consumer of the core never installs them. The wrapper just needs `react`, `react-dom`, and `hopdrive-eventkit`. See `template/` and `docs/planning/console-migration-plan.md` §14.
 
 ### Config
 

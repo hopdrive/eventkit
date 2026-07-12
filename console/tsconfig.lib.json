@@ -1,4 +1,10 @@
 {
+  // Declaration-only build for the published library types (dist/console/*.d.ts).
+  // noEmitOnError:false so the ~pre-existing console type debt (Phase C3) does not
+  // block emit — tsc still writes declarations and exits non-zero. build:lib:types
+  // ignores that exit but then ASSERTS the public d.ts actually shipped, so a real
+  // emit failure fails the build loudly instead of silently shipping no types
+  // (the old `tsc || true` masked exactly that).
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
