@@ -48,11 +48,21 @@ export default defineConfig(({ mode }) => {
         output: {
           // Perf fix P9: split the heavyweights so the initial route doesn't pay for
           // reactflow/recharts, and vendor code caches independently of app code.
-          manualChunks: {
-            reactflow: ['reactflow'],
-            recharts: ['recharts'],
-            apollo: ['@apollo/client', 'graphql'],
-            react: ['react', 'react-dom', 'react-router-dom'],
+          // Function form required: vite 8's Rolldown bundler dropped the object
+          // form. Match order matters — reactflow/recharts before the bare react
+          // check, and /react/ path-delimited so react-* packages don't match.
+          manualChunks(id: string) {
+            if (!id.includes('node_modules')) return;
+            if (id.includes('reactflow')) return 'reactflow';
+            if (id.includes('recharts')) return 'recharts';
+            if (id.includes('@apollo/client') || id.includes('/graphql/')) return 'apollo';
+            if (
+              id.includes('react-router-dom') ||
+              id.includes('react-dom') ||
+              id.includes('/react/')
+            ) {
+              return 'react';
+            }
           },
         },
       },
