@@ -6,7 +6,9 @@ This directory is **both** the development home of the console **and** the sourc
 
 ## How consumers use it
 
-The console is a component. A host wrapper passes it config (endpoint + auth); the wrapper owns hosting. Scaffold the wrapper:
+**Setting one up from scratch?** Follow [`docs/getting-started.md`](docs/getting-started.md) — it walks the whole thing end to end: provision the observability DB, add it as a Hasura source, define the relationships (with copy-pasteable metadata), create the read-only role, point eventkit's writer at it, then scaffold and deploy the wrapper.
+
+The short version: the console is a component. A host wrapper passes it config (endpoint + auth); the wrapper owns hosting. Scaffold the wrapper:
 
 ```bash
 npx degit hopdrive/eventkit/console/template my-eventkit-console

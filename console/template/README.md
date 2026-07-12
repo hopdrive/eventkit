@@ -6,6 +6,11 @@ and does one thing itself: hand the console your endpoint and auth. All the page
 queries, and UI live in the package, so upgrading the console is a version bump
 here, not a re-fork.
 
+> First time? This template is only the front end. The full setup (observability
+> database, Hasura source + relationships, read-only role, and the eventkit
+> writer) is in the console's
+> [getting-started guide](https://github.com/hopdrive/eventkit/blob/main/console/docs/getting-started.md).
+
 ## Scaffold it
 
 ```bash
