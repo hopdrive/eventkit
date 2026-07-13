@@ -1,6 +1,6 @@
 {
   "name": "hopdrive-eventkit",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Source-agnostic business-event execution framework. The successor to @hopdrive/hasura-event-detector.",
   "type": "module",
   "main": "dist/cjs/index.js",
@@ -231,8 +231,12 @@
     "react-dom": "^18.2.0"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true },
-    "react-dom": { "optional": true }
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.4",
