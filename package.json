@@ -209,7 +209,7 @@
     "version": "changeset version && npm install --package-lock-only --ignore-scripts",
     "release": "npm run build && npm run smoke:bundle && npm run build:console && changeset publish",
     "prepare": "npm run build",
-    "attw": "attw --pack . --profile node16",
+    "attw": "attw --pack . --profile node16 --exclude-entrypoints ./console ./console/style.css",
     "test:coverage": "vitest run --coverage",
     "docs:compile": "node scripts/docs-compile.cjs",
     "mutation": "stryker run"
