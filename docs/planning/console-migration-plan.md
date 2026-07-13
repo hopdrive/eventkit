@@ -209,3 +209,64 @@ Shipped from live design feedback on the flow page:
   (rAF stops) behaves like a pause instead of skipping to the end. Between execution
   bursts nothing is marked running — truthful: the chain is waiting on event delivery
   or debounce in the queue, not executing in any node.
+
+## 14. Export model: shipping the console as a package subpath (2026-07-12)
+
+The original plan (§5/§7) deployed the console straight from this repo to a HopDrive Netlify site via `console-ci.yml`. Once eventkit went open source, baking a HopDrive-specific deploy (and its secrets) into the public repo stopped making sense. A consumer needs to stand the console up against **their** observability DB, on **their** host.
+
+**Decision (D-CON-5):** ship the console as a mountable component from the existing package — `hopdrive-eventkit/console` — not as a second published package, and not as a repo you fork. A consumer writes a tiny host wrapper that owns config + hosting and imports the UI. We provide that wrapper as a scaffoldable template.
+
+### Why a subpath and not a second package
+
+We considered a separate `hopdrive-eventkit-console` package. Rejected: it means two publishes to keep in lockstep and more release ceremony. A subpath keeps one package, one version, one `changeset publish`.
+
+The one real hazard of a subpath is dependency hygiene: a single `package.json` can't install the heavy UI libs (react, antd, reactflow, apollo, ...) for a console consumer while keeping them out of a server/library consumer of the core. Tree-shaking doesn't help — it trims bundled code, not installed `node_modules`.
+
+**Attempt 1 (failed): externalize the UI libs as optional peerDependencies.** Marking a dep `optional` in `peerDependenciesMeta` tells Vite 8 / rolldown "this might be absent," so it replaces each external import with a `__vite-optional-peer-dep:<pkg>:hopdrive-eventkit` stub — **even when the consumer has the lib installed** — and the console never mounts. `resolve.dedupe` rescued `react`, but the rest stayed stubbed.
+
+**Attempt 2 (failed): bundle everything except React.** Inline antd/reactflow/apollo/etc., leave only `react`/`react-dom` external. This broke differently. Several of those libs (reactflow, recharts, @microlink/react-json-view, ...) are "mixed" modules: an ESM entry that still calls `require("react")` internally. With react externalized, rolldown can't route that bundled-CJS `require("react")` to the external ESM import, so it emits a `__require("react")` shim that **throws in the browser** (compiled into `dist/console/*.js`, so no wrapper config can fix it). `commonjsOptions.transformMixedEsModules` is a no-op — rolldown ignores it.
+
+**Resolution (D-CON-7): externalize React AND every React-coupled UI lib; bundle only our own source + small pure-ESM utils (clsx, date-fns, yaml, jsondiffpatch).** The React-coupled libs are externalized so the CONSUMER's app build bundles them — and there React is NOT external (the app bundles its own single copy), so their `require("react")` resolves normally and no shim is produced. This is how the legacy console shipped. Then:
+- No shim in the shipped dist (we don't bundle the mixed-CJS libs at all).
+- The externalized UI libs are **not** declared as peers (that is what triggered attempt 1's stubs); the wrapper template lists them as real dependencies, so the bare imports resolve from the consumer's node_modules. A hand-rolled wrapper that forgets one gets a clear "cannot resolve" error, not a silent stub.
+- `react` + `react-dom` are the only declared peers, still optional, so `npm i hopdrive-eventkit` in a function installs neither (the core has zero real deps). The template dedupes them (`resolve.dedupe`) and excludes the console from `optimizeDeps` (pre-bundling it would reintroduce the external-react require shim in dev).
+- Cost: the wrapper carries the ~15-line React-coupled dep list again (the price of a bundler that can't do CJS-require-of-external-react interop). `dist/console` is small again (~350 KB).
+
+### Shape
+
+```
+console/
+  src/
+    config.tsx           # EventKitConsoleConfig + context (all env coupling lives here)
+    EventKitConsole.tsx  # the exported component (was App.tsx); builds Apollo from config
+    index.ts             # library entry (barrel) → built by vite.lib.config.ts
+    index.tsx            # standalone dev app entry (reads env, mounts the component)
+  vite.lib.config.ts     # library build → root dist/console (externalizes react + React-coupled UI libs)
+  tsconfig.lib.json      # emits index.d.ts alongside (build:lib:types asserts it shipped)
+  netlify/functions/
+    grafanaProxyCore.ts  # host-agnostic Loki proxy (pure fn)
+    grafana-proxy.ts     # thin Netlify adapter over the core
+  template/              # the wrapper a consumer scaffolds (degit)
+
+package.json (root):
+  exports "./console" + "./console/style.css"
+  optional peerDependencies: react + react-dom only
+  sideEffects: ["**/*.css"]           # so the css import isn't shaken away
+  build:console → release pipeline     # builds dist/console before changeset publish
+```
+
+Config flows in as a prop (`graphqlEndpoint`, `headers`, `auth`, `basename`, `grafanaProxyPath`); nothing reads `import.meta.env`. That puts the env boundary in the wrapper's build, so no runtime config.json or container is needed — one built artifact runs against any endpoint.
+
+**Auth is injected, not owned (D-CON-8).** The console does not know how you log in. The wrapper runs its own auth (Firebase/Auth0/a password gate) and passes an `auth` strategy: `getHeaders()` (resolved before every GraphQL request, so a rotating/late JWT is always current) and optional `onUnauthenticated()` (fired when Hasura rejects the token). The console builds its Apollo client from that — an `errorLink` + `setContext` link that read the LATEST config via a ref, so a token refresh or post-login header change never rebuilds the client or drops the cache. `config.headers` (a static local-dev admin secret) merges underneath. This is the ADR-024 injected-seam pattern applied to the UI: the console owns the transport wiring, the wrapper owns the credential.
+
+### What changed vs §5/§7
+
+- `console-ci.yml` no longer deploys. It verifies both builds (standalone app + library) and checks the library artifact exists. HopDrive's own production console becomes a private wrapper repo built from the published package — the same path any consumer walks.
+- The library is published as part of the normal release (`npm run release` → `build:console` → `dist/console` → `changeset publish`), auth via the existing OIDC Trusted Publishing.
+- The Grafana proxy is no longer Netlify-only: `grafanaProxyCore.ts` is a plain function; the Netlify function is a ~10-line adapter, and the same core drops into express/hono/any host.
+
+### Follow-ups
+
+- **D-CON-6 — `create-eventkit-console`**: promote `console/template` to an `npm create` initializer (nicer than raw degit). Low priority.
+- **Types debt**: `build:lib:types` emits declarations with `noEmitOnError:false` over the pre-existing console type errors (Phase C3) — tsc exits non-zero but still writes the `.d.ts`. The step ignores that exit and instead **asserts** `dist/console/{index,config,EventKitConsole}.d.ts` shipped, so a real emit failure fails the build loudly (the earlier `tsc || true` silently shipped a typeless package). The public surface (`EventKitConsole`, `EventKitConsoleConfig`) is clean; deep component types firm up as C3 lands.
+- **Optional `./console/server` export**: if consumers want the proxy from the package instead of a copied template file, add a small Node build for `grafanaProxyCore` and a `./console/server` subpath. Deferred — the template copy is enough today.

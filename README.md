@@ -244,6 +244,20 @@ Generic and config-driven, registered via `kit.use(plugin, config?)`. I/O plugin
 > provide your own `store.update(id, fields)`. These plugins are generic (ADR-024), so
 > there's no separate `@hopdrive/app-eventkit` package. HopDrive just supplies config presets.
 
+## Observability console
+
+The web UI that renders what `observability` + `graphqlSink` write ships as a
+component from this package: `hopdrive-eventkit/console`. You mount it in a small
+wrapper you own that passes it your endpoint and auth, so the same published
+console runs against any deployment.
+
+```bash
+npx degit hopdrive/eventkit/console/template my-console
+```
+
+Full setup (database, Hasura source + relationships, read-only role, wiring the
+writer) is in [`console/docs/getting-started.md`](console/docs/getting-started.md).
+
 ## Platform adapters
 
 Map a deployment runtime's invocation, time budget, and response. Register via `kit.use`;

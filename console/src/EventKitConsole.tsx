@@ -1,15 +1,16 @@
-import React, { useState, Suspense } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useLocation, useSearchParams } from 'react-router-dom';
-import { ApolloClient, InMemoryCache, ApolloProvider, createHttpLink } from '@apollo/client';
+import React, { useMemo, useRef, useState, Suspense } from 'react';
+import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { ApolloClient, InMemoryCache, ApolloProvider, createHttpLink, from } from '@apollo/client';
+import { setContext } from '@apollo/client/link/context';
+import { onError } from '@apollo/client/link/error';
 import {
   HomeIcon,
   TableCellsIcon,
   ChartBarIcon,
   Cog6ToothIcon,
-  MagnifyingGlassIcon,
   ArrowPathIcon,
 } from '@heroicons/react/24/outline';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import OverviewDashboard from './components/OverviewDashboard';
 import InvocationsTable from './components/InvocationsTable';
 import Analytics from './components/Analytics';
@@ -18,45 +19,83 @@ const FlowDiagram = React.lazy(() => import('./components/FlowDiagram'));
 import Settings from './components/Settings';
 import CorrelationSearch from './components/CorrelationSearch';
 import { PollingProvider, usePolling } from './contexts/PollingContext';
+import { ConsoleConfigProvider, useConsoleConfig, type EventKitConsoleConfig } from './config';
 import { useSystemStatus } from './hooks/useSystemStatus';
 import './styles/globals.css';
 
-// Apollo Client configuration
-const httpLink = createHttpLink({
-  uri: import.meta.env.VITE_GRAPHQL_ENDPOINT || 'http://localhost:8080/v1/graphql',
-  headers: {
-    ...(import.meta.env.VITE_HASURA_ADMIN_SECRET && {
-      'x-hasura-admin-secret': import.meta.env.VITE_HASURA_ADMIN_SECRET,
-    }),
-  },
-});
+export type { EventKitConsoleConfig, EventKitConsoleAuth } from './config';
 
-const client = new ApolloClient({
-  link: httpLink,
-  cache: new InMemoryCache({
-    typePolicies: {
-      Query: {
-        fields: {
-          invocations: {
-            merge(existing = [], incoming) {
-              return incoming;
+/** Did Hasura reject this as unauthenticated (expired/invalid JWT, access denied)? */
+function isUnauthenticatedError(code: unknown, message: string): boolean {
+  const c = typeof code === 'string' ? code : '';
+  if (c === 'invalid-jwt' || c === 'access-denied' || c === 'invalid-headers') return true;
+  return /jwt|unauthor|not authenticated|access denied/i.test(message);
+}
+
+/**
+ * Build the Apollo client from the injected auth strategy. The wrapper owns
+ * login and hands us `config.auth.getHeaders()`, which we resolve BEFORE EVERY
+ * request via `setContext` — so a rotating/late-arriving JWT is always current.
+ *
+ * The client is memoized on the endpoint only; auth is read through a ref, so a
+ * token change or post-login header does NOT rebuild Apollo (which would drop
+ * the cache). No secret is baked into the bundle; it all flows in from the
+ * wrapper. `config.headers` (a local-dev admin secret) is merged underneath.
+ */
+function useApolloClient() {
+  const config = useConsoleConfig();
+  // Always points at the latest config so the links below resolve current auth.
+  const configRef = useRef(config);
+  configRef.current = config;
+
+  return useMemo(() => {
+    const httpLink = createHttpLink({ uri: config.graphqlEndpoint });
+
+    const authLink = setContext(async (_op, prevContext) => {
+      const cfg = configRef.current;
+      const authHeaders = cfg.auth ? await cfg.auth.getHeaders() : {};
+      return {
+        headers: { ...prevContext.headers, ...cfg.headers, ...authHeaders },
+      };
+    });
+
+    const errorLink = onError(({ graphQLErrors, networkError }) => {
+      const onUnauth = configRef.current.auth?.onUnauthenticated;
+      if (!onUnauth) return;
+      const gqlHit = graphQLErrors?.find(e =>
+        isUnauthenticatedError((e.extensions as { code?: unknown } | undefined)?.code, e.message)
+      );
+      const netHit =
+        networkError && (networkError as { statusCode?: number }).statusCode === 401;
+      if (gqlHit || netHit) {
+        onUnauth({ message: gqlHit?.message ?? (networkError?.message ?? 'Unauthenticated') });
+      }
+    });
+
+    return new ApolloClient({
+      link: from([errorLink, authLink, httpLink]),
+      cache: new InMemoryCache({
+        typePolicies: {
+          Query: {
+            fields: {
+              invocations: {
+                merge(_existing = [], incoming) {
+                  return incoming;
+                },
+              },
             },
           },
         },
+      }),
+      defaultOptions: {
+        watchQuery: { fetchPolicy: 'cache-and-network', errorPolicy: 'all' },
+        query: { fetchPolicy: 'cache-first', errorPolicy: 'all' },
       },
-    },
-  }),
-  defaultOptions: {
-    watchQuery: {
-      fetchPolicy: 'cache-and-network',
-      errorPolicy: 'all',
-    },
-    query: {
-      fetchPolicy: 'cache-first',
-      errorPolicy: 'all',
-    },
-  },
-});
+    });
+    // Rebuild only if the endpoint changes; auth is read live via configRef.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.graphqlEndpoint]);
+}
 
 const navigation = [
   { name: 'Overview', href: '/', icon: HomeIcon },
@@ -266,7 +305,9 @@ function Layout({
   );
 }
 
-function App() {
+function ConsoleRoutes() {
+  const config = useConsoleConfig();
+  const client = useApolloClient();
   const [correlationSearch, setCorrelationSearch] = useState('');
 
   // Load time range from localStorage or default to '24h'
@@ -289,6 +330,7 @@ function App() {
     <ApolloProvider client={client}>
       <PollingProvider>
         <Router
+          basename={config.basename}
           future={{
             v7_startTransition: true,
             v7_relativeSplatPath: true,
@@ -324,4 +366,23 @@ function App() {
   );
 }
 
-export default App;
+/**
+ * The EventKit observability console, as a mountable component.
+ *
+ * Mount it in a host wrapper (see the `create-eventkit-console` template) and
+ * pass your endpoint + auth via `config`:
+ *
+ *   import { EventKitConsole } from 'hopdrive-eventkit/console';
+ *   import 'hopdrive-eventkit/console/style.css';
+ *
+ *   <EventKitConsole config={{ graphqlEndpoint: import.meta.env.VITE_GRAPHQL_ENDPOINT }} />
+ */
+export function EventKitConsole({ config }: { config: EventKitConsoleConfig }) {
+  return (
+    <ConsoleConfigProvider config={config}>
+      <ConsoleRoutes />
+    </ConsoleConfigProvider>
+  );
+}
+
+export default EventKitConsole;

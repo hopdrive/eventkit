@@ -6,7 +6,9 @@
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
   "types": "./dist/esm/index.d.ts",
-  "sideEffects": false,
+  "sideEffects": [
+    "**/*.css"
+  ],
   "exports": {
     ".": {
       "import": {
@@ -167,7 +169,14 @@
         "types": "./dist/cjs/flow/index.d.ts",
         "default": "./dist/cjs/flow/index.js"
       }
-    }
+    },
+    "./console": {
+      "import": {
+        "types": "./dist/console/index.d.ts",
+        "default": "./dist/console/index.js"
+      }
+    },
+    "./console/style.css": "./dist/console/style.css"
   },
   "bin": {
     "eventkit-flow": "bin/eventkit-flow.mjs"
@@ -191,15 +200,16 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:contracts": "tsc -p tsconfig.typetest.json",
     "smoke:bundle": "node scripts/bundle-smoke.cjs",
+    "build:console": "npm --prefix console ci && npm --prefix console run build:lib",
     "docs": "typedoc",
     "lint": "eslint src --ext .ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "changeset": "changeset",
     "version": "changeset version && npm install --package-lock-only --ignore-scripts",
-    "release": "npm run build && npm run smoke:bundle && changeset publish",
+    "release": "npm run build && npm run smoke:bundle && npm run build:console && changeset publish",
     "prepare": "npm run build",
-    "attw": "attw --pack . --profile node16",
+    "attw": "attw --pack . --profile node16 --exclude-entrypoints ./console ./console/style.css",
     "test:coverage": "vitest run --coverage",
     "docs:compile": "node scripts/docs-compile.cjs",
     "mutation": "stryker run"
@@ -215,6 +225,15 @@
     "access": "public"
   },
   "dependencies": {},
+  "comment:peerDependencies": "React only, for the hopdrive-eventkit/console subpath. The console bundle inlines its other UI libs (antd, reactflow, apollo, ...); react/react-dom stay external so there is ONE React shared with the host (two Reacts break hooks/context). Both are optional (peerDependenciesMeta) so a server/library consumer of the core never installs them.",
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true },
+    "react-dom": { "optional": true }
+  },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.4",
     "@changesets/cli": "^2.27.0",

@@ -1,14 +1,12 @@
-# EventKit Console — CI/CD (Phase C2 of docs/planning/console-migration-plan.md §7)
+# EventKit Console — CI (verify only).
 #
-# Path-filtered to console/** so the library CI (ci.yml) is completely
-# independent. Verifies every PR touching the console and deploys:
-#   - PR        → Netlify preview deploy (alias pr-<number>), URL in the job log
-#   - main push → Netlify production deploy
-#
-# One-time setup (repo settings → secrets): NETLIFY_AUTH_TOKEN, NETLIFY_SITE_ID.
-# Until those exist, the deploy steps skip cleanly and CI is verify-only.
-# NOTE (S1): the deployed site must NOT receive VITE_HASURA_ADMIN_SECRET —
-# auth is the observability_viewer role / proxy per plan §5 (D-CON-1).
+# Path-filtered to console/** so the library CI (ci.yml) stays independent.
+# This repo is open source: it does NOT deploy anywhere. It verifies that both
+# builds are green —
+#   - the standalone app build (local-dev / self-host path)
+#   - the library build that ships as hopdrive-eventkit/console
+# A consumer deploys their own wrapper (see console/template); the actual
+# publish of the library happens in release.yml via `npm run build:console`.
 
 name: Console CI
 
@@ -28,7 +26,7 @@ defaults:
     working-directory: console
 
 jobs:
-  verify-and-deploy:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,36 +47,21 @@ jobs:
         continue-on-error: true
         run: npx tsc --noEmit 2>&1 | tail -1
 
-      - name: Build
+      - name: Build standalone app
         run: npm run build
 
-      - name: Check Netlify secrets
-        id: netlify
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-        run: |
-          if [ -n "$NETLIFY_AUTH_TOKEN" ] && [ -n "$NETLIFY_SITE_ID" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Netlify secrets not set — skipping deploy (verify-only)."
-          fi
+      - name: Build library (hopdrive-eventkit/console)
+        run: npm run build:lib
 
-      - name: Deploy preview (PR)
-        if: github.event_name == 'pull_request' && steps.netlify.outputs.configured == 'true'
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+      # Guard the published artifact: the library entry, its stylesheet, and the
+      # public types must all be emitted into the root package's dist/console.
+      - name: Verify library output
+        working-directory: .
         run: |
-          npx netlify-cli@17 deploy --dir dist --alias "pr-${{ github.event.number }}" \
-            --message "PR #${{ github.event.number }} @ ${{ github.sha }}"
-
-      - name: Deploy production (main)
-        if: github.event_name == 'push' && steps.netlify.outputs.configured == 'true'
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-        run: |
-          npx netlify-cli@17 deploy --dir dist --prod \
-            --message "main @ ${{ github.sha }}"
+          for f in dist/console/index.js dist/console/style.css dist/console/index.d.ts; do
+            if [ ! -s "$f" ]; then
+              echo "::error::missing or empty library artifact: $f"
+              exit 1
+            fi
+          done
+          echo "library artifacts present: index.js, style.css, index.d.ts"
