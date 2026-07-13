@@ -9,28 +9,51 @@ import path from 'path';
 // output into the ROOT package's dist so it ships in the npm tarball
 // (root package.json `files: ["dist", ...]`).
 //
-// Externalization strategy: bundle EVERYTHING except React itself.
+// Externalization strategy: externalize React AND every React-coupled UI lib;
+// bundle only our own source plus small pure-ESM utils (clsx, date-fns, yaml,
+// jsondiffpatch). Two earlier attempts failed and led here:
 //
-// We tried externalizing all the UI libs (antd, reactflow, apollo, ...) as
-// optional peerDependencies. That broke consumer builds: marking a dep
-// `optional` in peerDependenciesMeta tells Vite 8 / rolldown "this might be
-// absent," so it replaces each import with a `__vite-optional-peer-dep:...`
-// stub — even when the consumer HAS it installed — and the console fails to
-// mount. A single package.json can't say "optional for a core/server consumer"
-// and "required for a console consumer" at the same time.
+//  1. Externalize the UI libs as OPTIONAL peerDependencies. Vite 8 / rolldown
+//     stubs an optional-peer import (`__vite-optional-peer-dep:...`) even when
+//     the consumer HAS it installed, so the console never mounts.
+//  2. Bundle everything except react. Several UI libs (reactflow, recharts,
+//     react-json-view, ...) are "mixed" modules whose ESM entry still calls
+//     `require("react")` internally. With react externalized, rolldown can't
+//     route that CJS require to the external ESM import, so it emits a
+//     `__require("react")` shim that THROWS in the browser. `commonjsOptions`
+//     doesn't help — rolldown ignores it.
 //
-// So the console bundle is self-contained: antd/reactflow/recharts/apollo/etc.
-// are inlined. Only react + react-dom stay external, because they MUST be a
-// single instance shared with the host (two Reacts break hooks/context). The
-// consumer dedupes them via resolve.dedupe (the template does this). This keeps
-// the core install lean too — react/react-dom are the only peers now, and
-// they're optional so a server consumer of the core never installs them.
+// The fix that works: don't bundle the React-coupled libs at all. Externalize
+// them so the CONSUMER's app build bundles them, where React is NOT external
+// (the app bundles its own single copy), so `require("react")` resolves
+// normally and no shim is produced. This is how the legacy console shipped.
+//
+// These libs are intentionally NOT declared as peers of hopdrive-eventkit (that
+// is what caused attempt 1's stubs). The wrapper template lists them as real
+// dependencies, so the bare imports in this bundle resolve from the consumer's
+// node_modules. react/react-dom are the only declared peers (optional), for
+// dedupe guidance.
+const EXTERNAL_PACKAGES = [
+  'react',
+  'react-dom',
+  'react-router-dom',
+  '@apollo/client',
+  'graphql',
+  'antd',
+  '@ant-design/icons',
+  '@headlessui/react',
+  '@heroicons/react',
+  '@tanstack/react-table',
+  '@tanstack/react-virtual',
+  '@microlink/react-json-view',
+  'framer-motion',
+  'recharts',
+  'reactflow',
+];
 
-// External iff it's react / react-dom or a subpath of them (react/jsx-runtime,
-// react-dom/client). The `/` boundary keeps `react/...` from matching
-// `react-router-dom` (which we DO bundle).
-const EXTERNAL_PACKAGES = ['react', 'react-dom'];
-
+// External iff it's one of the above or a subpath of it (e.g.
+// '@apollo/client/link/context', 'react/jsx-runtime'). The `/` boundary keeps
+// `react/...` distinct from `react-router-dom`, which is listed explicitly.
 function isExternal(id: string): boolean {
   return EXTERNAL_PACKAGES.some(pkg => id === pkg || id.startsWith(pkg + '/'));
 }

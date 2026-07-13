@@ -15,15 +15,18 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
-    // The console bundle (hopdrive-eventkit/console) externalizes react/react-dom
-    // so it shares ONE React with this host. Dedupe guarantees a single copy even
-    // if a transitive dep pulls its own; pre-bundle the console so its inlined UI
-    // libs are optimized alongside the app.
+    // The console (hopdrive-eventkit/console) is a prebuilt ESM bundle that
+    // externalizes react + its React-coupled UI libs (reactflow, apollo, ...).
+    // THIS app build bundles those (react is not external here), so their inner
+    // require("react") resolves normally. Dedupe keeps a single React. Do NOT
+    // pre-bundle the console itself: optimizeDeps would try to convert its
+    // external react import into a browser require() that throws — exclude it so
+    // Vite serves its ESM as-is and resolves each bare import individually.
     resolve: {
       dedupe: ['react', 'react-dom'],
     },
     optimizeDeps: {
-      include: ['hopdrive-eventkit/console'],
+      exclude: ['hopdrive-eventkit'],
     },
     server: {
       port: 3000,

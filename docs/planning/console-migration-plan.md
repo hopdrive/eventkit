@@ -222,13 +222,15 @@ We considered a separate `hopdrive-eventkit-console` package. Rejected: it means
 
 The one real hazard of a subpath is dependency hygiene: a single `package.json` can't install the heavy UI libs (react, antd, reactflow, apollo, ...) for a console consumer while keeping them out of a server/library consumer of the core. Tree-shaking doesn't help — it trims bundled code, not installed `node_modules`.
 
-**First attempt (failed):** mark every UI lib an **optional peerDependency**, externalize them all in the library build, and have the template list them as real deps. This kept the core lean, but broke consumer builds. Marking a dep `optional` in `peerDependenciesMeta` tells Vite 8 / rolldown "this might be absent," so it replaces each external import with a `__vite-optional-peer-dep:<pkg>:hopdrive-eventkit` stub — **even when the consumer has the lib installed** — and the console never mounts. `resolve.dedupe` rescued `react`, but the rest stayed stubbed. A single `package.json` can't say "optional for a server consumer" and "required for a console consumer" for the same dep, and the bundler resolves against the importer's manifest, not the subpath.
+**Attempt 1 (failed): externalize the UI libs as optional peerDependencies.** Marking a dep `optional` in `peerDependenciesMeta` tells Vite 8 / rolldown "this might be absent," so it replaces each external import with a `__vite-optional-peer-dep:<pkg>:hopdrive-eventkit` stub — **even when the consumer has the lib installed** — and the console never mounts. `resolve.dedupe` rescued `react`, but the rest stayed stubbed.
 
-**Resolution (D-CON-7): bundle everything except React.** The console library inlines all its UI libs (antd, reactflow, recharts, apollo, framer-motion, ...); only `react` + `react-dom` stay external, because they MUST be a single instance shared with the host (two Reacts break hooks/context). Then:
-- The bundle has no optional-peer imports left to stub — `react`/`react/jsx-runtime` are the only externals, and the template dedupes them (`resolve.dedupe`).
-- `react` + `react-dom` are the **only** peers now, still optional, so `npm i hopdrive-eventkit` in a function installs neither (the core has zero real deps).
-- The wrapper only needs `react`, `react-dom`, and `hopdrive-eventkit` — no 17-line UI dep list to keep in range.
-- Cost: `dist/console` is now ~1.7 MB (it carries antd/reactflow/etc.), and that ships in the one package tarball to every consumer. It's inert bytes on download, not installed dependencies or a second React, so a server consumer's `node_modules` graph and cold start are unaffected. Acceptable trade for a working single-package console.
+**Attempt 2 (failed): bundle everything except React.** Inline antd/reactflow/apollo/etc., leave only `react`/`react-dom` external. This broke differently. Several of those libs (reactflow, recharts, @microlink/react-json-view, ...) are "mixed" modules: an ESM entry that still calls `require("react")` internally. With react externalized, rolldown can't route that bundled-CJS `require("react")` to the external ESM import, so it emits a `__require("react")` shim that **throws in the browser** (compiled into `dist/console/*.js`, so no wrapper config can fix it). `commonjsOptions.transformMixedEsModules` is a no-op — rolldown ignores it.
+
+**Resolution (D-CON-7): externalize React AND every React-coupled UI lib; bundle only our own source + small pure-ESM utils (clsx, date-fns, yaml, jsondiffpatch).** The React-coupled libs are externalized so the CONSUMER's app build bundles them — and there React is NOT external (the app bundles its own single copy), so their `require("react")` resolves normally and no shim is produced. This is how the legacy console shipped. Then:
+- No shim in the shipped dist (we don't bundle the mixed-CJS libs at all).
+- The externalized UI libs are **not** declared as peers (that is what triggered attempt 1's stubs); the wrapper template lists them as real dependencies, so the bare imports resolve from the consumer's node_modules. A hand-rolled wrapper that forgets one gets a clear "cannot resolve" error, not a silent stub.
+- `react` + `react-dom` are the only declared peers, still optional, so `npm i hopdrive-eventkit` in a function installs neither (the core has zero real deps). The template dedupes them (`resolve.dedupe`) and excludes the console from `optimizeDeps` (pre-bundling it would reintroduce the external-react require shim in dev).
+- Cost: the wrapper carries the ~15-line React-coupled dep list again (the price of a bundler that can't do CJS-require-of-external-react interop). `dist/console` is small again (~350 KB).
 
 ### Shape
 
@@ -239,7 +241,7 @@ console/
     EventKitConsole.tsx  # the exported component (was App.tsx); builds Apollo from config
     index.ts             # library entry (barrel) → built by vite.lib.config.ts
     index.tsx            # standalone dev app entry (reads env, mounts the component)
-  vite.lib.config.ts     # library build → root dist/console (externalizes ONLY react/react-dom)
+  vite.lib.config.ts     # library build → root dist/console (externalizes react + React-coupled UI libs)
   tsconfig.lib.json      # emits index.d.ts alongside (build:lib:types asserts it shipped)
   netlify/functions/
     grafanaProxyCore.ts  # host-agnostic Loki proxy (pure fn)
