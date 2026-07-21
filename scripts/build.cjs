@@ -15,6 +15,11 @@ function run(cmd) {
 }
 
 function build() {
+  // `clean` must only remove dist/esm and dist/cjs, never all of dist: npm re-runs
+  // `prepare` (this build) while packing during `changeset publish`, AFTER
+  // build:console has written dist/console. A whole-dist clean here is what shipped
+  // 0.4.x-0.6.0 without dist/console. The console build cleans its own output dir
+  // (emptyOutDir in console/vite.lib.config.ts).
   run('npm run clean');
 
   // Each module build emits its own co-located declarations (dist/esm/*.d.ts under the
