@@ -314,14 +314,20 @@ export function batchJobsActionHandler(config: BatchJobsActionConfig): (req: Req
       return json(400, { message: `Unknown trigger_type '${triggerType}' — this service does not define it` });
     }
 
+    // Validate FIRST, in its own frame: any codec rejection is the caller's fault (400,
+    // naming the problem). Only transport/insert failures after that are 500s.
+    let parsed: unknown;
     try {
-      const result = await createBatchJob(executor, def, body.input?.input as never);
+      parsed = def.codec ? def.codec.parse(body.input?.input) : body.input?.input;
+    } catch (err) {
+      return json(400, { message: err instanceof Error ? err.message : String(err) });
+    }
+
+    try {
+      const result = await createBatchJob(executor, def, parsed as never);
       return json(200, { id: result.id });
     } catch (err) {
-      // Codec rejections surface as 400s naming the problem; transport errors as 500s.
-      const message = err instanceof Error ? err.message : String(err);
-      const isValidation = err instanceof Error && err.name !== 'Error' ? true : /invalid|expected|required/i.test(message);
-      return json(isValidation ? 400 : 500, { message });
+      return json(500, { message: err instanceof Error ? err.message : String(err) });
     }
   };
 }
