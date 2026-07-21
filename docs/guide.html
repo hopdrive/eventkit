@@ -569,7 +569,7 @@
 <span class="k">import</span> { netlifyPlatform } <span class="k">from</span> <span class="s">'hopdrive-eventkit/platforms'</span>;
 <span class="k">import</span> { observability, graphqlSink, batch, loopGuard, grafana } <span class="k">from</span> <span class="s">'hopdrive-eventkit/plugins'</span>;
 <span class="k">import</span> { getLogger } <span class="k">from</span> <span class="s">'@hopdrive/sdk-server-logger'</span>;   <span class="c">// app-side; injected into the bridge</span>
-<span class="k">import</span> { batchJobStore } <span class="k">from</span> <span class="s">'../~lib/batchJobStore'</span>;   <span class="c">// app-side store.update(id,fields); built-in graphqlBatchJobStore is planned</span>
+<span class="k">import</span> { baseExecutor } <span class="k">from</span> <span class="s">'../~lib/executor'</span>;   <span class="c">// batch({ executor }) builds the canonical batch_jobs store — no app-side store code</span>
 <span class="k">import</span> auth <span class="k">from</span> <span class="s">'../~lib/functionAuth'</span>;
 <span class="k">import</span> cfg <span class="k">from</span> <span class="s">'../~lib/config.backend'</span>;
 <span class="k">import</span> events <span class="k">from</span> <span class="s">'./events'</span>;
@@ -580,7 +580,7 @@ kit.use(netlifyPlatform);                                 <span class="c">// opt
 <span class="c">// each I/O plugin takes an INJECTED transport — a sink / store / send seam. The plugin</span>
 <span class="c">// stays generic; the destination + secrets arrive as config, never from process.env.</span>
 kit.use(observability, { sink: graphqlSink({ endpoint: cfg.graphqlUrl, adminSecret: cfg.graphqlSecret }) });
-kit.use(batch,     { store: batchJobStore, logFlush: { intervalMs: <span class="s">2000</span> } });
+kit.use(batch,     { executor: baseExecutor, logFlush: { intervalMs: <span class="s">2000</span> } });
 kit.use(loopGuard, hopdriveLoopGuard);   <span class="c">// use the shared preset, don't hand-write the config. it pins the pipe token format</span>
 <span class="c">// the legacy runtime reads. a typo'd separator in your own literal silently mints tokens the old extractor can't parse, and loop suppression goes dark with no error.</span>
 kit.use(grafana,  { logger: getLogger() });   <span class="c">// mode 1 — the SDK owns Loki; eventkit just bridges</span>
@@ -1257,7 +1257,7 @@ jobs: [job(callRide, { retries: <span class="s">3</span> })]   <span class="c">/
 
 kit.use(netlifyPlatform);
 kit.use(observability, { sink: graphqlSink({ endpoint: cfg.graphqlUrl, adminSecret: cfg.graphqlSecret }) });   <span class="c">// ← injected transport (sink)</span>
-kit.use(batch,     { store: batchJobStore });   <span class="c">// app store.update(id,fields); built-in graphqlBatchJobStore planned</span>
+kit.use(batch,     { executor: baseExecutor });   <span class="c">// canonical batch_jobs store built from your executor (or inject store: for tests)</span>
 kit.use(loopGuard, hopdriveLoopGuard);   <span class="c">// shared preset. pins the pipe token format + service id (an optional hop ceiling can hard-stop runaway loops)</span>
 <span class="hl">kit.use(slackAlerts, { send: postToSlack(cfg.slackWebhookUrl) });   <span class="c">// ← pass the plugin + an injected send seam; app holds the secret</span></span>
 
@@ -1490,7 +1490,7 @@ kit.registerEvents(events);</pre>
     <div style="margin-top:38px">
       <h3 style="font-size:22px;letter-spacing:-.01em">The plugin board &mdash; all 13, in one place</h3>
       <p style="color:var(--muted);max-width:80ch;margin:6px 0 20px">Everything that registers on a kit is a plugin, and there are <b>13 prebuilt</b>: <b>4 sources</b> (the ingress, one per kit), the <b>5 cross-cutting plugins</b> (they fire along the per-invocation hook lifecycle), and <b>4 platform adapters</b> (the request/response envelope your function deploys into). The board plots each one by <b>when it acts</b> across a single invocation. Sources at the ingress, the cross-cutting five along the middle, platforms wrapping the whole run. <b>Pick any lane to open its detail.</b> The five cross-cutting plugins have their full spec inline below. Sources and platforms show a short summary and link up to their own subsections (with flow diagrams) above.<br><br>Where each cross-cutting plugin lives follows one rule (ADR-024). If a plugin&rsquo;s behavior is fully determined by injected <i>config</i>, it ships <b>built-in</b> inside <code>eventkit</code>. All five do, loop-guard included (it reads a source-supplied <code>tokenCandidates</code> list, not a hardcoded field — the <code>updated_by</code> convention is the Hasura source&rsquo;s <i>config</i>). A plugin only leaves core if it imports a HopDrive SDK, knows a domain table, or hardcodes a cross-service agreement. HopDrive&rsquo;s leftover layer is just config presets, not logic.</p>
-      <p style="color:var(--muted);max-width:80ch;margin:-8px 0 20px">This is what keeps the I/O plugins generic: each one owns its <i>logic</i> (observability owns the record hierarchy + buffering, batch owns the durable lifecycle, the transports own log/error shaping) but takes its <i>destination</i> as an <b>injected seam</b> — a <code>sink</code> for observability, a <code>store</code> for batch, an injected <code>logger</code> (or direct Loki) for grafana, a <code>send</code> for sentry. The plugin never knows whether it&rsquo;s talking to Hasura, an HTTP collector, the <code>sdk-server-logger</code> queue, or a test spy; the destination + its secrets arrive as config, and <b>no plugin imports a HopDrive SDK</b> — the app injects it (e.g. <code>getLogger()</code> into the grafana bridge). EventKit ships a built-in <code>graphqlSink</code> (and a <code>graphqlBatchJobStore</code> is planned) so HopDrive wires them in one line, while staying trivially testable and swappable.</p>
+      <p style="color:var(--muted);max-width:80ch;margin:-8px 0 20px">This is what keeps the I/O plugins generic: each one owns its <i>logic</i> (observability owns the record hierarchy + buffering, batch owns the durable lifecycle, the transports own log/error shaping) but takes its <i>destination</i> as an <b>injected seam</b> — a <code>sink</code> for observability, a <code>store</code> for batch, an injected <code>logger</code> (or direct Loki) for grafana, a <code>send</code> for sentry. The plugin never knows whether it&rsquo;s talking to Hasura, an HTTP collector, the <code>sdk-server-logger</code> queue, or a test spy; the destination + its secrets arrive as config, and <b>no plugin imports a HopDrive SDK</b> — the app injects it (e.g. <code>getLogger()</code> into the grafana bridge). EventKit ships a built-in <code>graphqlSink</code> and <code>executorBatchJobStore</code> (built automatically by <code>batch({ executor })</code>) so HopDrive wires them in one line, while staying trivially testable and swappable.</p>
 
       <noscript><style>.plugdetail .pspec[hidden]{display:block !important;animation:none;}.plugdetail .pspec{margin:0 0 16px;}.plugboard{display:none;}</style></noscript>
       <div class="fdiag" style="margin:4px 0 16px">
@@ -1636,7 +1636,7 @@ kit.registerEvents(events);</pre>
             <div class="hooks">
               <span class="hk">augmentJobContext</span><span class="hk">onJobStart/End</span><span class="hk">onJobLog</span><span class="hk">onError</span><span class="hk">onFlush</span>
             </div>
-            <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Declares <code>requires: ['source:hasura']</code> (a capability dependency, not a hook). Reads the <code>EventEnvelope</code> (the row), <code>JobContext</code>, <code>JobExecution</code>; uses <code>serializeError</code> / <code>replaceCircularReferences</code>. Config: <code>{ store, logFlush? }</code> — persistence is an injected <code>store.update(id, fields)</code> (a built-in <code>graphqlBatchJobStore</code> is planned; provide your own meanwhile); store-write failures are best-effort, never fatal to the job.</p>
+            <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Declares <code>requires: ['source:hasura']</code> (a capability dependency, not a hook). Reads the <code>EventEnvelope</code> (the row), <code>JobContext</code>, <code>JobExecution</code>; uses <code>serializeError</code> / <code>replaceCircularReferences</code>. Config: <code>{ store | executor, logFlush?, durableRetry? }</code> — pass your GraphQL <code>executor</code> and the plugin builds the canonical <code>batch_jobs</code> store (<code>executorBatchJobStore</code>); inject a hand-rolled <code>store</code> only for tests/portability. Store-write failures are best-effort, never fatal to the job.</p>
             <div class="gain"><b>You get:</b> jobs that survive retries, crashes, and timeouts with full state in <code>batch_jobs</code>, watchable live in the React view — while your job code is just <code>async (ctx) =&gt; {…}</code> reading <code>ctx.input</code>.</div>
           </div>
         </div>
@@ -1677,6 +1677,57 @@ module.exports = {
 });</span></pre>
         </div>
       </div>
+
+      <h4 style="margin:26px 0 8px">Define once: <code>batchJob()</code> + <code>createBatchJob()</code></h4>
+      <p style="font-size:13.5px;color:var(--muted);max-width:84ch;margin:0 0 12px">
+        A batch job's <code>trigger_type</code> string, its input shape, its detector, and its insert path must never drift apart —
+        so they come from <b>one definition</b>. <code>batchJob()</code> holds the string and an optional codec (any object with
+        <code>parse(unknown)</code> — a zod schema drops straight in) and derives the two standard slots: a <code>detector</code>
+        (INSERT of that <code>trigger_type</code>, plus the UPDATE&rarr;<code>pending</code> replay path) and a <code>job()</code>
+        <code>input</code> mapper that parses the row's <code>input</code> into the job's typed <code>ctx.input</code>. The module
+        stays the <b>standard event-module format</b> — nothing new to learn, and Flow tooling reads it unchanged.
+      </p>
+<pre><span class="c">// db-batchjobs/events/batch.created.ar.ts — the ONE place 'ar' exists in this service</span>
+<span class="k">import</span> { defineEvent, job } <span class="k">from</span> <span class="s">'hopdrive-eventkit'</span>;
+<span class="k">import</span> { batchJob } <span class="k">from</span> <span class="s">'hopdrive-eventkit/plugins'</span>;
+<span class="k">import</span> { z } <span class="k">from</span> <span class="s">'zod'</span>;
+<span class="k">import</span> { runAr } <span class="k">from</span> <span class="s">'../jobs/runAr'</span>;
+
+<span class="hl"><span class="k">export const</span> arBatch = batchJob({
+  triggerType: <span class="s">'ar'</span>,
+  input: z.object({ moveId: z.number() }),
+});</span>
+
+<span class="k">export const</span> batchCreatedAr = defineEvent({
+  name: <span class="s">'batch.created.ar'</span>,
+  detector: <span class="hl">arBatch.detector</span>,                          <span class="c">// standard detector slot</span>
+  jobs: [ job(runAr, { name: <span class="s">'runAr'</span>, input: <span class="hl">arBatch.input</span> }) ],  <span class="c">// ctx.input: { moveId: number }</span>
+});</pre>
+      <p style="font-size:13.5px;color:var(--muted);max-width:84ch;margin:14px 0 12px">
+        The same definition is the <b>only sanctioned write path</b>. <code>createBatchJob()</code> validates through the same codec
+        (bad input never reaches the table), stamps the <code>trigger_type</code>, and inserts <code>status:&nbsp;'pending'</code> so the
+        Hasura trigger fires the owning service. <code>uniqueKey</code> forms the legacy dedup key
+        (<code>delay_key = triggerType-uniqueKey</code>); a live collision inserts nothing and reports <code>deduped:&nbsp;true</code>.
+      </p>
+<pre><span class="c">// anywhere in the service — reproduces the real prod row byte-for-byte</span>
+<span class="k">import</span> { createBatchJob } <span class="k">from</span> <span class="s">'hopdrive-eventkit/plugins'</span>;
+
+<span class="k">await</span> createBatchJob(baseExecutor, arBatch, { moveId: <span class="s">770603</span> }, {
+  delayMs: <span class="s">20_000</span>, uniqueKey: <span class="s">'770603'</span>, user: <span class="s">'system'</span>,
+});
+<span class="c">// → { trigger_type:'ar', input:{moveId:770603}, delay_ms:20000, delay_key:'ar-770603', status:'pending', createdby:'system' }</span></pre>
+      <p style="font-size:13.5px;color:var(--muted);max-width:84ch;margin:14px 0 12px">
+        For creation through the GraphQL surface, <code>batchJobsActionHandler({ executor, batchjobs, passphrase? })</code> is a
+        Netlify&nbsp;2.0 handler for a Hasura action shaped <code>createBatchjob(trigger_type, input)</code>. It only accepts
+        trigger_types among the service's own definitions and runs the same codec — the GraphQL surface can never create a job the
+        service doesn't handle or an input it would reject.
+      </p>
+      <p style="font-size:13.5px;color:var(--muted);max-width:84ch;margin:0 0 10px">
+        <b>Routing (monorepo concern, not eventkit's):</b> each service's manifest declares the trigger_types it subscribes to;
+        CI enforces one owner per string across the repo and generates the registry the events-proxy routes by
+        (<code>trigger_type&nbsp;&rarr;&nbsp;service</code>, URL derived from the service name + environment — never stored as data).
+        Unregistered trigger_types keep falling through to the monolith, so claiming a trigger_type in a manifest <i>is</i> the cutover.
+      </p>
 
       </div>
 

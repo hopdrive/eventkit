@@ -74,8 +74,12 @@ exports[`published API surface (value exports per subpath) > matches the frozen 
   ],
   "./plugins": [
     "batch",
+    "batchJob",
+    "batchJobsActionHandler",
     "correlationResolver",
+    "createBatchJob",
     "createTokenCodec",
+    "executorBatchJobStore",
     "grafana",
     "graphqlSink",
     "hopdriveLoopGuard",
@@ -85,6 +89,10 @@ exports[`published API surface (value exports per subpath) > matches the frozen 
   ],
   "./plugins/batch": [
     "batch",
+    "batchJob",
+    "batchJobsActionHandler",
+    "createBatchJob",
+    "executorBatchJobStore",
   ],
   "./plugins/correlation-resolver": [
     "correlationResolver",

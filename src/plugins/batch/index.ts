@@ -26,6 +26,9 @@
 import type { EventKitPlugin, JobContext, JobExecution, LogEntry } from '../../core/index.js';
 import { assertSerializableMetadata, stripNonSerializable } from '../../core/index.js';
 import { getNewRow, getOldRow } from '../hasura-shared/payload.js';
+import { executorBatchJobStore, type BatchJobGqlExecutor } from './batch-job.js';
+
+export * from './batch-job.js';
 
 /** Lifecycle states of a `batch_jobs` row (§12.1). */
 export type BatchJobStatus = 'pending' | 'ready' | 'delaying' | 'processing' | 'done' | 'error' | 'timeout';
@@ -56,7 +59,17 @@ export interface BatchJobStore {
 }
 
 export interface BatchConfig {
-  store: BatchJobStore;
+  /**
+   * Persistence adapter. Provide EITHER `store` (hand-rolled, for tests/portability)
+   * OR `executor` (below) — `executor` builds the canonical GraphQL store.
+   */
+  store?: BatchJobStore;
+  /**
+   * A mutate-capable GraphQL executor (structurally `@hopdrive/sdk-core`'s
+   * GqlExecutor). When given, the plugin builds the canonical `batch_jobs` store
+   * from it (`executorBatchJobStore`) — no per-service store plumbing.
+   */
+  executor?: BatchJobGqlExecutor;
   /** End-of-job flush is always on. These add periodic flushing for the live-watch UI (§12.6). */
   logFlush?: {
     intervalMs?: number;
@@ -104,10 +117,11 @@ const serializeError = (err: JobExecution['error']): unknown =>
   err ? { name: err.name, message: err.message, ...(err.code ? { code: err.code } : {}) } : undefined;
 
 export function batch(config: BatchConfig): EventKitPlugin {
-  if (!config?.store || typeof config.store.update !== 'function') {
-    throw new Error('batch() requires a `store` with an `update(id, fields)` method.');
+  const store = config?.store ?? (config?.executor ? executorBatchJobStore(config.executor) : undefined);
+  if (!store || typeof store.update !== 'function') {
+    throw new Error('batch() requires a `store` with an `update(id, fields)` method, or an `executor` to build one from.');
   }
-  const { store, durableRetry } = config;
+  const { durableRetry } = config;
   const everyNEntries = config.logFlush?.everyNEntries;
   const intervalMs = config.logFlush?.intervalMs;
 
