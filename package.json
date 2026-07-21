@@ -1,6 +1,6 @@
 {
   "name": "hopdrive-eventkit",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Source-agnostic business-event execution framework. The successor to @hopdrive/hasura-event-detector.",
   "type": "module",
   "main": "dist/cjs/index.js",
@@ -192,7 +192,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "clean": "rimraf dist",
+    "clean": "rimraf dist/esm dist/cjs",
     "build": "node scripts/build.cjs",
     "build:cjs": "tsc -p tsconfig.cjs.json",
     "build:esm": "tsc -p tsconfig.esm.json",
@@ -248,8 +248,8 @@
     "@vitest/coverage-v8": "^4.1.9",
     "esbuild": "^0.28.1",
     "fast-check": "^3.23.2",
-    "rimraf": "^5.0.5",
-    "typedoc": "^0.26.0",
+    "rimraf": "^6.1.3",
+    "typedoc": "^0.28.20",
     "typescript": "^5.4.0",
     "vitest": "^4.1.9"
   }
