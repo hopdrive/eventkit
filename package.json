@@ -192,7 +192,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "clean": "rimraf dist",
+    "clean": "rimraf dist/esm dist/cjs",
     "build": "node scripts/build.cjs",
     "build:cjs": "tsc -p tsconfig.cjs.json",
     "build:esm": "tsc -p tsconfig.esm.json",
