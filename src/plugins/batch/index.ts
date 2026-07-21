@@ -23,7 +23,17 @@
 // configure `durableRetry`; on a failed job the plugin schedules a NEW delayed
 // `batch_jobs` row via `store.enqueueDelayed` (delay_ms + delay_key dedup), exactly
 // like the legacy `createDelayedBatchJob`. Off by default (no behavior change).
-import type { EventKitPlugin, JobContext, JobExecution, LogEntry } from '../../core/index.js';
+//
+// STUCK-ROW SAFETY NET (opt-in): the row lifecycle above only moves the row when a
+// JOB runs for it (onJobStart → 'processing', onJobEnd → done/error/…). A row that
+// triggered the function but never had a job run (an unrecognized `trigger_type`
+// matched no detector, or a detector/`prepare` threw before dispatch) would sit in
+// `pending` forever with no trace. With `safetyNet` on, `onInvocationEnd` notices
+// that zero jobs ran for the triggering row and flips it `pending → error` via the
+// race-safe `store.markStranded` (which only touches a still-pre-processing row), then
+// logs loudly so it's visible in Grafana and retryable via the existing UPDATE→pending
+// path. Ports event-handlers PR #476. Off by default (no behavior change).
+import type { EventKitPlugin, InvocationContext, InvocationResult, JobContext, JobExecution, LogEntry } from '../../core/index.js';
 import { assertSerializableMetadata, stripNonSerializable } from '../../core/index.js';
 import { getNewRow, getOldRow } from '../hasura-shared/payload.js';
 
@@ -53,6 +63,15 @@ export interface BatchJobStore {
   update(id: string | number, fields: BatchJobUpdate): void | Promise<void>;
   /** Insert a delayed retry row (delay_ms/delay_key dedup). Required only if `durableRetry` is configured. */
   enqueueDelayed?(spec: DelayedBatchJobSpec): void | Promise<void>;
+  /**
+   * Race-safe reconcile for the stuck-row safety net. Flip the row to `error` with the
+   * given `output` ONLY IF it is still in a pre-processing state (`pending`/`ready`/
+   * `delaying`). Use an atomic conditional update (e.g. `where status IN (...)`) that
+   * MUST NOT clobber a row a job legitimately advanced to `processing`/`done`/`error`.
+   * Return `true` only when it actually flipped a stranded row, so the plugin logs/alerts
+   * just for a real save. Required only if `safetyNet` is configured.
+   */
+  markStranded?(id: string | number, output: unknown): boolean | Promise<boolean>;
 }
 
 export interface BatchConfig {
@@ -74,6 +93,16 @@ export interface BatchConfig {
     triggerType?: string;
     user?: string;
   };
+  /**
+   * Opt-in stuck-row safety net (ports event-handlers PR #476). When the triggering
+   * `batch_jobs` row triggered this function but NO job ran for it (an unrecognized
+   * `trigger_type` matched no detector, or a detector/`prepare` crashed before dispatch),
+   * the row would otherwise stay `pending` forever with no trace. With this on, the plugin
+   * atomically flips such a row to `error` (via `store.markStranded`, race-safe) and emits
+   * a loud error log so it's visible and retryable via the existing UPDATE→pending path.
+   * Requires `store.markStranded`. Off by default (no behavior change).
+   */
+  safetyNet?: boolean;
 }
 
 type RowId = string | number;
@@ -87,7 +116,7 @@ interface TriggeringRow {
   delayKey?: string;
 }
 
-const rowFor = (ctx: JobContext): TriggeringRow | undefined => {
+const rowFor = (ctx: { envelope: { payload: unknown } }): TriggeringRow | undefined => {
   const payload = ctx.envelope.payload;
   const row = (getNewRow(payload as never) ?? getOldRow(payload as never)) as
     | { id?: RowId; input?: unknown; trigger_type?: string; sequence?: number; delay_key?: string }
@@ -107,7 +136,10 @@ export function batch(config: BatchConfig): EventKitPlugin {
   if (!config?.store || typeof config.store.update !== 'function') {
     throw new Error('batch() requires a `store` with an `update(id, fields)` method.');
   }
-  const { store, durableRetry } = config;
+  const { store, durableRetry, safetyNet } = config;
+  if (safetyNet && typeof store.markStranded !== 'function') {
+    throw new Error('batch({ safetyNet: true }) requires a `store` with a `markStranded(id, output)` method.');
+  }
   const everyNEntries = config.logFlush?.everyNEntries;
   const intervalMs = config.logFlush?.intervalMs;
 
@@ -233,6 +265,43 @@ export function batch(config: BatchConfig): EventKitPlugin {
         await safeUpdate(row.id, { status, output: composeOutput(row.id, undefined, serializeError(execution.error)) });
       }
       buffers.delete(row.id);
+    },
+
+    // Stuck-row safety net (opt-in). The job lifecycle only moves the row when a job
+    // RUNS for it; a row that triggered the function but matched no detector (bad
+    // trigger_type) or whose detector/`prepare` threw before dispatch never reaches
+    // onJobStart, so it would sit `pending` forever. onInvocationEnd always runs (the
+    // runtime records + flushes in a `finally`), so here we notice "zero jobs ran for
+    // this triggering row" and flip it `pending → error` race-safely, then log loudly.
+    async onInvocationEnd(ctx: InvocationContext, result: InvocationResult) {
+      if (!safetyNet) return;
+      // A job ran iff some detected event dispatched at least one job execution. When one
+      // did, the onJobStart/onJobEnd hooks already own this row's status, so leave it be.
+      if (result.events.some(e => e.jobs.length > 0)) return;
+      const row = rowFor(ctx);
+      if (!row) return; // not a batch_jobs-triggered invocation we can reconcile
+      const output = {
+        safetyNet: true,
+        reason:
+          'No job ran for this triggering batch_jobs row (unmatched trigger_type or a pre-dispatch crash); it would otherwise stay pending forever.',
+        invocationId: String(ctx.invocationId),
+        correlationId: String(ctx.correlationId),
+      };
+      try {
+        const flipped = await store.markStranded!(row.id, output);
+        if (flipped) {
+          // A real save gets a loud framework log (onLog → Grafana/obs sink). Race-safe:
+          // a legitimately-advanced row returns false and never logs.
+          ctx.log.error(
+            'batch safety net: a triggering row was left unprocessed (no job ran) and was flipped pending → error',
+            undefined,
+            { batchJobId: row.id, ...(row.triggerType ? { triggerType: row.triggerType } : {}) },
+          );
+        }
+      } catch {
+        // best-effort: the safety net must never throw out of onInvocationEnd (it can't
+        // be allowed to mask the invocation's real outcome).
+      }
     },
 
     async onFlush() {

@@ -826,6 +826,95 @@ describe('batch', () => {
     const done = updates.find(u => u.fields.status === 'done')!;
     expect((done.fields.output as { result: Record<string, unknown> }).result).toEqual({ sdk: '[sdk excluded]', ok: 'value' });
   });
+
+  // ── Stuck-row safety net (ports event-handlers PR #476) ────────────────────
+  describe('stuck-row safety net', () => {
+    // A detector that never matches an INSERT → no job runs → the triggering row is
+    // stranded (the exact "unrecognized trigger_type" case that stays pending forever).
+    const noMatch = () => hasuraEvent.detector(ctx => ctx.operation === 'DELETE');
+    const logSpy = (sink: string[]) => ({
+      name: 'logspy',
+      onLog: (e: { level: string; message: string }) => {
+        if (e.level === 'error') sink.push(e.message);
+      },
+    });
+
+    it('flips a triggering row that no job ran for to error, and logs once', async () => {
+      const stranded: Array<{ id: string | number; output: unknown }> = [];
+      const errorLogs: string[] = [];
+      const kit = createEventKit(hasuraEvent)
+        .use(logSpy(errorLogs))
+        .use(batch, {
+          store: { update: () => {}, markStranded: (id, output) => void stranded.push({ id, output }) || true },
+          safetyNet: true,
+        })
+        .registerEvents([{ name: asEventName('batch.created'), detector: noMatch(), jobs: [job(() => 'ok', { name: 'proc' })] } as EventModule]);
+      await kit.handle(hasuraInsert({ id: 'row-stuck', input: {}, trigger_type: 'bogus', status: 'pending' }));
+
+      expect(stranded).toHaveLength(1);
+      expect(stranded[0]!.id).toBe('row-stuck');
+      expect((stranded[0]!.output as { safetyNet: boolean }).safetyNet).toBe(true);
+      expect(errorLogs.some(m => /safety net/i.test(m))).toBe(true);
+    });
+
+    it('does not touch the row when a job ran (the lifecycle owns the status)', async () => {
+      const stranded: Array<string | number> = [];
+      const kit = createEventKit(hasuraEvent)
+        .use(batch, {
+          store: { update: () => {}, markStranded: id => void stranded.push(id) || true },
+          safetyNet: true,
+        })
+        .registerEvents([{ name: asEventName('batch.created'), detector: hasuraEvent.detector(ctx => ctx.operation === 'INSERT'), jobs: [job(() => 'ok', { name: 'proc' })] } as EventModule]);
+      await kit.handle(hasuraInsert({ id: 'row-ok', input: {} }));
+
+      expect(stranded).toHaveLength(0);
+    });
+
+    it('a detector crash (job never runs) strands the row too', async () => {
+      const stranded: Array<string | number> = [];
+      const kit = createEventKit(hasuraEvent)
+        .use(batch, {
+          store: { update: () => {}, markStranded: id => void stranded.push(id) || true },
+          safetyNet: true,
+        })
+        .registerEvents([{ name: asEventName('batch.created'), detector: hasuraEvent.detector(() => { throw new Error('detector boom'); }), jobs: [job(() => 'ok', { name: 'proc' })] } as EventModule]);
+      await kit.handle(hasuraInsert({ id: 'row-crash', input: {} }));
+
+      expect(stranded).toEqual(['row-crash']);
+    });
+
+    it('logs only on a real flip: markStranded returning false (raced) does not log or throw', async () => {
+      const errorLogs: string[] = [];
+      const kit = createEventKit(hasuraEvent)
+        .use(logSpy(errorLogs))
+        .use(batch, { store: { update: () => {}, markStranded: () => false }, safetyNet: true })
+        .registerEvents([{ name: asEventName('batch.created'), detector: noMatch(), jobs: [job(() => 'ok', { name: 'proc' })] } as EventModule]);
+      await expect(kit.handle(hasuraInsert({ id: 'row-raced', input: {} }))).resolves.toBeDefined();
+
+      expect(errorLogs.some(m => /safety net/i.test(m))).toBe(false);
+    });
+
+    it('a markStranded throw never escapes onInvocationEnd (best-effort)', async () => {
+      const kit = createEventKit(hasuraEvent)
+        .use(batch, { store: { update: () => {}, markStranded: () => { throw new Error('db down'); } }, safetyNet: true })
+        .registerEvents([{ name: asEventName('batch.created'), detector: noMatch(), jobs: [job(() => 'ok', { name: 'proc' })] } as EventModule]);
+      await expect(kit.handle(hasuraInsert({ id: 'row-dberr', input: {} }))).resolves.toBeDefined();
+    });
+
+    it('off by default: without the flag the row is untouched (matches legacy)', async () => {
+      const stranded: Array<string | number> = [];
+      const kit = createEventKit(hasuraEvent)
+        .use(batch, { store: { update: () => {}, markStranded: id => void stranded.push(id) || true } })
+        .registerEvents([{ name: asEventName('batch.created'), detector: noMatch(), jobs: [job(() => 'ok', { name: 'proc' })] } as EventModule]);
+      await kit.handle(hasuraInsert({ id: 'row-legacy', input: {} }));
+
+      expect(stranded).toHaveLength(0);
+    });
+
+    it('throws at construction when safetyNet is on but the store lacks markStranded', () => {
+      expect(() => batch({ store: { update: () => {} }, safetyNet: true })).toThrow(/markStranded/);
+    });
+  });
 });
 
 describe('transports/grafana (direct Loki mode)', () => {
