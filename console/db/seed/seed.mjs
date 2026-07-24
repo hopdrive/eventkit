@@ -222,6 +222,18 @@ const SOURCE_TABLES = {
   driver: 'drivers',
 };
 
+// Demo origins for the flow canvas' userAction node. Stands in for what a consumer's
+// origin-decoder would persist into invocations.context_data.origin: the decoded client
+// action that started the chain (the object shape is arbitrary, this mirrors the
+// registry pattern in docs/origin-trace-decoding.md). Seeded onto a slice of hasura roots
+// so the console has a demoable origin node without any live frontend.
+const ORIGIN_ACTIONS = [
+  { action: 'move.create', site: 'dealer-portal', purpose: 'dealer creates a move' },
+  { action: 'driver.assign', site: 'admin', purpose: 'dispatcher assigns a driver' },
+  { action: 'appointment.confirm', site: 'confirmations', purpose: 'customer confirms an appointment' },
+  { action: 'invoice.approve', site: 'admin', purpose: 'ops approves an invoice' },
+];
+
 // ---------------------------------------------------------------------------
 // Payload generation (2-10KB, shaped like a real Hasura event)
 // ---------------------------------------------------------------------------
@@ -541,6 +553,12 @@ async function generateStreaming(rng, invocationCount, writers) {
     const recordId = recordIdCounter++;
     const status = rng.weightedPick([['completed', 93], ['failed', 5], ['running', 2]]);
 
+    // A decoded client origin on ~12% of hasura roots (and always the first root), so the
+    // flow canvas' userAction node is demoable. A root with an origin gets a matching
+    // user/role too, so the node's who/when line renders fully.
+    const hasOrigin = sourceSystem === 'hasura' && (i === 0 || rng.bool(0.12));
+    const origin = hasOrigin ? rng.pick(ORIGIN_ACTIONS) : null;
+
     const invocation = {
       id: rng.uuid(),
       created_at: createdAt,
@@ -554,15 +572,17 @@ async function generateStreaming(rng, invocationCount, writers) {
       source_event_id: rng.uuid(),
       source_event_payload: buildPayload(rng, { table, operation, recordId, source_system: sourceSystem }),
       source_event_time: createdAt,
-      source_user_email: rng.bool(0.4) ? rng.pick(['ops@hopdrive.com', 'dispatch@hopdrive.com', 'system@hopdrive.com']) : null,
-      source_user_role: rng.bool(0.4) ? 'admin' : null,
+      source_user_email: origin
+        ? `${origin.site.replace(/[^a-z]/g, '')}@hopdrive.com`
+        : rng.bool(0.4) ? rng.pick(['ops@hopdrive.com', 'dispatch@hopdrive.com', 'system@hopdrive.com']) : null,
+      source_user_role: origin ? 'admin' : rng.bool(0.4) ? 'admin' : null,
       total_duration_ms: rng.int(50, 8000),
       auto_load_modules: true,
       event_modules_directory: null,
       status,
       error_message: status === 'failed' ? 'Unhandled exception during event detection' : null,
       error_stack: status === 'failed' ? `Error: Unhandled exception\n    at detectEvents (index.ts:${rng.int(10, 200)}:${rng.int(1, 40)})` : null,
-      context_data: null,
+      context_data: origin ? { origin } : null,
     };
 
     await generateEventsAndJobsFor(invocation);

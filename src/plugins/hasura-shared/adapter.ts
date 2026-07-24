@@ -29,20 +29,42 @@ import { randomId as sharedRandomId } from '../../core/ids.js';
 
 const randomId = (): string => sharedRandomId('hasura');
 
+/** Config for the Hasura DB-event normalize: token discovery plus the trace-id policy. */
+export interface HasuraEventNormalizeConfig extends HasuraTokenDiscoveryConfig {
+  /**
+   * Adopt the inbound `trace_context.trace_id` as the correlation id when the request
+   * carries no explicit `correlationId`. Default `false`.
+   *
+   * The trace id is a CLIENT-controlled conveyance channel (a browser sends it as
+   * `x-b3-traceid`). Using it as chain identity has two problems: a client that sends
+   * a static trace id per action merges every unrelated chain that used that action
+   * into one, and a client gets to dictate the chain's identity. So by default the
+   * chain's correlation id is minted fresh at the root exactly as if no trace id
+   * arrived, and the raw trace id is surfaced on `meta.sourceTraceId` for a decoder
+   * plugin to read. Set this `true` only when a consumer genuinely wants the old
+   * trace-adoption behavior (e.g. a trusted internal caller that mints real, unique
+   * trace ids per request).
+   */
+  correlationFromTraceId?: boolean;
+}
+
 /**
  * Hasura DB-event payload → EventEnvelope. Tolerant of malformed input: it never
  * throws on a missing field (the detector decides what a missing `operation`
- * means). Correlation id precedence: explicit request → Hasura `trace_context`
- * trace_id → generated.
+ * means). Correlation id precedence: explicit request → generated. The inbound
+ * `trace_context.trace_id` is NOT adopted as the correlation id by default (it is a
+ * client-controlled conveyance channel, surfaced on `meta.sourceTraceId`); set
+ * `correlationFromTraceId: true` to restore the old adopt-the-trace-id behavior.
  */
 export function normalizeHasuraEvent(
   raw: unknown,
   request: RequestContext,
-  config: HasuraTokenDiscoveryConfig = {},
+  config: HasuraEventNormalizeConfig = {},
 ): EventEnvelope<HasuraEventPayload> {
   const payload = (raw ?? {}) as HasuraEventPayload;
   const traceId = payload?.event?.trace_context?.trace_id;
-  const correlationId = asCorrelationId(request.correlationId ?? traceId ?? randomId());
+  const traceCorrelation = config.correlationFromTraceId ? traceId : undefined;
+  const correlationId = asCorrelationId(request.correlationId ?? traceCorrelation ?? randomId());
   const receivedAt = payload?.created_at ? new Date(payload.created_at) : new Date();
 
   // Surface source attributes into envelope.meta so source-agnostic plugins
@@ -56,6 +78,9 @@ export function normalizeHasuraEvent(
   if (payload?.id) meta.sourceEventId = payload.id;
   if (session['x-hasura-user-email']) meta.sourceUserEmail = session['x-hasura-user-email'];
   if (session['x-hasura-role']) meta.sourceUserRole = session['x-hasura-role'];
+  // Surface the raw inbound trace id (conveyance only) so a decoder plugin can read it.
+  // This is independent of whether it was adopted as the correlation id above.
+  if (traceId) meta.sourceTraceId = traceId;
 
   // Inbound token discovery (ADR-039.2): the row write field then session variables.
   const row = getNewRow(payload) ?? getOldRow(payload);

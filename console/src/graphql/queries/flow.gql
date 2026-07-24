@@ -20,6 +20,12 @@ fragment invocationTree on invocations {
   created_at
   updated_at
 
+  # Origin node (chain root only): who/when + the decoded client origin.
+  source_event_time
+  source_user_email
+  source_user_role
+  context_data
+
   source_job_execution {
     id
     job_name

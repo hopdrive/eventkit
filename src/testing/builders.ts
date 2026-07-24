@@ -28,7 +28,7 @@ export interface HasuraEventOptions {
   triggerName?: string;
   /** The event id (defaults to a generated one). */
   id?: string;
-  /** A `trace_context.trace_id` — the source folds it into the correlation id when no request id is given. */
+  /** A `trace_context.trace_id` — surfaced on `meta.sourceTraceId` (conveyance only; not adopted as the correlation id unless the source sets `correlationFromTraceId`). */
   traceId?: string;
 }
 

@@ -81,6 +81,7 @@ exports[`published API surface (value exports per subpath) > matches the frozen 
     "hopdriveLoopGuard",
     "loopGuard",
     "observability",
+    "originDecoder",
     "sentry",
   ],
   "./plugins/batch": [
@@ -100,6 +101,9 @@ exports[`published API surface (value exports per subpath) > matches the frozen 
   ],
   "./plugins/observability/graphql-sink": [
     "graphqlSink",
+  ],
+  "./plugins/origin-decoder": [
+    "originDecoder",
   ],
   "./plugins/transports/grafana": [
     "grafana",

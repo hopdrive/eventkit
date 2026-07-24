@@ -15,5 +15,6 @@ export * from './observability/graphql-sink.js';
 export * from './batch/index.js';
 export * from './loop-guard/index.js';
 export * from './correlation-resolver/index.js';
+export * from './origin-decoder/index.js';
 export * from './grafana/index.js';
 export * from './sentry/index.js';

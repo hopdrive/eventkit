@@ -236,6 +236,7 @@ Generic and config-driven, registered via `kit.use(plugin, config?)`. I/O plugin
 | `graphqlSink` | `/plugins/observability/graphql-sink` | the built-in observability `sink` (bulk-upsert to Hasura) |
 | `batch` | `/plugins/batch` | `{ store, logFlush? }`. Durability. `requires:['source:hasura']` |
 | `loopGuard` | `/plugins/loop-guard` | `{ field?, serviceId?, codec? }`. Inbound provenance into `envelope.meta` |
+| `originDecoder` | `/plugins/origin-decoder` | `{ decode }`. Runs your decoder over the inbound trace id (`meta.sourceTraceId`) and injects the result into `context_data.origin` ([docs](docs/origin-trace-decoding.md)) |
 | `grafana` | `/plugins/transports/grafana` | `{ logger }` (bridge to sdk-server-logger) or `{ grafana: { endpoint, auth } }` (direct Loki) |
 | `sentry` | `/plugins/transports/sentry` | `{ dsn?, send? }`. Forwards `onError` |
 
@@ -330,6 +331,10 @@ createEventKit(...)`), and pass `--export <name>` if it isn't the default or `ki
   in [`docs/planning/console-expected-flows.md`](docs/planning/console-expected-flows.md).
 - **API reference (generated).** Run `npm run docs` to build `docs/api/`, the exhaustive,
   every-symbol reference generated from source, so it can't drift.
+- **Origin trace decoding.** [`docs/origin-trace-decoding.md`](docs/origin-trace-decoding.md)
+  covers how a frontend sends a registered action id as `x-b3-traceid` (conveyance only, not
+  the correlation id) and the `originDecoder` plugin that runs your decoder over it and
+  surfaces the result in `context_data`.
 - **Design record.** The architecture decisions, ADRs, kickoff, decision register, and raw
   planning conversations live in [`docs/planning/`](docs/planning/) (see its `README.md`
   for the read order).
