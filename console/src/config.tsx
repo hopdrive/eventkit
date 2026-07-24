@@ -69,6 +69,25 @@ export interface EventKitConsoleConfig {
    * `null` to hide the log viewer when there is no proxy.
    */
   grafanaProxyPath?: string | null;
+
+  /**
+   * Optional lookup that turns the `source_user_email` on a chain root into a
+   * display profile for the user-action origin node. The console is
+   * deliberately schema-agnostic about identity: the host wrapper decides
+   * where profiles live (a users table, an IdP, a static map) and returns a
+   * name and avatar URL. Return null (or omit the resolver) and the node falls
+   * back to the raw email with an initials avatar. Called lazily per distinct
+   * email and cached for the life of the page; errors are treated as null.
+   */
+  userResolver?: (email: string) => OriginUserProfile | null | undefined | Promise<OriginUserProfile | null | undefined>;
+}
+
+/** What {@link EventKitConsoleConfig.userResolver} returns for a known user. */
+export interface OriginUserProfile {
+  /** Human name shown instead of the raw email. */
+  displayName?: string | null;
+  /** Absolute image URL for the avatar; an initials circle renders when absent. */
+  avatarUrl?: string | null;
 }
 
 const DEFAULTS = {

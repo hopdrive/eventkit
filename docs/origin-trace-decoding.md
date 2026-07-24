@@ -118,6 +118,16 @@ carries a Hasura-minted trace id (a real span id), not the client's action id, s
 decoder returns null and the plugin is a no-op on every hop. That is on purpose: origin is
 a property of the chain root.
 
+On the canvas, the user-action node takes over the ORIGIN marker from the root invocation
+(the click started the chain, not the row write), it is clickable like every other node
+(a detail drawer with the decoded fields, the raw origin, and cross-navigation to the
+root), and it shows who acted. Identity display is host-configurable: the console config
+accepts an optional `userResolver(email)` that returns `{ displayName, avatarUrl }` from
+wherever the host keeps profiles (a users table, an IdP, a static map). Without a
+resolver, the node falls back to the raw email and an initials avatar. The resolver is
+called once per distinct email and cached; the reference wiring lives in the dev harness
+(`console/src/index.tsx`).
+
 ## Minting on the frontend
 
 There is no minting. A button carries its registered action id in a data attribute, and the

@@ -183,7 +183,7 @@ export const NodeRow: React.FC<{
       {sub && <div className='text-[11px] text-gray-500 dark:text-gray-400'>{sub}</div>}
     </div>
     <div className='flex items-center gap-2 flex-shrink-0'>
-      <StatusChip status={status} />
+      {status !== undefined && <StatusChip status={status} />}
       {onClick && <ChevronRightIcon className='h-3.5 w-3.5 text-gray-400' />}
     </div>
   </button>

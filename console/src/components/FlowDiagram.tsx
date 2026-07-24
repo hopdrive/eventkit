@@ -17,6 +17,7 @@ import ReactFlow, {
 import { AnimatePresence } from 'framer-motion';
 import { useInvocationTreeFlowQuery } from '../types/generated';
 import InvocationDetailDrawer from './InvocationDetailDrawer';
+import UserActionDetailDrawer from './UserActionDetailDrawer';
 import 'reactflow/dist/style.css';
 import JobDetailDrawer from './JobDetailDrawer';
 import EventDetailDrawer from './EventDetailDrawer';
@@ -308,14 +309,28 @@ const FlowDiagramContent = () => {
   // nodes — they never restyle what's already rendered. Off-contract flagging adds
   // an outline ring only (no size/content change).
   const displayData = useMemo(() => {
-    // Chain orientation: mark the ORIGIN (no source_job_id — the invocation that
-    // caused everything downstream) and the entered/"viewing" invocation, so a user
-    // landing mid-chain can orient instantly. Always on — not a toggle.
+    // Chain orientation: mark the ORIGIN (what actually started the chain) and the
+    // entered/"viewing" invocation, so a user landing mid-chain can orient instantly.
+    // Always on — not a toggle. When a root invocation has a decoded user action,
+    // THAT node is the origin (the click started the chain, not the row write), so
+    // the root invocation hands its ORIGIN marker to the user-action node.
     const originIds = new Set(invocations.filter(i => !i.source_job_id).map(i => i.id));
+    const rootsWithUserAction = new Set(
+      flowData.nodes.filter(n => n.type === 'userAction').map(n => String(n.id).slice('origin-'.length))
+    );
     let nodes = flowData.nodes.map(n =>
       n.type === 'invocation'
-        ? { ...n, data: { ...n.data, isOrigin: originIds.has(n.id), isFocus: n.id === invocationId } }
-        : n
+        ? {
+            ...n,
+            data: {
+              ...n.data,
+              isOrigin: originIds.has(n.id) && !rootsWithUserAction.has(n.id),
+              isFocus: n.id === invocationId,
+            },
+          }
+        : n.type === 'userAction'
+          ? { ...n, data: { ...n.data, isOrigin: true } }
+          : n
     );
     let edges = flowData.edges;
     if (!compareResult && !showUndetected) return { nodes, edges };
@@ -794,6 +809,15 @@ const FlowDiagramContent = () => {
       <AnimatePresence>
         {drawerOpen && selectedNode && (
           <>
+            {selectedNode.type === 'userAction' && (
+              <UserActionDetailDrawer
+                node={selectedNode}
+                isOpen={drawerOpen}
+                onClose={handleDrawerClose}
+                onOpenNodeId={handleOpenNodeId}
+                onBack={drawerHistory.length > 0 ? handleDrawerBack : undefined}
+              />
+            )}
             {selectedNode.type === 'invocation' && (
               <InvocationDetailDrawer
                 node={selectedNode}
