@@ -35,6 +35,10 @@ export { SOURCE_META_KEYS } from './source-meta.js';
 export type { TokenCodec, TokenCodecConfig, TokenComponents } from './tracking-token.js';
 export { createTokenCodec, isCorrelationIdShape } from './tracking-token.js';
 
+// ── Origin-id codec (a pure core primitive: structured trace/correlation ids) ──
+export type { DecodedOriginId, EncodeOriginIdInput } from './origin-id.js';
+export { encodeOriginId, decodeOriginId, isOriginId, ORIGIN_ID_MAGIC, ORIGIN_ID_VERSION } from './origin-id.js';
+
 // ── Loggers ───────────────────────────────────────────────────────────────
 export type { LogLevel, LogEntry, DetectorLogger, HandlerLogger, JobLogger } from './logger.js';
 

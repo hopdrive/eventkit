@@ -120,6 +120,16 @@
         "default": "./dist/cjs/plugins/correlation-resolver/index.js"
       }
     },
+    "./plugins/origin-decoder": {
+      "import": {
+        "types": "./dist/esm/plugins/origin-decoder/index.d.ts",
+        "default": "./dist/esm/plugins/origin-decoder/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/plugins/origin-decoder/index.d.ts",
+        "default": "./dist/cjs/plugins/origin-decoder/index.js"
+      }
+    },
     "./plugins/transports/grafana": {
       "import": {
         "types": "./dist/esm/plugins/grafana/index.d.ts",

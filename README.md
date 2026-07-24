@@ -236,6 +236,7 @@ Generic and config-driven, registered via `kit.use(plugin, config?)`. I/O plugin
 | `graphqlSink` | `/plugins/observability/graphql-sink` | the built-in observability `sink` (bulk-upsert to Hasura) |
 | `batch` | `/plugins/batch` | `{ store, logFlush? }`. Durability. `requires:['source:hasura']` |
 | `loopGuard` | `/plugins/loop-guard` | `{ field?, serviceId?, codec? }`. Inbound provenance into `envelope.meta` |
+| `originDecoder` | `/plugins/origin-decoder` | `{ decode?, originNames? }`. Decodes a structured origin id from the correlation id into `context_data.origin` ([docs](docs/origin-id.md)) |
 | `grafana` | `/plugins/transports/grafana` | `{ logger }` (bridge to sdk-server-logger) or `{ grafana: { endpoint, auth } }` (direct Loki) |
 | `sentry` | `/plugins/transports/sentry` | `{ dsn?, send? }`. Forwards `onError` |
 
@@ -330,6 +331,9 @@ createEventKit(...)`), and pass `--export <name>` if it isn't the default or `ki
   in [`docs/planning/console-expected-flows.md`](docs/planning/console-expected-flows.md).
 - **API reference (generated).** Run `npm run docs` to build `docs/api/`, the exhaustive,
   every-symbol reference generated from source, so it can't drift.
+- **Origin ids.** [`docs/origin-id.md`](docs/origin-id.md) covers the structured
+  trace/correlation id a frontend mints (the format, minting it as `x-b3-traceid`, and the
+  `originDecoder` plugin that surfaces it in `context_data`).
 - **Design record.** The architecture decisions, ADRs, kickoff, decision register, and raw
   planning conversations live in [`docs/planning/`](docs/planning/) (see its `README.md`
   for the read order).
