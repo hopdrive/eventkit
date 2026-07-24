@@ -1,117 +1,156 @@
 import { describe, it, expect } from 'vitest';
 import { createEventKit, defineEvent, job } from '../../index.js';
 import type { EventKitPlugin, InvocationContext } from '../../core/index.js';
-import { encodeOriginId } from '../../core/origin-id.js';
-import { webhook, type WebhookDetectorContext } from '../source-webhook/index.js';
+import { hasuraEvent } from '../source-hasura.js';
+import type { HasuraEventPayload, HasuraOperation } from '../hasura-shared/types.js';
 import { loopGuard } from '../loop-guard/index.js';
-import { originDecoder } from '../origin-decoder/index.js';
+import { originDecoder, type OriginDecoder } from '../origin-decoder/index.js';
 
-const acme = () => webhook({ vendor: 'acme', eventTypeHeader: 'x-acme-event' });
+type Row = Record<string, unknown>;
+
+// A Hasura DB-event payload. `traceId` becomes event.trace_context.trace_id (the client's
+// x-b3-traceid); `updatedBy` seeds the row write field loop-guard reads for chaining.
+function payload(
+  newRow: Row | null,
+  opts: { traceId?: string; updatedBy?: string; op?: HasuraOperation } = {},
+): HasuraEventPayload {
+  const row = opts.updatedBy && newRow ? { ...newRow, updated_by: opts.updatedBy } : newRow;
+  return {
+    id: 'evt-1',
+    created_at: '2026-06-28T12:00:00.000Z',
+    trigger: { name: 'appointments' },
+    table: { schema: 'public', name: 'appointments' },
+    event: {
+      op: opts.op ?? 'INSERT',
+      data: { old: null, new: row },
+      session_variables: { 'x-hasura-role': 'admin' },
+      ...(opts.traceId ? { trace_context: { trace_id: opts.traceId } } : {}),
+    },
+    delivery_info: { max_retries: 0, current_retry: 0 },
+  } as HasuraEventPayload;
+}
 
 const alwaysDetects = () =>
   defineEvent({
-    name: 'vendor.ping',
-    detector: acme().detector((ctx: WebhookDetectorContext) => ctx.eventType === 'ping'),
+    name: 'row.touched',
+    detector: hasuraEvent.detector(() => true),
     jobs: [job(() => ({}))],
   });
 
 // Captures the final request.meta the invocation ran with (what observability serializes
-// as context_data). onInvocationStart runs after configureInvocation, so it sees the
-// origin object originDecoder contributed.
-function captureMeta(sink: { meta?: Record<string, unknown> }): () => EventKitPlugin {
+// as context_data) plus the resolved correlation id. onInvocationStart runs after
+// configureInvocation, so it sees the origin object originDecoder contributed.
+function capture(sink: { meta?: Record<string, unknown>; correlationId?: string }): () => EventKitPlugin {
   return () => ({
-    name: 'capture-meta',
+    name: 'capture',
     onInvocationStart(ctx: InvocationContext) {
       sink.meta = ctx.request.meta;
+      sink.correlationId = ctx.correlationId;
     },
   });
 }
 
-const fire = (kit: ReturnType<typeof createEventKit>, correlationId?: string) =>
-  kit.handle({ event: 'ping' }, { correlationId, meta: { headers: { 'x-acme-event': 'ping' } } });
+// A consumer-owned decoder: an append-only registry keyed by the FULL trace id.
+const REGISTRY: Record<string, Record<string, unknown>> = {
+  'act-move-create': { action: 'move.create', site: 'dealer-portal', purpose: 'dealer creates a move' },
+};
+const registryDecode: OriginDecoder = traceId => REGISTRY[traceId] ?? null;
 
 describe('originDecoder plugin', () => {
-  it('injects origin meta when the correlation id is a decodable origin id', async () => {
-    const originId = encodeOriginId({ originId: 42, env: 1 });
-    const sink: { meta?: Record<string, unknown> } = {};
-    const kit = createEventKit(acme()).use(originDecoder).use(captureMeta(sink)).registerEvents([alwaysDetects()]);
-
-    await fire(kit, originId);
-
-    expect(sink.meta?.origin).toEqual({ idVersion: 1, originId: 42, env: 1, envName: 'prod' });
+  it('throws at registration when no decode function is supplied', () => {
+    // @ts-expect-error decode is required
+    expect(() => originDecoder({})).toThrow(/requires a `decode` function/);
+    // @ts-expect-error decode must be a function
+    expect(() => originDecoder({ decode: 'nope' })).toThrow(/requires a `decode` function/);
   });
 
-  it('no-ops on a correlation id that is not an origin id', async () => {
+  it('injects the decoded origin verbatim when the trace id is recognized', async () => {
     const sink: { meta?: Record<string, unknown> } = {};
-    const kit = createEventKit(acme()).use(originDecoder).use(captureMeta(sink)).registerEvents([alwaysDetects()]);
-
-    // A plain dashless-hex correlation id (a normal trace root), not an origin id.
-    await fire(kit, 'abcdef0123456789abcdef0123456789');
-
-    expect(sink.meta?.origin).toBeUndefined();
-  });
-
-  it('no-ops (no origin) when no correlation id is supplied', async () => {
-    const sink: { meta?: Record<string, unknown> } = {};
-    const kit = createEventKit(acme()).use(originDecoder).use(captureMeta(sink)).registerEvents([alwaysDetects()]);
-
-    await fire(kit); // source mints a random correlation id, which is not an origin id
-
-    expect(sink.meta?.origin).toBeUndefined();
-  });
-
-  it('resolves originName from options.originNames', async () => {
-    const originId = encodeOriginId({ originId: 7, env: 4 });
-    const sink: { meta?: Record<string, unknown> } = {};
-    const kit = createEventKit(acme())
-      .use(originDecoder, { originNames: { 7: 'driver-app', 42: 'confirmations' } })
-      .use(captureMeta(sink))
+    const kit = createEventKit(hasuraEvent())
+      .use(originDecoder, { decode: registryDecode })
+      .use(capture(sink))
       .registerEvents([alwaysDetects()]);
 
-    await fire(kit, originId);
+    await kit.handle(payload({ id: 1 }, { traceId: 'act-move-create' }));
 
     expect(sink.meta?.origin).toEqual({
-      idVersion: 1,
-      originId: 7,
-      originName: 'driver-app',
-      env: 4,
-      envName: 'local',
+      action: 'move.create',
+      site: 'dealer-portal',
+      purpose: 'dealer creates a move',
     });
   });
 
-  it('uses a custom injected decoder', async () => {
+  it('no-ops when the decoder does not recognize the trace id', async () => {
     const sink: { meta?: Record<string, unknown> } = {};
-    // A decoder that treats ANY 32-hex id as origin 9 / env 2, and nothing else.
-    const decode = (id: string) =>
-      /^[0-9a-f]{32}$/.test(id) ? { version: 1, originId: 9, env: 2, envName: 'test', flags: 2 } : null;
-    const kit = createEventKit(acme())
-      .use(originDecoder, { decode })
-      .use(captureMeta(sink))
+    const kit = createEventKit(hasuraEvent())
+      .use(originDecoder, { decode: registryDecode })
+      .use(capture(sink))
       .registerEvents([alwaysDetects()]);
 
-    await fire(kit, 'abcdef0123456789abcdef0123456789'); // not a real origin id
+    await kit.handle(payload({ id: 1 }, { traceId: 'some-unregistered-id' }));
 
-    expect(sink.meta?.origin).toEqual({ idVersion: 1, originId: 9, env: 2, envName: 'test' });
+    expect(sink.meta?.origin).toBeUndefined();
   });
 
-  it('decodes the chain-final correlation id recovered by loop-guard', async () => {
-    // The origin id is the chain root. loop-guard chains the inbound token's correlation
-    // id onto this invocation during augmentEnvelope; originDecoder (configureInvocation,
-    // a later phase) then decodes that recovered id, whatever this hop's own id was.
-    const rootOrigin = encodeOriginId({ originId: 3, env: 1 });
+  it('no-ops when there is no inbound trace id', async () => {
     const sink: { meta?: Record<string, unknown> } = {};
-    const codecCfg = { separator: '|', validateCorrelationId: true };
-    const inboundToken = `hopdrive|${rootOrigin}|origin-job-1`;
-    const kit = createEventKit(acme())
-      // The `candidates` escape hatch feeds loop-guard the inbound token directly, so it
-      // lifts the root correlation id in augmentEnvelope no matter what this hop's id was.
-      .use(loopGuard, { codec: codecCfg, candidates: () => [inboundToken] })
-      .use(originDecoder)
-      .use(captureMeta(sink))
+    const kit = createEventKit(hasuraEvent())
+      .use(originDecoder, { decode: registryDecode })
+      .use(capture(sink))
       .registerEvents([alwaysDetects()]);
 
-    await fire(kit); // this hop's own id is random; loop-guard chains it to rootOrigin
+    await kit.handle(payload({ id: 1 })); // no trace_context
 
-    expect(sink.meta?.origin).toMatchObject({ originId: 3, env: 1, envName: 'prod' });
+    expect(sink.meta?.origin).toBeUndefined();
+  });
+
+  it('injects whatever shape the decoder returns (a packed-format decoder)', async () => {
+    // A different scheme: a decoder that unpacks a composite id into its own fields.
+    const decode: OriginDecoder = id =>
+      id.startsWith('v1.') ? { scheme: 'v1', app: id.slice(3), env: 'prod' } : null;
+    const sink: { meta?: Record<string, unknown> } = {};
+    const kit = createEventKit(hasuraEvent())
+      .use(originDecoder, { decode })
+      .use(capture(sink))
+      .registerEvents([alwaysDetects()]);
+
+    await kit.handle(payload({ id: 1 }, { traceId: 'v1.driver-app' }));
+
+    expect(sink.meta?.origin).toEqual({ scheme: 'v1', app: 'driver-app', env: 'prod' });
+  });
+
+  it('reads the trace id, not the correlation id: correlation stays fresh, origin still decodes', async () => {
+    const sink: { meta?: Record<string, unknown>; correlationId?: string } = {};
+    const kit = createEventKit(hasuraEvent())
+      .use(originDecoder, { decode: registryDecode })
+      .use(capture(sink))
+      .registerEvents([alwaysDetects()]);
+
+    await kit.handle(payload({ id: 1 }, { traceId: 'act-move-create' }));
+
+    // Correlation is a fresh minted id, NOT the client's trace id.
+    expect(sink.correlationId).not.toBe('act-move-create');
+    // But the origin still decoded from the conveyed trace id.
+    expect(sink.meta?.origin).toMatchObject({ action: 'move.create' });
+  });
+
+  it('no-ops on a downstream hop while loop-guard still recovers the chain correlation', async () => {
+    // A hop: the row carries an inbound tracking token (loop-guard chains the root
+    // correlation), and the trace id is a Hasura-minted span the decoder does not know.
+    const rootCorr = '11111111111111111111111111111111';
+    const codecCfg = { separator: '|', validateCorrelationId: true };
+    const sink: { meta?: Record<string, unknown>; correlationId?: string } = {};
+    const kit = createEventKit(hasuraEvent())
+      .use(loopGuard, { codec: codecCfg })
+      .use(originDecoder, { decode: registryDecode })
+      .use(capture(sink))
+      .registerEvents([alwaysDetects()]);
+
+    await kit.handle(
+      payload({ id: 1 }, { op: 'UPDATE', traceId: 'hasura-minted-span', updatedBy: `hopdrive|${rootCorr}|job-1` }),
+    );
+
+    expect(sink.correlationId).toBe(rootCorr); // loop-guard recovered the chain id
+    expect(sink.meta?.origin).toBeUndefined(); // decoder no-ops on the hop's trace id
   });
 });

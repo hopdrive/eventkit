@@ -63,6 +63,13 @@ interface Invocation {
   source_job_id?: string;
   source_job_execution?: JobExecution;
   correlated_invocations?: Invocation[];
+  // Chain-root provenance. `context_data.origin` is the decoded client origin the
+  // origin-decoder plugin injected (arbitrary JSON, may be absent/malformed); the
+  // source_* fields are who triggered the root and when.
+  context_data?: unknown;
+  source_event_time?: string | null;
+  source_user_email?: string | null;
+  source_user_role?: string | null;
 }
 
 export interface PositionedNode extends Node {
@@ -149,6 +156,20 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
 
     const arrow = { type: MarkerType.ArrowClosed, width: 20, height: 20 };
 
+    // The decoded client origin the origin-decoder plugin persisted into
+    // context_data.origin. Arbitrary/consumer-shaped and never trusted: render only
+    // a non-empty object or a non-empty string, and skip null/array/number/junk so a
+    // malformed origin can never spawn a broken node.
+    const originOf = (contextData: unknown): Record<string, unknown> | string | undefined => {
+      if (!contextData || typeof contextData !== 'object') return undefined;
+      const origin = (contextData as { origin?: unknown }).origin;
+      if (typeof origin === 'string') return origin.length > 0 ? origin : undefined;
+      if (origin && typeof origin === 'object' && !Array.isArray(origin)) {
+        return Object.keys(origin).length > 0 ? (origin as Record<string, unknown>) : undefined;
+      }
+      return undefined;
+    };
+
     const placeInvocation = (invocation: Invocation, baseX: number, bandTop: number) => {
       if (processed.has(invocation.id)) return;
       processed.add(invocation.id);
@@ -179,6 +200,43 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
           updatedAt: invocation.updated_at,
         },
       });
+
+      // Origin (userAction): a synthetic node to the LEFT of a chain ROOT when the
+      // origin-decoder plugin persisted a client origin into context_data. Roots only
+      // (no source_job_id): a chained hop shows its parent job on the left instead,
+      // and only the root carries the client's action id anyway. Named "userAction" to
+      // avoid clashing with the InvocationNode ORIGIN badge (that marks the chain root
+      // itself; this marks who/what started it).
+      if (!invocation.source_job_id) {
+        const origin = originOf(invocation.context_data);
+        if (origin !== undefined) {
+          const originNodeId = `origin-${invocation.id}`;
+          nodes.push({
+            id: originNodeId,
+            type: 'userAction',
+            position: { x: baseX - horizontalSpacing, y: centerY - NODE_H.invocation / 2 },
+            data: {
+              origin,
+              userEmail: invocation.source_user_email ?? null,
+              userRole: invocation.source_user_role ?? null,
+              eventTime: invocation.source_event_time ?? null,
+              // Reveal with the chain root during replay (zero duration), not faded out.
+              createdAt: invocation.source_event_time ?? invocation.created_at,
+            },
+          });
+          edges.push({
+            id: `origin-${invocation.id}-to-${invocation.id}`,
+            source: originNodeId,
+            sourceHandle: 'right',
+            target: invocation.id,
+            targetHandle: 'left',
+            type: 'default',
+            animated: false,
+            style: { stroke: '#f59e0b', strokeWidth: 2 }, // amber, the origin edge
+            markerEnd: arrow,
+          });
+        }
+      }
 
       // Source job for a chain root that arrived with its parent job preloaded
       // (chained invocations placed recursively already have their job node).

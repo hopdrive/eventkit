@@ -37,6 +37,14 @@ export interface SourceMeta {
   /** Inbound provenance token (loop-guard). */
   sourceTrackingToken?: string;
   /**
+   * The raw inbound trace id a client sent (Hasura `event.trace_context.trace_id`,
+   * carried in as `x-b3-traceid`). This is a CONVEYANCE channel, not the correlation
+   * id: the source surfaces it here for a decoder plugin (origin-decoder) to read, but
+   * it does NOT become the chain's correlation id unless the source is configured to
+   * adopt it. A client controls this value, so treat it as display-only.
+   */
+  sourceTraceId?: string;
+  /**
    * Ordered inbound tracking-token candidates, best first, surfaced by the source
    * during normalize (ADR-039.2). `loopGuard` consumes them and lifts lineage from
    * the first that parses — the source knows its payload anatomy (which fields and
@@ -55,5 +63,6 @@ export const SOURCE_META_KEYS = {
   sourceUserRole: 'sourceUserRole',
   sourceJobId: 'sourceJobId',
   sourceTrackingToken: 'sourceTrackingToken',
+  sourceTraceId: 'sourceTraceId',
   tokenCandidates: 'tokenCandidates',
 } as const satisfies Record<keyof SourceMeta, string>;

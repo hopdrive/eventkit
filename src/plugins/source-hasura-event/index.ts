@@ -21,12 +21,20 @@ import type {
 } from '../../core/index.js';
 import { defineEvent } from '../../core/index.js';
 import type { HasuraEventPayload, HasuraDetectorContext, HasuraHandlerContext } from '../hasura-shared/types.js';
-import { normalizeHasuraEvent, buildHasuraDetectorContext, buildHasuraHandlerContext } from '../hasura-shared/adapter.js';
+import {
+  normalizeHasuraEvent,
+  buildHasuraDetectorContext,
+  buildHasuraHandlerContext,
+  type HasuraEventNormalizeConfig,
+} from '../hasura-shared/adapter.js';
 import { callableSource, authoringHelper } from '../hasura-shared/callable-source.js';
-import type { HasuraTokenDiscoveryConfig } from '../hasura-shared/token-discovery.js';
 
-/** Source config for `hasuraEvent` — the second arg of `createEventKit`. */
-export type HasuraEventConfig = HasuraTokenDiscoveryConfig;
+/**
+ * Source config for `hasuraEvent` — the second arg of `createEventKit`. Inbound token
+ * discovery (`tokenField`, `tokenSessionVariables`) plus the trace-id policy
+ * (`correlationFromTraceId`, default false — see {@link HasuraEventNormalizeConfig}).
+ */
+export type HasuraEventConfig = HasuraEventNormalizeConfig;
 
 /**
  * The `hasuraEvent` source adapter plus its authoring helpers. Also CALLABLE as a

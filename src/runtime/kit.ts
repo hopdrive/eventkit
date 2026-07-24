@@ -378,7 +378,8 @@ class Kit implements EventKit {
     // Single correlationId lever, by precedence: a plugin's augmentEnvelope (e.g.
     // loop-guard lifting the inbound token's correlation — chaining beats a
     // fresh id, ran above) > the source's normalize (which already folded in
-    // request.correlationId ?? trace_context ?? generated) > a defensive fallback.
+    // request.correlationId ?? generated; the Hasura source only adopts an inbound
+    // trace_context.trace_id when correlationFromTraceId is set) > a defensive fallback.
     const correlationId = envelope.correlationId ?? newCorrelationId();
 
     // 4. Time budget → AbortSignal (best-effort flush margin).

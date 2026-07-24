@@ -1,104 +1,84 @@
 // =============================================================================
 // eventkit/plugins/origin-decoder
 // =============================================================================
-// Decodes the invocation's final correlation id and, when it is a structured origin
-// id (see src/core/origin-id.ts), drops the decoded fields into request meta so
-// observability persists them and the console can show which surface and env started
-// the chain.
+// Decodes the raw inbound trace id a client sent (`meta.sourceTraceId`) into an
+// arbitrary "origin" object and drops it into request meta, so observability persists
+// it and the console can show where a chain came from.
 //
-// Where the fields land, and why this hook:
+// The model, in one paragraph:
+//   A frontend sends a registered action id as the `x-b3-traceid` header on a Hasura
+//   mutation. With Hasura's OpenTelemetry config on, that id lands in the event payload
+//   as `event.trace_context.trace_id`, and the Hasura source surfaces it verbatim on
+//   `envelope.meta.sourceTraceId`. The trace id is a CONVEYANCE channel only: it is NOT
+//   the chain's correlation id (the source mints a fresh correlation id at the root),
+//   so a client can neither dictate chain identity nor merge unrelated chains by sending
+//   a static id. This plugin reads that conveyed id and, using a decoder the CONSUMER
+//   supplies, turns it into display info.
+//
+// eventkit ships only the mechanism, not a codec. The `decode` function is REQUIRED and
+// lives in the consumer's codebase: it maps a trace id to whatever the consumer wants to
+// show (typically a lookup in an append-only registry of action ids). It returns a
+// JSON-serializable object, or null for a trace id it doesn't recognize (a no-op). The
+// plugin does not constrain the object's shape: the console renders whatever is there.
+//
+// Where the object lands, and why this hook:
 //   observability writes `context_data` from `ctx.request.meta` (see
 //   src/plugins/observability/index.ts, the `context_data` assignment). The only plugin
-//   hook that contributes to `request.meta` is `configureInvocation`, which returns a
-//   `Partial<RequestContext>`. So this plugin uses `configureInvocation`, not
-//   `augmentEnvelope`. `augmentEnvelope` writes `envelope.meta`, which feeds source
-//   attributes (table/operation/user) but NOT `context_data`.
+//   hook that contributes to `request.meta` is `configureInvocation`, so this plugin uses
+//   it. `configureInvocation` also runs after `augmentEnvelope`, where the source set
+//   `meta.sourceTraceId`, so the trace id is already on the envelope when this runs.
 //
-// Ordering — this is the important part:
-//   loopGuard and correlationResolver recover the chain's correlation id during
-//   `augmentEnvelope` (they chain the inbound id, or look one up after a vendor round
-//   trip). In the kit pipeline `augmentEnvelope` runs during intake, and
-//   `configureInvocation` runs AFTER it. So by the time this plugin runs, the envelope's
-//   correlationId is already the chain's final id, no matter where this plugin sits in
-//   the registration list. Registering it after loopGuard and correlationResolver is the
-//   clean convention, but the phase order (configureInvocation after augmentEnvelope) is
-//   what actually guarantees it decodes the final id.
+// Only root invocations decode to anything: a downstream hop carries a Hasura-minted
+// trace id (a real span id), not the client's action id, so `decode` returns null and
+// the plugin is a no-op on every hop. That is intended: origin is a property of the
+// chain root.
 //
-//   On a chained hop the recovered correlation id is the CHAIN ROOT's id, so every
-//   invocation in a chain decodes to the same origin. That is intended: the origin is a
-//   property of the chain, not of the individual hop.
-//
-// Behavior:
-//   - Decodable id  -> inject a single `origin` object into `request.meta`.
-//   - Not decodable -> no-op, zero change to behavior (null from the decoder).
-//
-// The plugin is inert until a consumer registers it. It never reads the DB, never reads
-// process.env, and the decode is display-only (origin ids are spoofable — see the codec
-// header and docs/origin-id.md).
+// The plugin is inert until a consumer registers it. It never reads the DB or
+// process.env, and a decoded origin is display-only (a client controls the trace id, so
+// it is spoofable): never use it as an authz input.
 import type { EventEnvelope, EventKitPlugin, RequestContext } from '../../core/index.js';
-import { decodeOriginId, type DecodedOriginId } from '../../core/index.js';
 
-/** The shape this plugin drops into `request.meta.origin` for a decodable correlation id. */
-export interface OriginMeta {
-  /** The origin-id spec version that decoded (1 today). */
-  idVersion: number;
-  /** The opaque minting-surface number, 0-255. */
-  originId: number;
-  /** Display name for the surface, present only when `options.originNames` maps `originId`. */
-  originName?: string;
-  /** The env number carried in the id, 0-7. */
-  env: number;
-  /** Display name for the env ('prod' / 'test' / 'preview' / 'local' / 'unknown'). */
-  envName: string;
-}
-
-/** A decoder function with the same return contract as {@link decodeOriginId}. */
-export type OriginDecoder = (id: string) => DecodedOriginId | null;
+/**
+ * A consumer-supplied decoder: maps a raw inbound trace id to a JSON-serializable origin
+ * object, or null for a trace id it doesn't recognize (the plugin then does nothing).
+ */
+export type OriginDecoder = (traceId: string) => Record<string, unknown> | null;
 
 export interface OriginDecoderConfig {
   /**
-   * Custom decoder. Same return contract as the built-in `decodeOriginId` (return null
-   * for an id this decoder doesn't understand). Defaults to the built-in codec's decode.
-   * Useful when a consumer mints ids with a different scheme but wants the same meta shape.
+   * REQUIRED. Maps `meta.sourceTraceId` to the origin object to show, or null for a
+   * trace id it doesn't recognize. This is consumer policy (typically a registry
+   * lookup); eventkit ships no built-in codec. Throws at registration if absent.
    */
-  decode?: OriginDecoder;
-  /**
-   * Optional map from `originId` number to a display name. When it has an entry for the
-   * decoded `originId`, the resolved name is added to the injected meta as `originName`.
-   * The codec deliberately knows numbers, not names, so this mapping is consumer config.
-   */
-  originNames?: Record<number, string>;
+  decode: OriginDecoder;
 }
 
 /**
- * Plugin that decodes the invocation's final correlation id and, when it is a structured
- * origin id, injects an `origin` object into `request.meta` so observability persists it
- * (as `context_data.origin`) and the console can read it. No-op on any id it can't decode.
- * Register it alongside loopGuard / correlationResolver (see the module header for the
- * ordering guarantee). Inert until registered.
+ * Plugin that decodes the inbound trace id (`meta.sourceTraceId`) with a consumer-supplied
+ * `decode` function and injects the result verbatim into `request.meta.origin`, so
+ * observability persists it (as `context_data.origin`) and the console can read it. No-op
+ * when there is no trace id or `decode` returns null. `decode` is required. Inert until
+ * registered.
  */
-export function originDecoder(config: OriginDecoderConfig = {}): EventKitPlugin {
-  const decode: OriginDecoder = config.decode ?? decodeOriginId;
-  const originNames = config.originNames;
+export function originDecoder(config: OriginDecoderConfig): EventKitPlugin {
+  if (typeof config?.decode !== 'function') {
+    throw new Error(
+      'originDecoder() requires a `decode` function: (traceId) => object | null. eventkit ships no built-in codec; supply your own (e.g. an action-id registry lookup).',
+    );
+  }
+  const decode = config.decode;
 
   return {
     name: 'origin-decoder',
 
     configureInvocation(request: RequestContext, envelope: EventEnvelope): Partial<RequestContext> | void {
-      // The final correlation id, as recovered by loopGuard / correlationResolver during
-      // augmentEnvelope (which already ran). Undefined here just decodes to null -> no-op.
-      const id = envelope.correlationId ? String(envelope.correlationId) : '';
-      const decoded = decode(id);
-      if (!decoded) return undefined;
+      // The raw inbound trace id the source conveyed (root invocations only; a hop's
+      // Hasura-minted id won't decode). Missing or non-string just no-ops.
+      const traceId = (envelope.meta as { sourceTraceId?: unknown } | undefined)?.sourceTraceId;
+      if (typeof traceId !== 'string' || traceId.length === 0) return undefined;
 
-      const origin: OriginMeta = {
-        idVersion: decoded.version,
-        originId: decoded.originId,
-        env: decoded.env,
-        envName: decoded.envName ?? 'unknown',
-      };
-      const name = originNames?.[decoded.originId];
-      if (name !== undefined) origin.originName = name;
+      const origin = decode(traceId);
+      if (!origin) return undefined;
 
       // configureInvocation merges shallowly ({ ...request, ...partial }), so spread the
       // existing request.meta to refine it instead of replacing a sibling's contribution.
