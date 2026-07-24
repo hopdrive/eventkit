@@ -52,7 +52,9 @@ export const UserActionNode: React.FC<NodeProps<UserActionNodeData>> = ({ data, 
   const purpose = isObject ? displayValue(obj.purpose) : '';
 
   const title = action || site || (typeof origin === 'string' ? origin : 'Client origin');
-  const metaLine = [site, purpose].filter(Boolean).join(' · ') || undefined;
+  // Only the short site label rides the one-line meta slot; the purpose sentence
+  // wraps in the body instead, so it can never stretch the card sideways.
+  const metaLine = site || undefined;
 
   // Everything the decoder returned that isn't one of the conventional keys.
   const rest = isObject
@@ -70,19 +72,24 @@ export const UserActionNode: React.FC<NodeProps<UserActionNodeData>> = ({ data, 
       title={title}
       selected={selected}
       meta={metaLine}
-      minWidthClass='min-w-[210px]'
+      minWidthClass='w-[300px]'
     >
       <Handle type='source' position={Position.Right} id='right' className='w-3 h-3' />
 
-      {(typeof origin === 'string' && !isObject) || rest.length > 0 || who || when ? (
+      {(typeof origin === 'string' && !isObject) || purpose || rest.length > 0 || who || when ? (
         <div className='border-t border-gray-100 dark:border-gray-700/60 px-3 py-2 space-y-1'>
           {typeof origin === 'string' && (
-            <p className='text-xs text-gray-600 dark:text-gray-300 break-words'>{origin}</p>
+            <p className='text-xs text-gray-600 dark:text-gray-300 break-words line-clamp-3'>{origin}</p>
+          )}
+          {purpose && (
+            <p className='text-xs text-gray-600 dark:text-gray-300 break-words line-clamp-3' title={purpose}>
+              {purpose}
+            </p>
           )}
           {rest.map(([k, v]) => (
             <div key={k} className='flex items-baseline gap-2 text-[11px] leading-tight'>
               <span className='text-gray-400 dark:text-gray-500 shrink-0'>{k}</span>
-              <span className='text-gray-700 dark:text-gray-200 truncate' title={displayValue(v)}>
+              <span className='text-gray-700 dark:text-gray-200 min-w-0 truncate' title={displayValue(v)}>
                 {displayValue(v)}
               </span>
             </div>
