@@ -1,67 +1,57 @@
-# Origin trace decoding: knowing which surface started a chain
+# Origin decoding: which frontend action started a chain
 
-A way for a frontend to say "this chain started here" without that ever becoming the
-chain's identity. The client sends a registered action id as a trace header, eventkit
-carries it through as conveyance, and a decoder you own turns it into display info that
-shows up in observability and on the flow canvas.
+Label each chain of invocations with the frontend action that set it off, so
+observability and the flow console can show "a dealer created a move" next to the
+database write instead of just the write.
 
-It pairs with the chaining work in [chained-events.md](chained-events.md). Chaining keeps
-one `correlation_id` across every invocation in a story. This adds a small, optional label
-on the root invocation: where the story came from.
+The frontend sends a short id for the action a user took. eventkit hands that id to a
+`decode` function you write, and whatever `decode` returns lands at `context_data.origin`
+on the first invocation of the chain. The console reads it and draws a node showing the
+action, who did it, and when.
 
-## The model
+This sits next to chaining (see [chained-events.md](chained-events.md)), which keeps one
+correlation id across every invocation in a chain. Origin decoding adds one optional label
+on the first invocation: where the chain came from.
 
-A browser sends a registered action id as the `x-b3-traceid` header on a Hasura mutation.
-With Hasura's OpenTelemetry config on, that id lands in the event payload as
-`event.trace_context.trace_id`. The Hasura source surfaces it verbatim on
+## How the id gets in
+
+A frontend sends the action id as the `x-b3-traceid` header on its Hasura mutation. With
+Hasura's OpenTelemetry config on, that id arrives in the event payload at
+`event.trace_context.trace_id`, and the Hasura source puts it on
 `envelope.meta.sourceTraceId`.
 
-The important rule: the trace id is a **conveyance channel, not the correlation id**. The
-chain's correlation id is minted fresh at the root, exactly as if no trace id arrived. Two
-reasons:
+That id is only for display. It is never the chain's id. Each chain gets its own
+correlation id (the id that ties a chain of invocations together) minted fresh at the
+start, the same whether or not an id came in. Two reasons:
 
-- A client that sends a static id per action (which is what makes decoding useful, see
-  below) would otherwise merge every unrelated chain that used that action into one
-  `correlation_id`. That is wrong: those are different stories.
-- Chain identity should not be something a client gets to dictate. A client can send any
-  trace id it likes.
+- Frontends send the same id for the same action every time, which is what makes it worth
+  decoding. If that id became the chain id, every unrelated run of the action would
+  collapse into one chain.
+- A client should not get to pick a chain's id. It can send any id it wants.
 
-So the Hasura source drops the trace id from the correlation fallback by default. If a
-consumer genuinely wants the old behavior (a trusted internal caller that mints real,
-unique trace ids per request), set `correlationFromTraceId: true` on the source. See the
-behavior-change note at the bottom.
+## Write your `decode`
 
-## The decoder lives in your codebase, not in eventkit
+You supply a `decode` function. It takes the incoming id and returns an object to show, or
+`null` for an id it does not know (then nothing happens). eventkit does not ship a
+`decode`, because the meaning of your ids is yours. The plugin will not register without
+one.
 
-eventkit ships the **mechanism** (surface the trace id, run a decoder, inject the result),
-not a codec. The `originDecoder` plugin takes a **required** `decode` function that you
-supply:
+### The usual way: a list of your actions
 
-```
-decode: (traceId: string) => object | null
-```
-
-It returns a JSON-serializable object to show, or null for a trace id it doesn't recognize
-(the plugin then does nothing). eventkit does not constrain the object's shape. The console
-renders whatever is there.
-
-### Primary pattern: a constant action registry
-
-Keep an append-only array of the actions your frontends can start. Each entry has a stable
-id that never changes or gets reused. The decoder looks up the full trace id:
+Keep a list of the actions your frontends can start, in your own code, shared by the
+frontend that sends the id and the function that decodes it. Add to the end. Never reuse
+or change an existing id.
 
 ```ts
-// A file in your codebase, shared by the frontend (which sends the id) and the eventkit
-// function (which decodes it). Append only. Never reuse or renumber an id.
+// origin-actions.ts
 export const ORIGIN_ACTIONS = [
   { id: 'act-move-create', action: 'move.create', site: 'dealer-portal', purpose: 'dealer creates a move' },
   { id: 'act-driver-assign', action: 'driver.assign', site: 'admin', purpose: 'dispatcher assigns a driver' },
-  // { id: 'act-old-thing', ..., deprecated: true },
 ] as const;
 
 const BY_ID = new Map(ORIGIN_ACTIONS.map(a => [a.id, a]));
 
-export const decodeOrigin = (traceId: string) => BY_ID.get(traceId) ?? null;
+export const decodeOrigin = (id: string) => BY_ID.get(id) ?? null;
 ```
 
 Register the plugin with it:
@@ -77,69 +67,74 @@ const kit = createEventKit(hasuraEvent())
   .registerEvents([/* ... */]);
 ```
 
-What lands in `context_data.origin`:
+What lands at `context_data.origin`:
 
 ```json
 { "action": "move.create", "site": "dealer-portal", "purpose": "dealer creates a move" }
 ```
 
-The registry returns names itself, so there is no separate name-mapping option. Because the
-ids are static per action and correlation is minted fresh, you do not need the ids to be
-unique per request.
+The list holds the names, so there is no separate name mapping. The ids can be the same
+every time an action runs, because they are only for display and the chain id is minted
+separately.
 
-### Secondary pattern: a packed-format decoder
+### Another way: pack the fields into the id
 
-The injection point does not care how you decode. If you would rather pack fields into the
-id than keep a registry, a decoder can unpack a composite id:
+`decode` can do anything. If you would rather put the fields in the id than keep a list,
+unpack them:
 
 ```ts
-// e.g. "1.7.prod" = version 1, surface 7, env prod.
-const decode = (traceId: string) => {
-  const m = /^(\d+)\.(\d+)\.(\w+)$/.exec(traceId);
+// e.g. "1.7.prod" = version 1, surface 7, env prod
+const decode = (id: string) => {
+  const m = /^(\d+)\.(\d+)\.(\w+)$/.exec(id);
   if (!m) return null;
   return { idVersion: Number(m[1]), originId: Number(m[2]), env: m[3] };
 };
 ```
 
-This is just to show the mechanism supports fancier schemes. The registry is the
-recommended default because it keeps names and meaning in one append-only place.
+The list is the better default, since it keeps the names and meaning in one place.
 
-## Where it shows up, and ordering
+## What lands where
 
-`context_data` is serialized from `ctx.request.meta`. The only plugin hook that writes
-`request.meta` is `configureInvocation`, so `originDecoder` uses it. `configureInvocation`
-runs after `augmentEnvelope` (where the source set `meta.sourceTraceId`), so the trace id
-is already on the envelope when the plugin runs.
+`decode` returns any JSON object, and it goes on `request.meta.origin`, which observability
+writes to `context_data.origin`. Only the first invocation of a chain gets one: later steps
+carry a Hasura-generated trace id (a real span id), not your action id, so `decode` returns
+null for them. An id you do not recognize, or no id at all, means no origin, and nothing
+else changes.
 
-The intent on the flow canvas: a decoded origin renders as a synthetic step to the LEFT of
-the root invocation, so a chain reads as "started by the dealer portal, then this
-invocation, then ...". Only **root** invocations decode to anything. A downstream hop
-carries a Hasura-minted trace id (a real span id), not the client's action id, so the
-decoder returns null and the plugin is a no-op on every hop. That is on purpose: origin is
-a property of the chain root.
+## What the console shows
 
-On the canvas, the user-action node takes over the ORIGIN marker from the root invocation
-(the click started the chain, not the row write), it is clickable like every other node
-(a detail drawer with the decoded fields, the raw origin, and cross-navigation to the
-root), and it shows who acted. Identity display is host-configurable: the console config
-accepts an optional `userResolver(email)` that returns `{ displayName, avatarUrl }` from
-wherever the host keeps profiles (a users table, an IdP, a static map). Without a
-resolver, the node falls back to the raw email and an initials avatar. The resolver is
-called once per distinct email and cached; the reference wiring lives in the dev harness
-(`console/src/index.tsx`).
+When the first invocation of a chain has a `context_data.origin`, the flow canvas draws a
+node to its left, joined to that invocation. It shows the action, the person who did it
+(name and role), and when. That node carries the ORIGIN marker, since the click started the
+chain, not the row write. Click it for a drawer with the decoded fields, the full raw
+object, and a link to the invocation it started.
 
-## Minting on the frontend
+Who did it comes from the signed session, so it is real. The console shows a name and
+avatar if you give it a resolver: the console config takes an optional `userResolver(email)`
+that returns `{ displayName, avatarUrl }` from wherever you keep profiles (a users table, an
+identity provider, a static map). Without one, it shows the email and initials. It calls the
+resolver once per email and caches the result. The dev harness (`console/src/index.tsx`) has
+an example.
 
-There is no minting. A button carries its registered action id in a data attribute, and the
-Apollo/fetch layer copies that onto `x-b3-traceid`. The id is static per action.
+### Chains from one click
+
+If the decoded object has a `clickId` (an id the frontend sends that is the same for every
+chain one click set off), the console groups them. One action node stands in front of all
+the chains that click started, with an edge into each, a small "N chains" count on the card,
+and a drawer section listing them so you can jump between them. Chains without a `clickId`
+each get their own node. Like everything decoded, the `clickId` is for display grouping
+only, and each chain keeps its own correlation id.
+
+## Sending the id from the frontend
+
+Nothing is generated per request. A button carries its action id in a data attribute, and
+your Apollo link or fetch wrapper copies it onto `x-b3-traceid`:
 
 ```html
 <button data-action-id="act-move-create" onclick="createMove()">Create move</button>
 ```
 
 ```ts
-// In your Apollo link or fetch wrapper: read the action id off the element that started
-// the request and send it as the trace header. No per-request id generation.
 const actionId = triggerEl?.dataset.actionId;
 
 client.mutate({
@@ -149,24 +144,22 @@ client.mutate({
 });
 ```
 
-## Non-goals and the safety caveat
+## Options
 
-- **No timestamp, no user identity in the id.** The server's event time is already on the
-  payload and the rows, and user identity arrives signed via `session_variables`. The trace
-  id carries neither.
-- **Display only, spoofable.** A client controls the trace id, so a decoded origin is a
-  hint for labeling and grouping, never proof of origin and never an authz input. Anything
-  that must be trusted still comes from `session_variables` or the server.
-- **Static trace ids make real distributed tracing useless.** If you ever adopt Tempo or
-  another tracing backend, static per-action ids collapse all traces for an action into one.
-  The fix then (no eventkit change needed): mint an id as `actionCode + random suffix` on
-  the frontend and make the decoder match on the action-code prefix.
+- `originDecoder({ decode })`: `decode` is required. Your function from the incoming id to
+  an object, or null.
+- `correlationFromTraceId` on the `hasuraEvent` source, default off. Off keeps the trace id
+  out of the chain id (the safe default). Turn it on only for a trusted caller that sends a
+  real, unique trace id per request that you want to be the chain id.
 
-## Behavior change
+## Keep in mind
 
-Before this change the Hasura source adopted `event.trace_context.trace_id` as the
-correlation id when the request carried no explicit `correlationId`. It no longer does by
-default: the correlation id is minted fresh, and the trace id is surfaced on
-`meta.sourceTraceId` instead. Opt back in with `correlationFromTraceId: true` on the
-`hasuraEvent` source if you need the old behavior. This pairs with Hasura's OTel / B3
-propagation, verified separately in sdk PR #662.
+- The id holds no time and no user. The server's event time is already on the payload and
+  rows, and the user arrives signed in `session_variables`.
+- A decoded origin is display only, and a client can spoof it. Use it for labels and
+  grouping, never as proof and never for an authz check. Anything that has to be trusted
+  comes from `session_variables` or the server.
+- Sending the same id per action means it cannot double as a real trace id. If you later run
+  a tracing backend like Tempo, per-action ids would collapse every trace for that action
+  into one. The fix is to send `actionCode` plus a random suffix and match `decode` on the
+  prefix. eventkit needs no change for that.
