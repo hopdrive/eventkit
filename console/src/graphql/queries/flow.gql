@@ -1,3 +1,23 @@
+# Permalink resolution: given a chain's correlation id, find the invocation to anchor the
+# flow view on. Prefer the chain root (the invocation that minted the id); fall back to the
+# earliest member if a root row isn't recorded. This is the stable deep-link contract behind
+# /flow?correlationId=<id> (what Sentry/Grafana links will use).
+query RootByCorrelation($correlationId: String!) {
+  roots: invocations(
+    where: { correlation_id: { _eq: $correlationId }, is_chain_root: { _eq: true } }
+    limit: 1
+  ) {
+    id
+  }
+  fallback: invocations(
+    where: { correlation_id: { _eq: $correlationId } }
+    order_by: { created_at: asc }
+    limit: 1
+  ) {
+    id
+  }
+}
+
 query InvocationTreeFlow($invocationId: uuid!) {
   invocations_by_pk(id: $invocationId) {
     ...invocationTree

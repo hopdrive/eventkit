@@ -127537,3 +127537,193 @@ export type SiblingChainsByClickQueryHookResult = ReturnType<typeof useSiblingCh
 export type SiblingChainsByClickLazyQueryHookResult = ReturnType<typeof useSiblingChainsByClickLazyQuery>;
 export type SiblingChainsByClickSuspenseQueryHookResult = ReturnType<typeof useSiblingChainsByClickSuspenseQuery>;
 export type SiblingChainsByClickQueryResult = Apollo.QueryResult<SiblingChainsByClickQuery, SiblingChainsByClickQueryVariables>;
+
+export type ChainsListQueryVariables = Exact<{
+  limit?: InputMaybe<Scalars['Int']['input']>;
+  offset?: InputMaybe<Scalars['Int']['input']>;
+  where?: InputMaybe<Invocations_Bool_Exp>;
+  order_by?: InputMaybe<Array<Invocations_Order_By> | Invocations_Order_By>;
+}>;
+
+
+export type ChainsListQuery = { __typename?: 'query_root', invocations: Array<{ __typename?: 'invocations', id: string, correlation_id?: string | null, origin_action?: string | null, chain_status?: string | null, chain_last_activity_at?: string | null, source_function: string, source_table?: string | null, source_operation?: string | null, source_system?: string | null, source_user_email?: string | null, status: string, created_at: string, events_detected_count?: number | null }> };
+
+export type ChainsCountQueryVariables = Exact<{
+  where?: InputMaybe<Invocations_Bool_Exp>;
+}>;
+
+
+export type ChainsCountQuery = { __typename?: 'query_root', invocations_aggregate: { __typename?: 'invocations_aggregate', aggregate?: { __typename?: 'invocations_aggregate_fields', count: number } | null } };
+
+export type ChainMemberFactsQueryVariables = Exact<{
+  correlationIds: Array<Scalars['String']['input']> | Scalars['String']['input'];
+}>;
+
+
+export type ChainMemberFactsQuery = { __typename?: 'query_root', invocations: Array<{ __typename?: 'invocations', correlation_id?: string | null, created_at: string, status: string }> };
+
+export type RootByCorrelationQueryVariables = Exact<{
+  correlationId: Scalars['String']['input'];
+}>;
+
+
+export type RootByCorrelationQuery = { __typename?: 'query_root', roots: Array<{ __typename?: 'invocations', id: string }>, fallback: Array<{ __typename?: 'invocations', id: string }> };
+
+export type OriginActionSuggestQueryVariables = Exact<{
+  prefix: Scalars['String']['input'];
+}>;
+
+
+export type OriginActionSuggestQuery = { __typename?: 'query_root', invocations: Array<{ __typename?: 'invocations', origin_action?: string | null }> };
+
+export const ChainsListDocument = gql`
+    query ChainsList($limit: Int = 50, $offset: Int = 0, $where: invocations_bool_exp = {}, $order_by: [invocations_order_by!] = {chain_last_activity_at: desc_nulls_last}) {
+  invocations(limit: $limit, offset: $offset, where: $where, order_by: $order_by) {
+    id
+    correlation_id
+    origin_action
+    chain_status
+    chain_last_activity_at
+    source_function
+    source_table
+    source_operation
+    source_system
+    source_user_email
+    status
+    created_at
+    events_detected_count
+  }
+}
+    `;
+export function useChainsListQuery(baseOptions?: Apollo.QueryHookOptions<ChainsListQuery, ChainsListQueryVariables>) {
+        const options = {...defaultOptions, ...baseOptions}
+        return Apollo.useQuery<ChainsListQuery, ChainsListQueryVariables>(ChainsListDocument, options);
+      }
+export function useChainsListLazyQuery(baseOptions?: Apollo.LazyQueryHookOptions<ChainsListQuery, ChainsListQueryVariables>) {
+          const options = {...defaultOptions, ...baseOptions}
+          return Apollo.useLazyQuery<ChainsListQuery, ChainsListQueryVariables>(ChainsListDocument, options);
+        }
+// @ts-ignore
+export function useChainsListSuspenseQuery(baseOptions?: Apollo.SkipToken | Apollo.SuspenseQueryHookOptions<ChainsListQuery, ChainsListQueryVariables>) {
+          const options = baseOptions === Apollo.skipToken ? baseOptions : {...defaultOptions, ...baseOptions}
+          return Apollo.useSuspenseQuery<ChainsListQuery, ChainsListQueryVariables>(ChainsListDocument, options);
+        }
+export type ChainsListQueryHookResult = ReturnType<typeof useChainsListQuery>;
+export type ChainsListLazyQueryHookResult = ReturnType<typeof useChainsListLazyQuery>;
+export type ChainsListSuspenseQueryHookResult = ReturnType<typeof useChainsListSuspenseQuery>;
+export type ChainsListQueryResult = Apollo.QueryResult<ChainsListQuery, ChainsListQueryVariables>;
+export const ChainsCountDocument = gql`
+    query ChainsCount($where: invocations_bool_exp = {}) {
+  invocations_aggregate(where: $where) {
+    aggregate {
+      count
+    }
+  }
+}
+    `;
+export function useChainsCountQuery(baseOptions?: Apollo.QueryHookOptions<ChainsCountQuery, ChainsCountQueryVariables>) {
+        const options = {...defaultOptions, ...baseOptions}
+        return Apollo.useQuery<ChainsCountQuery, ChainsCountQueryVariables>(ChainsCountDocument, options);
+      }
+export function useChainsCountLazyQuery(baseOptions?: Apollo.LazyQueryHookOptions<ChainsCountQuery, ChainsCountQueryVariables>) {
+          const options = {...defaultOptions, ...baseOptions}
+          return Apollo.useLazyQuery<ChainsCountQuery, ChainsCountQueryVariables>(ChainsCountDocument, options);
+        }
+// @ts-ignore
+export function useChainsCountSuspenseQuery(baseOptions?: Apollo.SkipToken | Apollo.SuspenseQueryHookOptions<ChainsCountQuery, ChainsCountQueryVariables>) {
+          const options = baseOptions === Apollo.skipToken ? baseOptions : {...defaultOptions, ...baseOptions}
+          return Apollo.useSuspenseQuery<ChainsCountQuery, ChainsCountQueryVariables>(ChainsCountDocument, options);
+        }
+export type ChainsCountQueryHookResult = ReturnType<typeof useChainsCountQuery>;
+export type ChainsCountLazyQueryHookResult = ReturnType<typeof useChainsCountLazyQuery>;
+export type ChainsCountSuspenseQueryHookResult = ReturnType<typeof useChainsCountSuspenseQuery>;
+export type ChainsCountQueryResult = Apollo.QueryResult<ChainsCountQuery, ChainsCountQueryVariables>;
+export const ChainMemberFactsDocument = gql`
+    query ChainMemberFacts($correlationIds: [String!]!) {
+  invocations(where: {correlation_id: {_in: $correlationIds}}, order_by: {created_at: asc}) {
+    correlation_id
+    created_at
+    status
+  }
+}
+    `;
+export function useChainMemberFactsQuery(baseOptions: Apollo.QueryHookOptions<ChainMemberFactsQuery, ChainMemberFactsQueryVariables> & ({ variables: ChainMemberFactsQueryVariables; skip?: boolean; } | { skip: boolean; }) ) {
+        const options = {...defaultOptions, ...baseOptions}
+        return Apollo.useQuery<ChainMemberFactsQuery, ChainMemberFactsQueryVariables>(ChainMemberFactsDocument, options);
+      }
+export function useChainMemberFactsLazyQuery(baseOptions?: Apollo.LazyQueryHookOptions<ChainMemberFactsQuery, ChainMemberFactsQueryVariables>) {
+          const options = {...defaultOptions, ...baseOptions}
+          return Apollo.useLazyQuery<ChainMemberFactsQuery, ChainMemberFactsQueryVariables>(ChainMemberFactsDocument, options);
+        }
+// @ts-ignore
+export function useChainMemberFactsSuspenseQuery(baseOptions?: Apollo.SkipToken | Apollo.SuspenseQueryHookOptions<ChainMemberFactsQuery, ChainMemberFactsQueryVariables>) {
+          const options = baseOptions === Apollo.skipToken ? baseOptions : {...defaultOptions, ...baseOptions}
+          return Apollo.useSuspenseQuery<ChainMemberFactsQuery, ChainMemberFactsQueryVariables>(ChainMemberFactsDocument, options);
+        }
+export type ChainMemberFactsQueryHookResult = ReturnType<typeof useChainMemberFactsQuery>;
+export type ChainMemberFactsLazyQueryHookResult = ReturnType<typeof useChainMemberFactsLazyQuery>;
+export type ChainMemberFactsSuspenseQueryHookResult = ReturnType<typeof useChainMemberFactsSuspenseQuery>;
+export type ChainMemberFactsQueryResult = Apollo.QueryResult<ChainMemberFactsQuery, ChainMemberFactsQueryVariables>;
+export const RootByCorrelationDocument = gql`
+    query RootByCorrelation($correlationId: String!) {
+  roots: invocations(
+    where: {correlation_id: {_eq: $correlationId}, is_chain_root: {_eq: true}}
+    limit: 1
+  ) {
+    id
+  }
+  fallback: invocations(
+    where: {correlation_id: {_eq: $correlationId}}
+    order_by: {created_at: asc}
+    limit: 1
+  ) {
+    id
+  }
+}
+    `;
+export function useRootByCorrelationQuery(baseOptions: Apollo.QueryHookOptions<RootByCorrelationQuery, RootByCorrelationQueryVariables> & ({ variables: RootByCorrelationQueryVariables; skip?: boolean; } | { skip: boolean; }) ) {
+        const options = {...defaultOptions, ...baseOptions}
+        return Apollo.useQuery<RootByCorrelationQuery, RootByCorrelationQueryVariables>(RootByCorrelationDocument, options);
+      }
+export function useRootByCorrelationLazyQuery(baseOptions?: Apollo.LazyQueryHookOptions<RootByCorrelationQuery, RootByCorrelationQueryVariables>) {
+          const options = {...defaultOptions, ...baseOptions}
+          return Apollo.useLazyQuery<RootByCorrelationQuery, RootByCorrelationQueryVariables>(RootByCorrelationDocument, options);
+        }
+// @ts-ignore
+export function useRootByCorrelationSuspenseQuery(baseOptions?: Apollo.SkipToken | Apollo.SuspenseQueryHookOptions<RootByCorrelationQuery, RootByCorrelationQueryVariables>) {
+          const options = baseOptions === Apollo.skipToken ? baseOptions : {...defaultOptions, ...baseOptions}
+          return Apollo.useSuspenseQuery<RootByCorrelationQuery, RootByCorrelationQueryVariables>(RootByCorrelationDocument, options);
+        }
+export type RootByCorrelationQueryHookResult = ReturnType<typeof useRootByCorrelationQuery>;
+export type RootByCorrelationLazyQueryHookResult = ReturnType<typeof useRootByCorrelationLazyQuery>;
+export type RootByCorrelationSuspenseQueryHookResult = ReturnType<typeof useRootByCorrelationSuspenseQuery>;
+export type RootByCorrelationQueryResult = Apollo.QueryResult<RootByCorrelationQuery, RootByCorrelationQueryVariables>;
+export const OriginActionSuggestDocument = gql`
+    query OriginActionSuggest($prefix: String!) {
+  invocations(
+    where: {is_chain_root: {_eq: true}, origin_action: {_ilike: $prefix}}
+    distinct_on: origin_action
+    order_by: {origin_action: asc}
+    limit: 8
+  ) {
+    origin_action
+  }
+}
+    `;
+export function useOriginActionSuggestQuery(baseOptions: Apollo.QueryHookOptions<OriginActionSuggestQuery, OriginActionSuggestQueryVariables> & ({ variables: OriginActionSuggestQueryVariables; skip?: boolean; } | { skip: boolean; }) ) {
+        const options = {...defaultOptions, ...baseOptions}
+        return Apollo.useQuery<OriginActionSuggestQuery, OriginActionSuggestQueryVariables>(OriginActionSuggestDocument, options);
+      }
+export function useOriginActionSuggestLazyQuery(baseOptions?: Apollo.LazyQueryHookOptions<OriginActionSuggestQuery, OriginActionSuggestQueryVariables>) {
+          const options = {...defaultOptions, ...baseOptions}
+          return Apollo.useLazyQuery<OriginActionSuggestQuery, OriginActionSuggestQueryVariables>(OriginActionSuggestDocument, options);
+        }
+// @ts-ignore
+export function useOriginActionSuggestSuspenseQuery(baseOptions?: Apollo.SkipToken | Apollo.SuspenseQueryHookOptions<OriginActionSuggestQuery, OriginActionSuggestQueryVariables>) {
+          const options = baseOptions === Apollo.skipToken ? baseOptions : {...defaultOptions, ...baseOptions}
+          return Apollo.useSuspenseQuery<OriginActionSuggestQuery, OriginActionSuggestQueryVariables>(OriginActionSuggestDocument, options);
+        }
+export type OriginActionSuggestQueryHookResult = ReturnType<typeof useOriginActionSuggestQuery>;
+export type OriginActionSuggestLazyQueryHookResult = ReturnType<typeof useOriginActionSuggestLazyQuery>;
+export type OriginActionSuggestSuspenseQueryHookResult = ReturnType<typeof useOriginActionSuggestSuspenseQuery>;
+export type OriginActionSuggestQueryResult = Apollo.QueryResult<OriginActionSuggestQuery, OriginActionSuggestQueryVariables>;

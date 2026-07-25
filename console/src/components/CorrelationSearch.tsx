@@ -10,8 +10,10 @@ import {
   WrenchScrewdriverIcon,
   LinkIcon,
   XMarkIcon,
+  BellAlertIcon,
+  ArrowRightCircleIcon,
 } from '@heroicons/react/24/outline';
-import { useGroupedSearchLazyQuery } from '../types/generated';
+import { useGroupedSearchLazyQuery, useOriginActionSuggestLazyQuery } from '../types/generated';
 
 interface CorrelationSearchProps {
   value: string;
@@ -21,6 +23,11 @@ interface CorrelationSearchProps {
 // A correlation id is worth an exact-match probe when the term contains a UUID
 // (HopDrive tokens look like `event-handlers.<uuid>` — the whole string is the id).
 const UUID_ANYWHERE_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+// A full correlation id: `<function>.<uuid>` (the stable chain key). Paste one and land
+// straight on its flow.
+const FULL_CORRELATION_RE = /^[\w:.-]+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// A bare invocation UUID (nothing else) — open that specific invocation's flow.
+const BARE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Debounced, grouped, server-side search (perf fixes P2/P3, UX U1 — plan §4.1).
 // Every predicate hits an indexed column; the legacy JSONB payload-cast scan is gone.
@@ -32,6 +39,7 @@ const CorrelationSearch: React.FC<CorrelationSearchProps> = ({ value, onChange }
   const containerRef = useRef<HTMLDivElement>(null);
 
   const [runSearch, { data: searchData, loading }] = useGroupedSearchLazyQuery();
+  const [runOriginSearch, { data: originData }] = useOriginActionSuggestLazyQuery();
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -57,9 +65,10 @@ const CorrelationSearch: React.FC<CorrelationSearchProps> = ({ value, onChange }
           isCorrelationLike: UUID_ANYWHERE_RE.test(term),
         },
       });
+      runOriginSearch({ variables: { prefix: `${term}%` } });
     }, 250);
     return () => clearTimeout(t);
-  }, [value, runSearch]);
+  }, [value, runSearch, runOriginSearch]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value;
@@ -88,6 +97,18 @@ const CorrelationSearch: React.FC<CorrelationSearchProps> = ({ value, onChange }
     if (invocationId) navigate(`/flow?invocationId=${invocationId}&autoFocus=true`);
     closeSuggestions();
   };
+  // The chain permalink (stable deep-link contract): resolves the correlation id to its
+  // root and renders the flow.
+  const goToChain = (correlationId: string | null | undefined) => {
+    if (correlationId) navigate(`/flow?correlationId=${encodeURIComponent(correlationId)}&autoFocus=true`);
+    closeSuggestions();
+  };
+  // An origin action opens the chains index filtered to that action (the canonical
+  // per-action index link).
+  const goToAction = (action: string | null | undefined) => {
+    if (action) navigate(`/invocations?action=${encodeURIComponent(action)}`);
+    closeSuggestions();
+  };
 
   const clearSearch = () => {
     onChange('');
@@ -112,8 +133,24 @@ const CorrelationSearch: React.FC<CorrelationSearchProps> = ({ value, onChange }
   const functionMatches = searchData?.function_matches ?? [];
   const eventMatches = searchData?.event_matches ?? [];
   const jobMatches = searchData?.job_matches ?? [];
+  const originActions = (originData?.invocations ?? [])
+    .map(i => i.origin_action)
+    .filter((a): a is string => typeof a === 'string' && a.length > 0);
+
+  // Paste-anything: a full correlation id or a bare invocation UUID lands the user straight
+  // on the right flow, above the fuzzy groups.
+  const term = value.trim();
+  const directChain = FULL_CORRELATION_RE.test(term) ? term : null;
+  const directInvocation = !directChain && BARE_UUID_RE.test(term) ? term : null;
+
   const totalMatches =
-    correlationMatches.length + functionMatches.length + eventMatches.length + jobMatches.length;
+    correlationMatches.length +
+    functionMatches.length +
+    eventMatches.length +
+    jobMatches.length +
+    originActions.length +
+    (directChain ? 1 : 0) +
+    (directInvocation ? 1 : 0);
 
   const groupHeader = (label: string, Icon: typeof LinkIcon) => (
     <div className='flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide border-b border-gray-100 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-900/40'>
@@ -175,11 +212,55 @@ const CorrelationSearch: React.FC<CorrelationSearchProps> = ({ value, onChange }
               </div>
             )}
 
+            {(directChain || directInvocation) && (
+              <div>
+                {groupHeader('Open', ArrowRightCircleIcon)}
+                {directChain && (
+                  <button onClick={() => goToChain(directChain)} className={rowClass}>
+                    <div className='flex items-center space-x-3'>
+                      <LinkIcon className='h-4 w-4 text-gray-400 flex-shrink-0' />
+                      <div className='flex-1 min-w-0'>
+                        <div className='text-sm font-medium text-gray-900 dark:text-gray-100'>Open chain</div>
+                        <div className='text-xs text-gray-500 dark:text-gray-400 font-mono truncate'>{directChain}</div>
+                      </div>
+                    </div>
+                  </button>
+                )}
+                {directInvocation && (
+                  <button onClick={() => goToInvocation(directInvocation)} className={rowClass}>
+                    <div className='flex items-center space-x-3'>
+                      <ArrowRightCircleIcon className='h-4 w-4 text-gray-400 flex-shrink-0' />
+                      <div className='flex-1 min-w-0'>
+                        <div className='text-sm font-medium text-gray-900 dark:text-gray-100'>Open invocation</div>
+                        <div className='text-xs text-gray-500 dark:text-gray-400 font-mono truncate'>{directInvocation}</div>
+                      </div>
+                    </div>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {originActions.length > 0 && (
+              <div>
+                {groupHeader('Origin actions', BellAlertIcon)}
+                {originActions.map(action => (
+                  <button key={action} onClick={() => goToAction(action)} className={rowClass}>
+                    <div className='flex items-center space-x-3'>
+                      <span className='inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/30'>
+                        {action}
+                      </span>
+                      <span className='text-xs text-gray-500 dark:text-gray-400'>chains for this action</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
             {correlationMatches.length > 0 && (
               <div>
                 {groupHeader('Chains', LinkIcon)}
                 {correlationMatches.map(m => (
-                  <button key={m.id} onClick={() => adoptValue(m.correlation_id)} className={rowClass}>
+                  <button key={m.id} onClick={() => goToChain(m.correlation_id)} className={rowClass}>
                     <div className='flex items-center space-x-3'>
                       {statusDot(m.status)}
                       <div className='flex-1 min-w-0'>

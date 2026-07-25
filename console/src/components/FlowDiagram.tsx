@@ -15,7 +15,7 @@ import ReactFlow, {
   ConnectionMode,
 } from 'reactflow';
 import { AnimatePresence } from 'framer-motion';
-import { useInvocationTreeFlowQuery, useSiblingChainsByClickQuery } from '../types/generated';
+import { useInvocationTreeFlowQuery, useSiblingChainsByClickQuery, useRootByCorrelationQuery } from '../types/generated';
 import InvocationDetailDrawer from './InvocationDetailDrawer';
 import UserActionDetailDrawer from './UserActionDetailDrawer';
 import 'reactflow/dist/style.css';
@@ -80,8 +80,20 @@ const FlowDiagramContent = () => {
   const [helpOpen, setHelpOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // URL Parameters
-  const invocationId = searchParams.get('invocationId');
+  // URL Parameters. The flow view is addressable two ways: by a specific invocation
+  // (?invocationId=), or by a whole chain (?correlationId=) — the stable deep-link
+  // contract Sentry/Grafana links use. A correlation id resolves to the chain root (or
+  // the earliest member if no root row was recorded), and the rest of the page runs
+  // exactly as if that invocation had been named directly.
+  const invocationIdParam = searchParams.get('invocationId');
+  const correlationIdParam = searchParams.get('correlationId');
+  const { data: rootRes } = useRootByCorrelationQuery({
+    variables: { correlationId: correlationIdParam || '' },
+    skip: !correlationIdParam || !!invocationIdParam,
+    fetchPolicy: 'cache-first',
+    errorPolicy: 'all',
+  });
+  const invocationId = invocationIdParam || rootRes?.roots?.[0]?.id || rootRes?.fallback?.[0]?.id || null;
   const autoFocus = searchParams.get('autoFocus') === 'true';
   const showExpected = searchParams.get('expected') === '1';
   const flagOffContract = searchParams.get('offcontract') === '1';

@@ -1,0 +1,48 @@
+# Chain-first index (the console's default view). The unit of debugging is the chain
+# (all invocations sharing a correlation_id); a chain is queryable as plain root rows
+# (is_chain_root = true) with NO group-by, so it paginates and sorts on indexed root
+# columns exactly like the flat invocations list. chain_last_activity_at desc is the
+# default order, served by the partial idx_invocations_chain_roots index.
+query ChainsList(
+  $limit: Int = 50
+  $offset: Int = 0
+  $where: invocations_bool_exp = {}
+  $order_by: [invocations_order_by!] = { chain_last_activity_at: desc_nulls_last }
+) {
+  invocations(limit: $limit, offset: $offset, where: $where, order_by: $order_by) {
+    id
+    correlation_id
+    origin_action
+    chain_status
+    chain_last_activity_at
+    source_function
+    source_table
+    source_operation
+    source_system
+    source_user_email
+    status
+    created_at
+    events_detected_count
+  }
+}
+
+# Count split from the rows query (same reasoning as InvocationsCount): the LIMIT-50
+# rows return fast while an exact count over a broad match streams in behind them.
+query ChainsCount($where: invocations_bool_exp = {}) {
+  invocations_aggregate(where: $where) {
+    aggregate {
+      count
+    }
+  }
+}
+
+# Per-chain member facts for the VISIBLE PAGE only: fetch the members of just the page's
+# correlation ids (indexed correlation_id _in), then aggregate client-side into a
+# per-chain invocation count and time span. Never a global group-by.
+query ChainMemberFacts($correlationIds: [String!]!) {
+  invocations(where: { correlation_id: { _in: $correlationIds } }, order_by: { created_at: asc }) {
+    correlation_id
+    created_at
+    status
+  }
+}
