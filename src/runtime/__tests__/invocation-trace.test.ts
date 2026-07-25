@@ -30,7 +30,7 @@ function richModule() {
 /** Replace non-deterministic fields with stable tokens so the record shape can be snapshotted. */
 const VOLATILE = new Set([
   'id', 'invocation_id', 'event_execution_id', 'correlation_id', 'invocationId', 'correlationId',
-  'created_at', 'updated_at', 'source_event_time',
+  'created_at', 'updated_at', 'source_event_time', 'chain_last_activity_at',
   'duration_ms', 'total_duration_ms', 'detection_duration_ms', 'handler_duration_ms', 'durationMs',
   'error_stack',
 ]);

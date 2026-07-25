@@ -64,7 +64,10 @@ export function normalizeHasuraEvent(
   const payload = (raw ?? {}) as HasuraEventPayload;
   const traceId = payload?.event?.trace_context?.trace_id;
   const traceCorrelation = config.correlationFromTraceId ? traceId : undefined;
-  const correlationId = asCorrelationId(request.correlationId ?? traceCorrelation ?? randomId());
+  // Minted = we generated a fresh id because nothing was inherited (no inbound
+  // correlation id, and no adopted trace id). This is the chain-root signal.
+  const inheritedCorrelation = request.correlationId ?? traceCorrelation;
+  const correlationId = asCorrelationId(inheritedCorrelation ?? randomId());
   const receivedAt = payload?.created_at ? new Date(payload.created_at) : new Date();
 
   // Surface source attributes into envelope.meta so source-agnostic plugins
@@ -81,6 +84,8 @@ export function normalizeHasuraEvent(
   // Surface the raw inbound trace id (conveyance only) so a decoder plugin can read it.
   // This is independent of whether it was adopted as the correlation id above.
   if (traceId) meta.sourceTraceId = traceId;
+  // Chain-root signal for observability: did this invocation mint its correlation id?
+  meta.correlationMinted = inheritedCorrelation === undefined;
 
   // Inbound token discovery (ADR-039.2): the row write field then session variables.
   const row = getNewRow(payload) ?? getOldRow(payload);
@@ -164,6 +169,7 @@ export function normalizeHasuraCron(
   const correlationId = asCorrelationId(request.correlationId ?? randomId());
   const receivedAt = payload?.scheduled_time ? new Date(payload.scheduled_time) : new Date();
   const meta: SourceMeta = {};
+  meta.correlationMinted = request.correlationId === undefined; // chain-root signal
   if (payload?.name) meta.sourceFunction = payload.name; // the schedule name identifies the cron function
   if (payload?.id) meta.sourceEventId = payload.id;
 
@@ -247,6 +253,7 @@ export function normalizeHasuraAction(
   const correlationId = asCorrelationId(request.correlationId ?? randomId());
   const session = (payload?.session_variables ?? {}) as Record<string, string | undefined>;
   const meta: SourceMeta = {};
+  meta.correlationMinted = request.correlationId === undefined; // chain-root signal
   if (payload?.action?.name) meta.sourceFunction = payload.action.name; // the action name identifies the function
   if (session['x-hasura-user-email']) meta.sourceUserEmail = session['x-hasura-user-email'];
   if (session['x-hasura-role']) meta.sourceUserRole = session['x-hasura-role'];

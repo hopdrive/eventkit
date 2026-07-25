@@ -51,6 +51,16 @@ export interface SourceMeta {
    * session variables carry a token), so the plugin stays generic.
    */
   tokenCandidates?: string[];
+  /**
+   * True when the source MINTED this invocation's correlation id (no inbound
+   * `request.correlationId`, and no adopted trace id), false when it INHERITED one
+   * from an upstream invocation. This is the definition of a chain root: the
+   * invocation that started the chain minted its correlation id; every downstream hop
+   * inherits it. Observability reads this to set `is_chain_root` truthfully — root is
+   * never inferred from timestamps, and is independent of whether a decoded origin
+   * exists (a bare Hasura insert with no frontend header still roots a chain).
+   */
+  correlationMinted?: boolean;
 }
 
 /** The well-known key names, for writers/readers that prefer constants over literals. */
@@ -65,4 +75,5 @@ export const SOURCE_META_KEYS = {
   sourceTrackingToken: 'sourceTrackingToken',
   sourceTraceId: 'sourceTraceId',
   tokenCandidates: 'tokenCandidates',
+  correlationMinted: 'correlationMinted',
 } as const satisfies Record<keyof SourceMeta, string>;

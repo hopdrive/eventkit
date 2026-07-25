@@ -73,7 +73,8 @@ class GraphqlResponseError extends Error {
 const INVOCATION_COLUMNS = [
   'correlation_id', 'source_function', 'source_table', 'source_operation', 'source_system',
   'source_type', 'source_event_id', 'source_event_payload', 'source_event_time', 'source_user_email',
-  'source_user_role', 'source_job_id', 'context_data', 'total_duration_ms', 'events_detected_count',
+  'source_user_role', 'source_job_id', 'context_data', 'origin_action', 'is_chain_root',
+  'chain_status', 'chain_last_activity_at', 'total_duration_ms', 'events_detected_count',
   'total_jobs_run', 'total_jobs_succeeded', 'total_jobs_failed', 'status', 'error_message',
   'error_stack', 'updated_at',
 ];
@@ -98,6 +99,25 @@ const upsert = (table: string, constraint: string, columns: string[]): string =>
 const MUT_INVOCATIONS = upsert('invocations', 'invocations_pkey', INVOCATION_COLUMNS);
 const MUT_EVENTS = upsert('event_executions', 'event_executions_pkey', EVENT_COLUMNS);
 const MUT_JOBS = upsert('job_executions', 'job_executions_pkey', JOB_COLUMNS);
+
+// Chain rollup on the root row (the invocation that minted the correlation id). Each is a
+// single indexed UPDATE keyed by (correlation_id, is_chain_root=true). The activity bump is
+// greatest-wins via the `_lt` guard, so no read-before-write is needed; the errored flip is
+// one-way (never back to 'ok'). Both are best-effort — see rollupRoot below.
+const MUT_BUMP_CHAIN_ACTIVITY = `
+  mutation BumpChainActivity($correlationId: String!, $ts: timestamptz!) {
+    update_invocations(
+      where: { correlation_id: { _eq: $correlationId }, is_chain_root: { _eq: true }, chain_last_activity_at: { _lt: $ts } },
+      _set: { chain_last_activity_at: $ts }
+    ) { affected_rows }
+  }`;
+const MUT_FLAG_CHAIN_ERRORED = `
+  mutation FlagChainErrored($correlationId: String!) {
+    update_invocations(
+      where: { correlation_id: { _eq: $correlationId }, is_chain_root: { _eq: true } },
+      _set: { chain_status: "errored" }
+    ) { affected_rows }
+  }`;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -222,10 +242,33 @@ export function graphqlSink(config: GraphqlSinkConfig): (batch: ObservabilityBat
     }
   };
 
+  // Roll the chain summary up onto the root row on EVERY member write (root or not): bump the
+  // root's last-activity to this member's start (greatest-wins), and flip it 'errored' when this
+  // member errored. Strictly best-effort — a rollup failure (transport, or an un-migrated schema
+  // that lacks the chain columns) must never block event handling or fail the flush, so every
+  // path here is swallowed. Matches the plugin's error-swallowing posture.
+  const rollupRoot = async (record: InvocationRecord): Promise<void> => {
+    const { correlation_id: correlationId, created_at: ts, status } = record;
+    if (!correlationId || !ts) return;
+    const target = { endpoint: config.endpoint, headers };
+    try {
+      await doRequest({ query: MUT_BUMP_CHAIN_ACTIVITY, variables: { correlationId, ts } }, target);
+      // A non-terminal 'running' snapshot is not an error; anything other than a clean
+      // running/completed is (failed, timeout, …). Never flips back to 'ok'.
+      if (status !== 'running' && status !== 'completed') {
+        await doRequest({ query: MUT_FLAG_CHAIN_ERRORED, variables: { correlationId } }, target);
+      }
+    } catch {
+      // Swallow: telemetry rollup is best-effort and must not surface to business execution.
+    }
+  };
+
   return async (batch: ObservabilityBatch): Promise<void> => {
     // Order matters for FKs: invocation → events → jobs.
     await sendInvocation(batch.invocation);
     await sendDegradable(MUT_EVENTS, 'event_executions', batch.events.map(e => cleanAndMap(e, 'events')));
     await sendDegradable(MUT_JOBS, 'job_executions', batch.jobs.map(j => cleanAndMap(j, 'jobs')));
+    // After the record is durable, roll its facts up onto the chain's root row.
+    await rollupRoot(batch.invocation);
   };
 }

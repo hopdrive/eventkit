@@ -26,6 +26,7 @@ exports[`golden-trace observability records (schema contract) > emits invocation
     "error_stack": "<error_stack>",
     "events_detected_count": 1,
     "id": "<id>",
+    "is_chain_root": false,
     "source_event_payload": {
       "hi": 1,
     },

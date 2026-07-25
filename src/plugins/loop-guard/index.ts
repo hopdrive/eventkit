@@ -145,7 +145,14 @@ export function loopGuard(config: LoopGuardConfig = {}): EventKitPlugin {
       const meta: Record<string, unknown> = { ...envelope.meta };
       const partial: Partial<EventEnvelope> = {};
       // Chaining: the inbound correlation id overrides the source-derived/generated one.
-      if (correlationId) partial.correlationId = asCorrelationId(correlationId) as CorrelationId;
+      // That also settles the chain-root question — this invocation INHERITED its
+      // correlation from an upstream token, so it did not mint one (the source's
+      // provisional `correlationMinted` from normalize, decided before the token was
+      // parsed, is corrected here to the truthful answer for observability).
+      if (correlationId) {
+        partial.correlationId = asCorrelationId(correlationId) as CorrelationId;
+        meta['correlationMinted'] = false;
+      }
       if (sourceTrackingToken) meta['sourceTrackingToken'] = sourceTrackingToken;
       if (sourceJobId) meta['sourceJobId'] = sourceJobId;
 
