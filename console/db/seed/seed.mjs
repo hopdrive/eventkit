@@ -576,7 +576,12 @@ async function generateStreaming(rng, invocationCount, writers) {
       source_event_payload: buildPayload(rng, { table: 'moves', operation: 'INSERT', recordId: recordIdCounter++, source_system: 'hasura' }),
       source_event_time: rootCreatedAt, source_user_email: 'dealerportal@hopdrive.com', source_user_role: 'admin',
       total_duration_ms: rng.int(200, 2000), auto_load_modules: true, event_modules_directory: null,
-      status: 'completed', error_message: null, error_stack: null, context_data: { origin },
+      // The decoded cause also declares which events it expects somewhere in the chain
+      // (a consumer-supplied hint). Two are observed in this chain (move.create.requested,
+      // appointment.ready); driver.assigned never fires — so the user-action drawer shows
+      // two checks and one miss.
+      status: 'completed', error_message: null, error_stack: null,
+      context_data: { origin: { ...origin, expectedEvents: ['move.create.requested', 'appointment.ready', 'driver.assigned'] } },
       origin_action: origin.action, is_chain_root: true, chain_status: 'ok', chain_last_activity_at: rootCreatedAt,
       events_detected_count: 1, total_jobs_run: 1, total_jobs_succeeded: 1, total_jobs_failed: 0,
     });
