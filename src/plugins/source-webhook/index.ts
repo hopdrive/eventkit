@@ -237,6 +237,8 @@ function buildWebhook(config: WebhookConfig): WebhookSource {
           webhookHeaders: headers,
           webhookQuery: query,
           sourceFunction: `webhook:${vendor}`,
+          // Chain-root signal for observability: minted iff no inbound correlation id.
+          correlationMinted: request.correlationId === undefined,
         },
         raw,
       };

@@ -23,6 +23,7 @@ const SUBPATHS: Record<string, string> = {
   './plugins/observability/graphql-sink': '../plugins/observability/graphql-sink.js',
   './plugins/loop-guard': '../plugins/loop-guard/index.js',
   './plugins/correlation-resolver': '../plugins/correlation-resolver/index.js',
+  './plugins/origin-decoder': '../plugins/origin-decoder/index.js',
   './plugins/transports/grafana': '../plugins/grafana/index.js',
   './plugins/transports/sentry': '../plugins/sentry/index.js',
   './platforms': '../plugins/platforms.js',

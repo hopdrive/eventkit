@@ -8,7 +8,13 @@ import {
   CheckCircleIcon,
   XCircleIcon,
   ExclamationTriangleIcon,
+  ChevronRightIcon,
 } from '@heroicons/react/24/outline';
+import { formatRelativeTime } from '../utils/formatTime';
+
+// Same amber origin tone as the chains index and the flow canvas' user-action node.
+const ORIGIN_CHIP =
+  'inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/30';
 import {
   LineChart,
   Line,
@@ -36,7 +42,7 @@ import {
   startOfMinute,
   eachMinuteOfInterval,
 } from 'date-fns';
-import { NetworkStatus, useQuery } from '@apollo/client';
+import { NetworkStatus, useQuery, gql } from '@apollo/client';
 import { parse } from 'graphql';
 import DatabaseConnectionStatus from './DatabaseConnectionStatus';
 import { usePolling } from '../contexts/PollingContext';
@@ -82,6 +88,46 @@ interface OverviewDashboardProps {
   timeRange?: string;
 }
 
+// Chain health for the selected window (leads the dashboard). All predicates hit indexed
+// root columns; the action rollup is aggregated client-side over a bounded page of rows.
+const CHAIN_HEALTH = gql`
+  query DashboardChainHealth($window: timestamptz!, $prevWindow: timestamptz!) {
+    errored_now: invocations_aggregate(
+      where: { is_chain_root: { _eq: true }, chain_status: { _eq: "errored" }, chain_last_activity_at: { _gte: $window } }
+    ) {
+      aggregate { count }
+    }
+    errored_prev: invocations_aggregate(
+      where: { is_chain_root: { _eq: true }, chain_status: { _eq: "errored" }, chain_last_activity_at: { _gte: $prevWindow, _lt: $window } }
+    ) {
+      aggregate { count }
+    }
+    needs_attention: invocations(
+      where: { is_chain_root: { _eq: true }, chain_status: { _eq: "errored" }, chain_last_activity_at: { _gte: $window } }
+      order_by: { chain_last_activity_at: desc }
+      limit: 8
+    ) {
+      id
+      correlation_id
+      origin_action
+      source_function
+      source_table
+      source_operation
+      source_user_email
+      chain_last_activity_at
+      status
+    }
+    action_rows: invocations(
+      where: { is_chain_root: { _eq: true }, origin_action: { _is_null: false }, chain_last_activity_at: { _gte: $window } }
+      order_by: { chain_last_activity_at: desc }
+      limit: 500
+    ) {
+      origin_action
+      chain_status
+    }
+  }
+`;
+
 const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   correlationSearch = '',
   timeRange: timeRangeOption = '24h',
@@ -114,6 +160,50 @@ const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
 
     return startDate.toISOString();
   }, [timeRangeOption]);
+
+  // The equal-length window immediately before the selected one, for the errored-chain trend.
+  const prevWindow = useMemo(() => {
+    const start = new Date(timeRange).getTime();
+    const span = Date.now() - start;
+    return new Date(start - span).toISOString();
+  }, [timeRange]);
+
+  const { data: healthData } = useQuery(CHAIN_HEALTH, {
+    variables: { window: timeRange, prevWindow },
+    fetchPolicy: 'cache-and-network',
+    errorPolicy: 'all',
+    pollInterval: 30000,
+  });
+
+  const erroredNow = (healthData as any)?.errored_now?.aggregate?.count ?? 0;
+  const erroredPrev = (healthData as any)?.errored_prev?.aggregate?.count ?? 0;
+  const erroredDelta = erroredNow - erroredPrev;
+  const needsAttention = ((healthData as any)?.needs_attention ?? []) as Array<{
+    id: string;
+    correlation_id: string | null;
+    origin_action: string | null;
+    source_function: string;
+    source_table: string | null;
+    source_operation: string | null;
+    source_user_email: string | null;
+    chain_last_activity_at: string | null;
+    status: string;
+  }>;
+  const topActions = useMemo(() => {
+    const map = new Map<string, { total: number; errored: number }>();
+    for (const r of ((healthData as any)?.action_rows ?? []) as Array<{ origin_action: string | null; chain_status: string | null }>) {
+      const a = r.origin_action;
+      if (!a) continue;
+      const cur = map.get(a) ?? { total: 0, errored: 0 };
+      cur.total += 1;
+      if (r.chain_status === 'errored') cur.errored += 1;
+      map.set(a, cur);
+    }
+    return [...map.entries()]
+      .map(([action, v]) => ({ action, ...v }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 6);
+  }, [healthData]);
 
   const { data, loading, error, networkStatus, startPolling, stopPolling } = useOverviewDashboardQuery({
     variables: { timeRange },
@@ -311,6 +401,105 @@ const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         hasData={totalInvocations > 0}
         databaseInfo={systemStatus.databaseInfo}
       />
+
+      {/* Health strip — lead with errored chains, not raw volume. */}
+      <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
+        <div className='bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6'>
+          <p className='text-sm font-medium text-gray-600 dark:text-gray-400'>Errored chains</p>
+          <div className='mt-2 flex items-baseline gap-3'>
+            <span className='text-3xl font-semibold text-gray-900 dark:text-white'>{erroredNow.toLocaleString()}</span>
+            {erroredDelta !== 0 && (
+              <span className={`inline-flex items-center text-sm ${erroredDelta > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                {erroredDelta > 0 ? <ArrowUpIcon className='h-4 w-4 mr-1' /> : <ArrowDownIcon className='h-4 w-4 mr-1' />}
+                {Math.abs(erroredDelta)}
+              </span>
+            )}
+          </div>
+          <p className='mt-1 text-xs text-gray-500 dark:text-gray-500'>vs {erroredPrev.toLocaleString()} in the previous window</p>
+        </div>
+      </div>
+
+      {/* Needs attention: the most recent errored chains, each one click from its flow. */}
+      <div className='bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700'>
+        <div className='px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2'>
+          <ExclamationTriangleIcon className='h-5 w-5 text-red-500' />
+          <h3 className='text-lg font-semibold text-gray-900 dark:text-white'>Needs attention</h3>
+        </div>
+        <div className='divide-y divide-gray-200 dark:divide-gray-700'>
+          {needsAttention.length === 0 ? (
+            <div className='px-6 py-6 text-sm text-gray-500 dark:text-gray-400'>No errored chains in this window.</div>
+          ) : (
+            needsAttention.map(c => (
+              <button
+                key={c.id}
+                onClick={() => navigate(`/flow?correlationId=${encodeURIComponent(c.correlation_id || '')}&autoFocus=true`)}
+                className='w-full text-left px-6 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center justify-between transition-colors'
+              >
+                <div className='flex items-center gap-3 min-w-0'>
+                  {c.origin_action ? (
+                    <span className={ORIGIN_CHIP}>{c.origin_action}</span>
+                  ) : (
+                    <span className='font-medium text-gray-900 dark:text-gray-100'>
+                      {c.source_table ? c.source_table.split('.').pop() : c.source_function}
+                      {c.source_operation ? ` ${c.source_operation}` : ''}
+                    </span>
+                  )}
+                  <span className='text-xs text-gray-500 dark:text-gray-400 truncate'>{c.source_user_email || c.source_function}</span>
+                </div>
+                <div className='flex items-center gap-3 flex-shrink-0'>
+                  <span className='text-xs text-gray-500 dark:text-gray-400'>
+                    {c.chain_last_activity_at ? formatRelativeTime(c.chain_last_activity_at) : ''}
+                  </span>
+                  <ChevronRightIcon className='h-5 w-5 text-gray-400' />
+                </div>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Top origin actions by chain volume, with the errored-chain rate per action. */}
+      <div className='bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700'>
+        <div className='px-6 py-4 border-b border-gray-200 dark:border-gray-700'>
+          <h3 className='text-lg font-semibold text-gray-900 dark:text-white'>Top origin actions</h3>
+        </div>
+        {topActions.length === 0 ? (
+          <div className='px-6 py-6 text-sm text-gray-500 dark:text-gray-400'>No decoded origins in this window.</div>
+        ) : (
+          <table className='w-full'>
+            <thead className='bg-gray-50 dark:bg-gray-700/50'>
+              <tr>
+                <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>Action</th>
+                <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>Chains</th>
+                <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>Errored rate</th>
+              </tr>
+            </thead>
+            <tbody className='divide-y divide-gray-200 dark:divide-gray-700'>
+              {topActions.map(a => {
+                const rate = a.total ? Math.round((a.errored / a.total) * 100) : 0;
+                return (
+                  <tr
+                    key={a.action}
+                    onClick={() => navigate(`/invocations?action=${encodeURIComponent(a.action)}`)}
+                    className='hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer'
+                  >
+                    <td className='px-6 py-3'>
+                      <span className={ORIGIN_CHIP}>{a.action}</span>
+                    </td>
+                    <td className='px-6 py-3 text-sm text-gray-700 dark:text-gray-300'>{a.total.toLocaleString()}</td>
+                    <td className='px-6 py-3 text-sm'>
+                      <span className={rate > 0 ? 'text-red-600 dark:text-red-400 font-medium' : 'text-gray-500 dark:text-gray-400'}>
+                        {rate}%
+                      </span>
+                      <span className='text-gray-400 dark:text-gray-500'> ({a.errored})</span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
 
       {/* KPI Grid */}
       <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4'>

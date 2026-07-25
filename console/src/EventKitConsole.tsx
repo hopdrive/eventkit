@@ -23,7 +23,14 @@ import { ConsoleConfigProvider, useConsoleConfig, type EventKitConsoleConfig } f
 import { useSystemStatus } from './hooks/useSystemStatus';
 import './styles/globals.css';
 
-export type { EventKitConsoleConfig, EventKitConsoleAuth } from './config';
+export type {
+  EventKitConsoleConfig,
+  EventKitConsoleAuth,
+  OriginUserProfile,
+  ExpectedFlowGraph,
+  ExpectedFlowNode,
+  ExpectedFlowEdge,
+} from './config';
 
 /** Did Hasura reject this as unauthenticated (expired/invalid JWT, access denied)? */
 function isUnauthenticatedError(code: unknown, message: string): boolean {

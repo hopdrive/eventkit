@@ -50,6 +50,14 @@ export interface InvocationRecord {
   source_user_role?: string;
   source_job_id?: string;
   context_data?: unknown;
+  /** Decoded origin action slug (e.g. `dealer.move.create`), promoted out of context_data.origin.action. */
+  origin_action?: string;
+  /** True on the invocation that MINTED the chain's correlation id (from meta.correlationMinted). */
+  is_chain_root?: boolean;
+  /** Chain rollup, meaningful only on root rows: 'ok' | 'errored'. Initialized 'ok' at root start. */
+  chain_status?: string;
+  /** Root rows only: started_at of the most recent member invocation in the chain. */
+  chain_last_activity_at?: string;
   status: string;
   created_at: string;
   updated_at: string;
@@ -272,7 +280,25 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
       if (captureSourcePayload && ctx.envelope.payload !== undefined) {
         invocation.source_event_payload = safeSerialize(ctx.envelope.payload, serOpts);
       }
-      if (ctx.request.meta !== undefined) invocation.context_data = safeSerialize(ctx.request.meta, serOpts);
+      const { meta: requestMeta } = ctx.request;
+      if (requestMeta !== undefined) invocation.context_data = safeSerialize(requestMeta, serOpts);
+
+      // Chain-root flagging: BY DEFINITION the invocation that minted the correlation id.
+      // Never inferred from timestamps, and independent of whether a decoded origin exists
+      // (a bare Hasura insert with no frontend header still roots a chain). A root row seeds
+      // the chain rollup: status 'ok' and last-activity = its own start; the sink bumps these
+      // as members land (see graphql-sink rollup).
+      const isChainRoot = meta.correlationMinted === true;
+      invocation.is_chain_root = isChainRoot;
+      if (isChainRoot) {
+        invocation.chain_status = 'ok';
+        invocation.chain_last_activity_at = now;
+      }
+      // Promote the decoded origin action out of context_data.origin.action so it can be
+      // indexed/filtered/sorted. String only; a non-string or missing origin leaves it null.
+      const origin = (requestMeta as { origin?: unknown } | undefined)?.origin;
+      const action = origin && typeof origin === 'object' ? (origin as { action?: unknown }).action : undefined;
+      if (typeof action === 'string') invocation.origin_action = action;
 
       const buf: Buffer = { invocation, events: new Map(), eventIdByName: new Map(), jobs: new Map() };
       if (config.flushIntervalMs && config.flushIntervalMs > 0) {

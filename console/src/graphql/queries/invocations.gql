@@ -181,3 +181,17 @@ query GroupedSearch(
     duration_ms
   }
 }
+
+# Origin-action typeahead for the grouped search. Distinct origin_action values over the
+# indexed column (idx_invocations_origin_action), scoped to root rows. Prefix match keeps
+# it btree-friendly; no jsonb cast.
+query OriginActionSuggest($prefix: String!) {
+  invocations(
+    where: { is_chain_root: { _eq: true }, origin_action: { _ilike: $prefix } }
+    distinct_on: origin_action
+    order_by: { origin_action: asc }
+    limit: 8
+  ) {
+    origin_action
+  }
+}

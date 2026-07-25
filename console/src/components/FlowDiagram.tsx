@@ -1,7 +1,7 @@
 import React, { useCallback, useState, useEffect, useRef, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { nodeTypes } from './nodes';
-import { useFlowPositioning } from '../hooks/useFlowPositioning';
+import { useFlowPositioning, originClickId } from '../hooks/useFlowPositioning';
 import ReactFlow, {
   Node,
   Edge,
@@ -15,8 +15,9 @@ import ReactFlow, {
   ConnectionMode,
 } from 'reactflow';
 import { AnimatePresence } from 'framer-motion';
-import { useInvocationTreeFlowQuery } from '../types/generated';
+import { useInvocationTreeFlowQuery, useSiblingChainsByClickQuery, useRootByCorrelationQuery } from '../types/generated';
 import InvocationDetailDrawer from './InvocationDetailDrawer';
+import UserActionDetailDrawer from './UserActionDetailDrawer';
 import 'reactflow/dist/style.css';
 import JobDetailDrawer from './JobDetailDrawer';
 import EventDetailDrawer from './EventDetailDrawer';
@@ -29,7 +30,11 @@ import { useFlowHotkeys } from '../hooks/useFlowHotkeys';
 import { PlayIcon } from '@heroicons/react/20/solid';
 import { compareFlow } from '../flowdoc/compare';
 import { loadBundledDocs, loadUploadedDocs, saveUploadedDoc } from '../flowdoc/store';
-import type { FlowDoc } from '../flowdoc/types';
+import type { FlowDoc, FlowGraph } from '../flowdoc/types';
+import { useConsoleConfig } from '../config';
+import { useExpectedFlows } from '../hooks/useExpectedFlows';
+import { expectedFlowToGraph } from '../flowdoc/expectedFlow';
+import { buildExpectedOverlay, type OverlayInvocation } from '../flowdoc/overlay';
 
 // ONE canvas, overlay toggles (not separate views): the observed run always renders
 // with its normal nodes; toggles only ADD or REMOVE nodes and never change the size
@@ -59,10 +64,15 @@ const minimapNodeColor = (node: Node) => {
 };
 
 // Inner component that uses ReactFlow hooks
+// Resolver-driven expected-flow overlay: remembered across sessions (a per-user
+// preference, not part of a shareable deep link like the URL flags).
+const FLOW_OVERLAY_LS = 'eventkit-console-flow-overlay';
+
 const FlowDiagramContent = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const reactFlowInstance = useReactFlow();
+  const { expectedFlowResolver } = useConsoleConfig();
 
   // Remove useNodesState and useEdgesState to avoid conflicts
   // We'll use direct props instead
@@ -79,8 +89,41 @@ const FlowDiagramContent = () => {
   const [helpOpen, setHelpOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // URL Parameters
-  const invocationId = searchParams.get('invocationId');
+  // Resolver-driven expected-flow overlay (per-invocation). Only meaningful when the
+  // host injected an expectedFlowResolver; remembered in localStorage.
+  const [flowOverlayOn, setFlowOverlayOn] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(FLOW_OVERLAY_LS) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleFlowOverlay = useCallback(() => {
+    setFlowOverlayOn(v => {
+      const next = !v;
+      try {
+        localStorage.setItem(FLOW_OVERLAY_LS, next ? '1' : '0');
+      } catch {
+        // ignore — a private-mode localStorage failure just doesn't persist the choice
+      }
+      return next;
+    });
+  }, []);
+
+  // URL Parameters. The flow view is addressable two ways: by a specific invocation
+  // (?invocationId=), or by a whole chain (?correlationId=) — the stable deep-link
+  // contract Sentry/Grafana links use. A correlation id resolves to the chain root (or
+  // the earliest member if no root row was recorded), and the rest of the page runs
+  // exactly as if that invocation had been named directly.
+  const invocationIdParam = searchParams.get('invocationId');
+  const correlationIdParam = searchParams.get('correlationId');
+  const { data: rootRes } = useRootByCorrelationQuery({
+    variables: { correlationId: correlationIdParam || '' },
+    skip: !correlationIdParam || !!invocationIdParam,
+    fetchPolicy: 'cache-first',
+    errorPolicy: 'all',
+  });
+  const invocationId = invocationIdParam || rootRes?.roots?.[0]?.id || rootRes?.fallback?.[0]?.id || null;
   const autoFocus = searchParams.get('autoFocus') === 'true';
   const showExpected = searchParams.get('expected') === '1';
   const flagOffContract = searchParams.get('offcontract') === '1';
@@ -132,17 +175,55 @@ const FlowDiagramContent = () => {
     errorPolicy: 'all',
   });
 
-  // Use the positioning hook to generate nodes and edges
-  // Combine the main invocation with its correlated invocations for recursive rendering.
+  // The focused chain: the entered invocation plus everything sharing its correlation id.
   // MUST be memoized: a fresh array every render would invalidate the layout memo and
   // rebuild every node/edge object on every render of this component.
-  const invocations = useMemo(
+  const primaryInvocations = useMemo(
     () =>
       data?.invocations_by_pk
         ? [data.invocations_by_pk, ...(data.invocations_by_pk.correlated_invocations || [])]
         : [],
     [data]
   );
+
+  // Click grouping: if the focused chain's root carries a decoded origin clickId, other
+  // root chains from the SAME user click share it (each with its own correlation id).
+  // Fetch those siblings so the canvas can fan one user-action node into all of them.
+  // Bounded to a recent window and a small limit; clickId is client-supplied, so this is
+  // a display-only grouping, never chain identity.
+  const focusedRoot = useMemo(
+    () => primaryInvocations.find(i => !i.source_job_id) ?? null,
+    [primaryInvocations]
+  );
+  const focusedClickId = originClickId(focusedRoot?.context_data);
+  const siblingSince = useMemo(() => {
+    if (!focusedRoot) return '';
+    // Bound on created_at (the column the query filters and indexes), one hour back. The
+    // clickId already scopes to one click; this window is just a safety cap on the scan.
+    return new Date(new Date(focusedRoot.created_at).getTime() - 60 * 60 * 1000).toISOString();
+  }, [focusedRoot]);
+  const { data: siblingData } = useSiblingChainsByClickQuery({
+    variables: {
+      clickMatch: { origin: { clickId: focusedClickId } },
+      excludeCorrelationId: focusedRoot?.correlation_id ?? '',
+      since: siblingSince,
+      limit: 25,
+    },
+    skip: !focusedClickId || !focusedRoot,
+    fetchPolicy: 'cache-first',
+    errorPolicy: 'all',
+  });
+
+  // Merge the focused chain with any sibling chains, de-duped by id.
+  const invocations = useMemo(() => {
+    const siblings = (siblingData?.invocations ?? []).flatMap(r => [r, ...(r.correlated_invocations || [])]);
+    const byId = new Map<string, (typeof primaryInvocations)[number]>();
+    for (const inv of [...primaryInvocations, ...siblings]) {
+      if (!byId.has(inv.id)) byId.set(inv.id, inv);
+    }
+    return [...byId.values()];
+  }, [primaryInvocations, siblingData]);
+
   const { nodes: generatedNodes, edges: generatedEdges } = useFlowPositioning(invocations);
 
   // Compare: overlay this run's observed tree on the selected expected graph.
@@ -307,15 +388,34 @@ const FlowDiagramContent = () => {
   // EventNode/JobNode components (identical shell/size); toggles only add/remove
   // nodes — they never restyle what's already rendered. Off-contract flagging adds
   // an outline ring only (no size/content change).
-  const displayData = useMemo(() => {
-    // Chain orientation: mark the ORIGIN (no source_job_id — the invocation that
-    // caused everything downstream) and the entered/"viewing" invocation, so a user
-    // landing mid-chain can orient instantly. Always on — not a toggle.
+  const baseDisplayData = useMemo(() => {
+    // Chain orientation: mark the ORIGIN (what actually started the chain) and the
+    // entered/"viewing" invocation, so a user landing mid-chain can orient instantly.
+    // Always on — not a toggle. When a root invocation has a decoded user action,
+    // THAT node is the origin (the click started the chain, not the row write), so
+    // the root invocation hands its ORIGIN marker to the user-action node.
     const originIds = new Set(invocations.filter(i => !i.source_job_id).map(i => i.id));
+    // Roots that a user-action node stands in front of. One user-action node can front
+    // several roots (a click that started multiple chains), so read the root ids off its
+    // data, not the node id.
+    const rootsWithUserAction = new Set(
+      flowData.nodes
+        .filter(n => n.type === 'userAction')
+        .flatMap(n => (n.data?.rootInvocationIds as string[] | undefined) ?? [])
+    );
     let nodes = flowData.nodes.map(n =>
       n.type === 'invocation'
-        ? { ...n, data: { ...n.data, isOrigin: originIds.has(n.id), isFocus: n.id === invocationId } }
-        : n
+        ? {
+            ...n,
+            data: {
+              ...n.data,
+              isOrigin: originIds.has(n.id) && !rootsWithUserAction.has(n.id),
+              isFocus: n.id === invocationId,
+            },
+          }
+        : n.type === 'userAction'
+          ? { ...n, data: { ...n.data, isOrigin: true } }
+          : n
     );
     let edges = flowData.edges;
     if (!compareResult && !showUndetected) return { nodes, edges };
@@ -412,7 +512,62 @@ const FlowDiagramContent = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flowData, compareResult, showExpected, flagOffContract, showUndetected, selectedDoc, invocationId, data]);
 
+  // ── Resolver-driven expected-flow overlay (per-invocation) ─────────────────
+  // Independent of the doc-picker toggles above: each invocation's source_function
+  // resolves to its OWN expected graph (host-injected), compared against that
+  // invocation's observed records. Only runs when the host configured a resolver
+  // and the user turned the overlay on.
+  const flowRequests = useMemo(
+    () => invocations.map(i => ({ sourceFunction: i.source_function, at: i.created_at })),
+    [invocations]
+  );
+  // Detected event names anywhere in the loaded chain — the user-action drawer checks
+  // a cause's declared expectedEvents against these.
+  const observedEventNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const inv of invocations) {
+      for (const ev of inv.event_executions ?? []) {
+        if (ev.detected) names.add(ev.event_name);
+      }
+    }
+    return names;
+  }, [invocations]);
+  // Resolve lazily; passing [] while the overlay is off means the host resolver is
+  // never called until the user asks for it.
+  const resolvedFlows = useExpectedFlows(flowOverlayOn && expectedFlowResolver ? flowRequests : []);
+  const flowByFunction = useMemo(() => {
+    const out: Record<string, FlowGraph> = {};
+    for (const [fn, graph] of Object.entries(resolvedFlows)) {
+      if (graph) out[fn] = expectedFlowToGraph(graph);
+    }
+    return out;
+  }, [resolvedFlows]);
 
+  const flowOverlay = useMemo(() => {
+    if (!flowOverlayOn || !expectedFlowResolver || invocations.length === 0) return null;
+    if (Object.keys(flowByFunction).length === 0) return null;
+    return buildExpectedOverlay({
+      observedNodes: flowData.nodes as Node[],
+      observedEdges: flowData.edges,
+      invocations: invocations as OverlayInvocation[],
+      flowByFunction,
+    });
+  }, [flowOverlayOn, expectedFlowResolver, invocations, flowByFunction, flowData]);
+
+  // Fold the resolver overlay into the observed canvas: mark off-contract observed
+  // nodes (a badge, no size change) and append the ghost nodes/edges. Everything
+  // downstream (replay, breadcrumb, stats, cross-nav) reads this merged view.
+  const displayData = useMemo(() => {
+    if (!flowOverlay) return baseDisplayData;
+    const offIds = flowOverlay.offContractNodeIds;
+    const nodes = baseDisplayData.nodes.map(n =>
+      offIds.has(n.id) ? { ...n, data: { ...n.data, offContract: true } } : n
+    );
+    return {
+      nodes: [...nodes, ...flowOverlay.ghostNodes],
+      edges: [...baseDisplayData.edges, ...flowOverlay.ghostEdges],
+    };
+  }, [baseDisplayData, flowOverlay]);
 
   // Chain replay: reveal nodes in real chronological order on a scrubbable,
   // normalized clock (every node's created_at + duration is persisted, so the
@@ -593,6 +748,8 @@ const FlowDiagramContent = () => {
     onToggleHelp: open => setHelpOpen(o => (open == null ? !o : open)),
     onToggleFlag: key =>
       setFlag(key, !(key === 'expected' ? showExpected : key === 'offcontract' ? flagOffContract : showUndetected)),
+    // The resolver overlay is only reachable by keyboard when a resolver is wired.
+    onToggleFlowOverlay: expectedFlowResolver ? toggleFlowOverlay : undefined,
     onCycleSpeed: cycleSpeed,
   });
 
@@ -660,6 +817,20 @@ const FlowDiagramContent = () => {
           />
           Show undetected
         </label>
+        {expectedFlowResolver && (
+          <label
+            className='inline-flex items-center gap-1.5 px-2.5 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700'
+            title='Overlay the expected flow for each invocation (X). Ghost nodes are expected-but-not-observed steps; a small badge marks observed steps the flow does not declare.'
+          >
+            <input
+              type='checkbox'
+              checked={flowOverlayOn}
+              onChange={toggleFlowOverlay}
+              className='h-3.5 w-3.5 text-blue-600 border-gray-300 rounded'
+            />
+            Expected flow
+          </label>
+        )}
         {(showExpected || flagOffContract) && (
           <>
             <select
@@ -742,6 +913,29 @@ const FlowDiagramContent = () => {
         </div>
       )}
 
+      {/* Resolver overlay legend + summary (per-invocation expected flow). Shifts
+          below the doc-overlay legend so the two never collide when both are on. */}
+      {flowOverlayOn && flowOverlay && (
+        <div
+          className={`absolute right-4 z-10 bg-white/90 dark:bg-gray-800/90 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 shadow-sm space-y-1 ${
+            (compareResult || showUndetected) && (showExpected || flagOffContract || showUndetected) ? 'top-32' : 'top-4'
+          }`}
+        >
+          <div className='text-[11px] text-gray-600 dark:text-gray-300 pb-1 border-b border-gray-100 dark:border-gray-700'>
+            Expected flow · {flowOverlay.summary.missing} missing · {flowOverlay.summary.offContract} off-contract
+          </div>
+          <div className='flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-300'>
+            <span className='w-3 h-3 rounded border-2 border-dashed border-gray-400' /> expected · not observed
+          </div>
+          <div className='flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-300'>
+            <span className='px-1 rounded text-[8px] font-semibold ring-1 ring-inset ring-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/30'>
+              off-contract
+            </span>{' '}
+            observed · not in the flow
+          </div>
+        </div>
+      )}
+
       {observedGate ?? (
       <ReactFlow
         nodes={canvasData.nodes}
@@ -794,6 +988,16 @@ const FlowDiagramContent = () => {
       <AnimatePresence>
         {drawerOpen && selectedNode && (
           <>
+            {selectedNode.type === 'userAction' && (
+              <UserActionDetailDrawer
+                node={selectedNode}
+                isOpen={drawerOpen}
+                onClose={handleDrawerClose}
+                onOpenNodeId={handleOpenNodeId}
+                onBack={drawerHistory.length > 0 ? handleDrawerBack : undefined}
+                observedEventNames={observedEventNames}
+              />
+            )}
             {selectedNode.type === 'invocation' && (
               <InvocationDetailDrawer
                 node={selectedNode}

@@ -37,12 +37,30 @@ export interface SourceMeta {
   /** Inbound provenance token (loop-guard). */
   sourceTrackingToken?: string;
   /**
+   * The raw inbound trace id a client sent (Hasura `event.trace_context.trace_id`,
+   * carried in as `x-b3-traceid`). This is a CONVEYANCE channel, not the correlation
+   * id: the source surfaces it here for a decoder plugin (origin-decoder) to read, but
+   * it does NOT become the chain's correlation id unless the source is configured to
+   * adopt it. A client controls this value, so treat it as display-only.
+   */
+  sourceTraceId?: string;
+  /**
    * Ordered inbound tracking-token candidates, best first, surfaced by the source
    * during normalize (ADR-039.2). `loopGuard` consumes them and lifts lineage from
    * the first that parses — the source knows its payload anatomy (which fields and
    * session variables carry a token), so the plugin stays generic.
    */
   tokenCandidates?: string[];
+  /**
+   * True when the source MINTED this invocation's correlation id (no inbound
+   * `request.correlationId`, and no adopted trace id), false when it INHERITED one
+   * from an upstream invocation. This is the definition of a chain root: the
+   * invocation that started the chain minted its correlation id; every downstream hop
+   * inherits it. Observability reads this to set `is_chain_root` truthfully — root is
+   * never inferred from timestamps, and is independent of whether a decoded origin
+   * exists (a bare Hasura insert with no frontend header still roots a chain).
+   */
+  correlationMinted?: boolean;
 }
 
 /** The well-known key names, for writers/readers that prefer constants over literals. */
@@ -55,5 +73,7 @@ export const SOURCE_META_KEYS = {
   sourceUserRole: 'sourceUserRole',
   sourceJobId: 'sourceJobId',
   sourceTrackingToken: 'sourceTrackingToken',
+  sourceTraceId: 'sourceTraceId',
   tokenCandidates: 'tokenCandidates',
+  correlationMinted: 'correlationMinted',
 } as const satisfies Record<keyof SourceMeta, string>;

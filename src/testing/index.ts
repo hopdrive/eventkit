@@ -59,7 +59,8 @@ export function fakeSource(opts?: { correlationId?: string }): FakeSource {
     provides: ['source', 'source:fake'],
     sourceType: 'application',
     normalize(raw: unknown, request: RequestContext): EventEnvelope {
-      const correlationId = (request.correlationId ?? opts?.correlationId ?? randomId()) as CorrelationId;
+      const inherited = request.correlationId ?? opts?.correlationId;
+      const correlationId = (inherited ?? randomId()) as CorrelationId;
       return {
         id: randomId(),
         source: asEventSourceName('fake'),
@@ -67,7 +68,8 @@ export function fakeSource(opts?: { correlationId?: string }): FakeSource {
         receivedAt: new Date(),
         correlationId: asCorrelationId(correlationId),
         payload: raw,
-        meta: {},
+        // Chain-root signal: minted when nothing was inherited (see SourceMeta.correlationMinted).
+        meta: { correlationMinted: inherited === undefined },
         raw,
       };
     },

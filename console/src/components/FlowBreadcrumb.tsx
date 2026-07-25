@@ -8,6 +8,7 @@
 import React, { useMemo } from 'react';
 import { Node, Edge } from 'reactflow';
 import { ChevronRightIcon } from '@heroicons/react/24/outline';
+import { originKindLabel } from '../utils/originKind';
 
 const KIND_STYLES: Record<string, { label: string; chip: string; active: string }> = {
   invocation: {
@@ -25,10 +26,29 @@ const KIND_STYLES: Record<string, { label: string; chip: string; active: string 
     chip: 'hover:bg-purple-50 dark:hover:bg-purple-900/30',
     active: 'bg-purple-600 text-white',
   },
+  userAction: {
+    label: 'text-amber-600 dark:text-amber-400',
+    chip: 'hover:bg-amber-50 dark:hover:bg-amber-900/30',
+    active: 'bg-amber-600 text-white',
+  },
 };
 
-const nodeLabel = (n: Node): string =>
-  n.data?.sourceFunction ?? n.data?.eventName ?? n.data?.jobName ?? n.data?.label ?? n.id;
+const nodeLabel = (n: Node): string => {
+  if (n.type === 'userAction') {
+    const origin = n.data?.origin;
+    if (typeof origin === 'string' && origin) return origin;
+    if (origin && typeof origin === 'object') {
+      const action = (origin as Record<string, unknown>).action;
+      const site = (origin as Record<string, unknown>).site;
+      if (typeof action === 'string' && action) return action;
+      if (typeof site === 'string' && site) return site;
+    }
+    // No action/site to show: fall back to the origin kind derived from `trigger`
+    // (User action / Webhook / Scheduled / System / Origin).
+    return originKindLabel(origin);
+  }
+  return n.data?.sourceFunction ?? n.data?.eventName ?? n.data?.jobName ?? n.data?.label ?? n.id;
+};
 
 /** Walk incoming edges from `nodeId` up to the root. Each node in this layout has
  *  at most one structural parent (job→invocation, invocation→event, event→job);
@@ -83,7 +103,9 @@ const FlowBreadcrumb: React.FC<FlowBreadcrumbProps> = ({ selectedNode, nodes, ed
         {path.map((n, i) => {
           const kind = KIND_STYLES[n.type ?? ''] ?? KIND_STYLES.invocation;
           const isCurrent = n.id === selectedNode.id;
-          const isOrigin = n.type === 'invocation' && n.data?.isOrigin;
+          // Type-agnostic: when a user-action node exists it carries the ORIGIN
+          // marker instead of the root invocation (the canvas stamps exactly one).
+          const isOrigin = Boolean(n.data?.isOrigin);
           return (
             <React.Fragment key={n.id}>
               {i > 0 && <ChevronRightIcon className='h-3 w-3 text-gray-300 dark:text-gray-600 flex-shrink-0' />}
@@ -97,7 +119,11 @@ const FlowBreadcrumb: React.FC<FlowBreadcrumbProps> = ({ selectedNode, nodes, ed
                 {isOrigin && (
                   <span
                     className={`px-1 py-px rounded text-[9px] font-bold tracking-wider ${
-                      isCurrent ? 'bg-white/25 text-white' : 'bg-blue-600 text-white'
+                      isCurrent
+                        ? 'bg-white/25 text-white'
+                        : n.type === 'userAction'
+                          ? 'bg-amber-600 text-white'
+                          : 'bg-blue-600 text-white'
                     }`}
                   >
                     ORIGIN

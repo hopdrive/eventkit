@@ -5,6 +5,7 @@ import { hasuraEvent } from '../source-hasura.js';
 import { loopGuard, hopdriveLoopGuard, createTokenCodec } from '../loop-guard/index.js';
 import { observability, type ObservabilityBatch } from '../observability/index.js';
 import { graphqlSink } from '../observability/graphql-sink.js';
+import { originDecoder } from '../origin-decoder/index.js';
 import { safeSerialize } from '../observability/serialize.js';
 import { batch, type BatchJobUpdate, type DelayedBatchJobSpec } from '../batch/index.js';
 import { grafana, type LokiPayload, type LoggerLike } from '../grafana/index.js';
@@ -452,6 +453,66 @@ describe('observability', () => {
   });
 });
 
+describe('observability: chain-root flagging + origin promotion', () => {
+  const lpCfg = { serviceId: 'svc', codec: { separator: '|', validateCorrelationId: true } };
+  const hasuraWithTrace = (traceId: string) => ({
+    id: 'e',
+    created_at: '2026-06-28T12:00:00.000Z',
+    table: { schema: 'public', name: 't' },
+    trigger: { name: 't' },
+    event: { op: 'INSERT', data: { old: null, new: { id: 1 } }, trace_context: { trace_id: traceId }, session_variables: {} },
+  });
+
+  it('flags is_chain_root on the minting invocation and clears it on an inherited hop', async () => {
+    const detect = hasuraEvent.detector(c => c.operation === 'INSERT');
+
+    // Root: a bare Hasura insert with no inbound token mints its correlation id → root.
+    const rootBatches: ObservabilityBatch[] = [];
+    const rootKit = createEventKit(hasuraEvent)
+      .use(loopGuard, lpCfg)
+      .use(observability, { sink: (b: ObservabilityBatch) => void rootBatches.push(b), persistJobsAtStart: false })
+      .registerEvents([{ name: asEventName('e'), detector: detect, jobs: [job(() => 'ok', { name: 'w' })] } as EventModule]);
+    await rootKit.handle(hasuraInsert({ id: 1 }));
+    const root = rootBatches[0]!.invocation;
+    expect(root.is_chain_root).toBe(true);
+    expect(root.chain_status).toBe('ok'); // roots seed the rollup
+    expect(root.chain_last_activity_at).toBe(root.created_at);
+
+    // Hop: a write stamped with an inbound token inherits the correlation id → NOT root.
+    const hopBatches: ObservabilityBatch[] = [];
+    const hopKit = createEventKit(hasuraEvent)
+      .use(loopGuard, lpCfg)
+      .use(observability, { sink: (b: ObservabilityBatch) => void hopBatches.push(b), persistJobsAtStart: false })
+      .registerEvents([{ name: asEventName('e'), detector: detect, jobs: [] } as EventModule]);
+    await hopKit.handle(hasuraInsert({ id: 2, updated_by: `up-svc|${UUID}|up-job` }));
+    const hop = hopBatches[0]!.invocation;
+    expect(hop.is_chain_root).toBe(false);
+    expect(hop.chain_status).toBeUndefined(); // rollup columns are root-only
+    expect(hop.chain_last_activity_at).toBeUndefined();
+  });
+
+  it('promotes context_data.origin.action to origin_action, independent of root-ness', async () => {
+    const batches: ObservabilityBatch[] = [];
+    const kit = createEventKit(hasuraEvent)
+      .use(originDecoder, { decode: () => ({ action: 'dealer.move.create', site: 'dealer-portal' }) })
+      .use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b) })
+      .registerEvents([{ name: asEventName('e'), detector: hasuraEvent.detector(() => false), jobs: [] } as EventModule]);
+    await kit.handle(hasuraWithTrace('action-123'));
+    expect(batches[0]!.invocation.origin_action).toBe('dealer.move.create');
+    expect(batches[0]!.invocation.is_chain_root).toBe(true); // origin is decoration; still a mint
+  });
+
+  it('ignores a non-string origin action', async () => {
+    const batches: ObservabilityBatch[] = [];
+    const kit = createEventKit(hasuraEvent)
+      .use(originDecoder, { decode: () => ({ action: { nested: true } }) })
+      .use(observability, { sink: (b: ObservabilityBatch) => void batches.push(b) })
+      .registerEvents([{ name: asEventName('e'), detector: hasuraEvent.detector(() => false), jobs: [] } as EventModule]);
+    await kit.handle(hasuraWithTrace('x'));
+    expect(batches[0]!.invocation.origin_action).toBeUndefined();
+  });
+});
+
 describe('observability: parent-child linkage (the capability behind the dropped jobExecutionId mutation)', () => {
   const codec = createTokenCodec({ separator: '|', validateCorrelationId: true });
   const lpCfg = { serviceId: 'svc', codec: { separator: '|', validateCorrelationId: true } };
@@ -525,6 +586,7 @@ describe('observability/graphql-sink', () => {
       endpoint: 'http://hasura/v1/graphql',
       headers: { 'x-hasura-admin-secret': 'secret' },
       request: async body => {
+        if (!/insert_/.test(body.query)) return {}; // ignore best-effort chain rollup updates
         calls.push({ query: body.query, objects: (body.variables as { objects: unknown[] }).objects });
         return {};
       },
@@ -636,7 +698,9 @@ describe('observability/graphql-sink', () => {
         ...(mapStatuses === false ? { mapStatuses: false } : {}),
         request: async body => {
           const table = body.query.match(/insert_(\w+)\(/)?.[1] ?? '';
-          for (const o of (body.variables as { objects: Array<{ status?: string }> }).objects) {
+          const objects = (body.variables as { objects?: Array<{ status?: string }> }).objects;
+          if (!objects) return {}; // best-effort chain rollup updates carry no `objects`
+          for (const o of objects) {
             if (o.status) captured.push({ table, status: o.status });
           }
           return {};
@@ -664,7 +728,8 @@ describe('observability/graphql-sink', () => {
     const sink = graphqlSink({
       endpoint: 'http://hasura/v1/graphql',
       retryDelayMs: 1,
-      request: async () => {
+      request: async body => {
+        if (!/insert_/.test(body.query)) return {}; // ignore best-effort chain rollup updates
         attempts += 1;
         if (attempts < 2) throw new Error('network blip');
         return {};
@@ -680,6 +745,65 @@ describe('observability/graphql-sink', () => {
       jobs: [],
     });
     expect(attempts).toBe(2);
+  });
+
+  it('rolls chain activity up onto the root row and flips it errored when a member errored', async () => {
+    const updates: Array<{ mutation: 'bump' | 'errored'; variables: Record<string, unknown> }> = [];
+    const sink = graphqlSink({
+      endpoint: 'http://h/v1/graphql',
+      request: async body => {
+        if (/update_invocations/.test(body.query)) {
+          updates.push({
+            mutation: /BumpChainActivity/.test(body.query) ? 'bump' : 'errored',
+            variables: body.variables,
+          });
+        }
+        return {};
+      },
+    });
+    // A member (root or hop) that errored: bump last-activity, then flip the root errored.
+    await sink({
+      invocation: {
+        ...invocationRecord().invocation,
+        correlation_id: 'chain-1',
+        status: 'failed',
+        created_at: '2026-07-01T00:00:05.000Z',
+      },
+      events: [],
+      jobs: [],
+    } as never);
+
+    expect(updates.map(u => u.mutation)).toEqual(['bump', 'errored']); // bump always; flip only on error
+    expect(updates[0]!.variables).toMatchObject({ correlationId: 'chain-1', ts: '2026-07-01T00:00:05.000Z' });
+    expect(updates[1]!.variables).toEqual({ correlationId: 'chain-1' }); // keyed by (correlation_id, is_chain_root)
+  });
+
+  it('bumps activity but does NOT flip errored for a clean completion', async () => {
+    const mutations: string[] = [];
+    const sink = graphqlSink({
+      endpoint: 'http://h/v1/graphql',
+      request: async body => {
+        if (/update_invocations/.test(body.query)) mutations.push(/BumpChainActivity/.test(body.query) ? 'bump' : 'errored');
+        return {};
+      },
+    });
+    await sink({
+      invocation: { ...invocationRecord().invocation, correlation_id: 'chain-2', status: 'completed' },
+      events: [],
+      jobs: [],
+    } as never);
+    expect(mutations).toEqual(['bump']); // never flips a healthy chain to errored
+  });
+
+  it('swallows a rollup failure so telemetry best-effort never fails business execution', async () => {
+    const sink = graphqlSink({
+      endpoint: 'http://h/v1/graphql',
+      request: async body => {
+        if (/update_invocations/.test(body.query)) throw new Error('rollup boom');
+        return {}; // the invocation insert itself succeeds
+      },
+    });
+    await expect(sink(invocationRecord({ correlation_id: 'chain-3' }) as never)).resolves.toBeUndefined();
   });
 });
 

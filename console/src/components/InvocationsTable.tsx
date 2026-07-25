@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { AnimatePresence } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   createColumnHelper,
   flexRender,
@@ -24,6 +24,7 @@ import {
   CircleStackIcon,
 } from '@heroicons/react/24/outline';
 import InvocationDetailDrawer from './InvocationDetailDrawer';
+import ChainsTable from './ChainsTable';
 import { useInvocationsListQuery, useInvocationsCountQuery } from '../types/generated';
 import { Node } from 'reactflow';
 import { formatRelativeTime } from '../utils/formatTime';
@@ -65,6 +66,35 @@ const ORDER_FIELDS: Record<string, string> = {
 
 const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch = '' }) => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Default view is chain-first ("Chains"); the flat all-invocations table is opt-in via
+  // ?view=invocations, kept for when someone wants raw invocation rows.
+  const view: 'chains' | 'invocations' = searchParams.get('view') === 'invocations' ? 'invocations' : 'chains';
+  const setView = (v: 'chains' | 'invocations') => {
+    const next = new URLSearchParams(searchParams);
+    if (v === 'invocations') next.set('view', 'invocations');
+    else next.delete('view'); // chains is the default, so keep the URL clean
+    setSearchParams(next, { replace: true });
+  };
+  const viewToggle = (
+    <div className='inline-flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden text-sm'>
+      {(['chains', 'invocations'] as const).map(v => (
+        <button
+          key={v}
+          onClick={() => setView(v)}
+          className={`px-3 py-2 font-medium capitalize transition-colors ${
+            view === v
+              ? 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900'
+              : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600'
+          }`}
+        >
+          {v}
+        </button>
+      ))}
+    </div>
+  );
+
   const [selectedInvocation, setSelectedInvocation] = useState<Node | null>(null);
   const [hideZeroDetectedEvents, setHideZeroDetectedEvents] = useState(true);
   const [hideChildInvocations, setHideChildInvocations] = useState(true);
@@ -132,6 +162,7 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
       where: where as any,
       order_by: orderBy,
     },
+    skip: view === 'chains', // flat table is opt-in; don't query it while showing Chains
     fetchPolicy: 'cache-and-network',
     errorPolicy: 'all',
     notifyOnNetworkStatusChange: false,
@@ -142,6 +173,7 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
   // streams in.
   const { data: countData, previousData: prevCountData } = useInvocationsCountQuery({
     variables: { where: where as any },
+    skip: view === 'chains',
     fetchPolicy: 'cache-and-network',
     errorPolicy: 'all',
   });
@@ -437,6 +469,27 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
     debugTable: false,
   });
 
+  if (view === 'chains') {
+    return (
+      <div className='h-full flex flex-col'>
+        <div className='bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4'>
+          <div className='flex items-center justify-between'>
+            <div>
+              <h2 className='text-xl font-semibold text-gray-900 dark:text-white'>Chains</h2>
+              <p className='mt-1 text-sm text-gray-600 dark:text-gray-400'>
+                One row per correlation chain. Click a chain to open its flow.
+              </p>
+            </div>
+            {viewToggle}
+          </div>
+        </div>
+        <div className='flex-1 flex flex-col min-h-0 px-6 py-4'>
+          <ChainsTable correlationSearch={correlationSearch} />
+        </div>
+      </div>
+    );
+  }
+
   if (loading && !activeData) {
     return (
       <div className='h-full flex flex-col'>
@@ -476,11 +529,14 @@ const InvocationsTable: React.FC<InvocationsTableProps> = ({ correlationSearch =
       {/* Header */}
       <div className='bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4'>
         <div className='flex items-center justify-between'>
-          <div>
-            <h2 className='text-xl font-semibold text-gray-900 dark:text-white'>Invocations</h2>
-            <p className='mt-1 text-sm text-gray-600 dark:text-gray-400'>
-              {countKnown ? `${totalCount.toLocaleString()} invocations` : 'Counting…'}{loading ? ' · refreshing…' : ''}
-            </p>
+          <div className='flex items-center gap-4'>
+            <div>
+              <h2 className='text-xl font-semibold text-gray-900 dark:text-white'>Invocations</h2>
+              <p className='mt-1 text-sm text-gray-600 dark:text-gray-400'>
+                {countKnown ? `${totalCount.toLocaleString()} invocations` : 'Counting…'}{loading ? ' · refreshing…' : ''}
+              </p>
+            </div>
+            {viewToggle}
           </div>
 
           <div className='flex items-center space-x-3'>

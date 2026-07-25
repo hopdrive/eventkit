@@ -11,6 +11,7 @@ import type {
   HasuraOperation,
 } from '../hasura-shared/types.js';
 import { buildDetectorContextFor, buildHandlerContextFor } from '../../testing/index.js';
+import { normalizeHasuraEvent } from '../hasura-shared/adapter.js';
 import { detector, appointmentReady, type AppointmentRow } from '../../__examples__/appointment.ready.js';
 
 type Row = Record<string, unknown>;
@@ -43,20 +44,32 @@ function payload(
 const ctxFor = (p: unknown) => buildDetectorContextFor<HasuraDetectorContext>(hasuraEvent, p);
 
 describe('hasuraEvent.normalize', () => {
-  it('derives correlationId from trace_context, receivedAt from created_at, preserves payload', () => {
+  it('does NOT adopt trace_context as correlationId by default; surfaces it on meta.sourceTraceId', () => {
     const p = payload('UPDATE', { status: 'pending' }, { status: 'ready' }, { traceId: 'trace-xyz' });
     const env = hasuraEvent.normalize!(p, {});
     expect(env.source).toBe('hasura');
     expect(env.sourceType).toBe('database');
-    expect(env.correlationId).toBe('trace-xyz');
+    // The client-controlled trace id is conveyance only — a fresh id is minted instead.
+    expect(env.correlationId).not.toBe('trace-xyz');
+    expect(env.meta.sourceTraceId).toBe('trace-xyz');
     expect(env.receivedAt.toISOString()).toBe('2026-06-28T12:00:00.000Z');
     expect(env.payload).toBe(p);
   });
 
-  it('prefers an explicit request.correlationId over the trace id', () => {
-    const env = hasuraEvent.normalize!(payload('INSERT', null, { status: 'ready' }, { traceId: 't' }), {
+  it('adopts trace_context as correlationId when correlationFromTraceId is true', () => {
+    const p = payload('UPDATE', { status: 'pending' }, { status: 'ready' }, { traceId: 'trace-xyz' });
+    const env = hasuraEvent.normalize!(p, {});
+    // The source is configured via createEventKit; call the shared normalize with the opt-in.
+    const adopted = normalizeHasuraEvent(p, {}, { correlationFromTraceId: true });
+    expect(env.correlationId).not.toBe('trace-xyz'); // default off
+    expect(adopted.correlationId).toBe('trace-xyz'); // opt-in on
+    expect(adopted.meta.sourceTraceId).toBe('trace-xyz');
+  });
+
+  it('prefers an explicit request.correlationId even with trace adoption on', () => {
+    const env = normalizeHasuraEvent(payload('INSERT', null, { status: 'ready' }, { traceId: 't' }), {
       correlationId: 'explicit',
-    });
+    }, { correlationFromTraceId: true });
     expect(env.correlationId).toBe('explicit');
   });
 
