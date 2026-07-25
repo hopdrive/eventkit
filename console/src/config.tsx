@@ -80,6 +80,27 @@ export interface EventKitConsoleConfig {
    * email and cached for the life of the page; errors are treated as null.
    */
   userResolver?: (email: string) => OriginUserProfile | null | undefined | Promise<OriginUserProfile | null | undefined>;
+
+  /**
+   * Optional lookup that returns the EXPECTED flow graph for a source function,
+   * so the canvas can overlay "what should happen" on "what did happen". The
+   * console is deliberately schema-agnostic about where flows come from: the
+   * host wrapper decides (a committed `*.flow.yaml`, a generated registry, a
+   * static map) and returns the graph as plain data. Return null (or omit the
+   * resolver) and an invocation renders exactly as it does today — no overlay,
+   * no judgement. Called lazily per distinct `sourceFunction` and cached for the
+   * life of the page; errors are treated as null.
+   *
+   * `at` is the invocation's start time (ISO). It is passed so a future host can
+   * resolve the flow that was current when the run happened; today's hosts may
+   * ignore it. See {@link ExpectedFlowGraph} for the exact shape to return — it
+   * is `@hopdrive/eventkit`'s `toFlowGraph()` output plus optional metadata, so a
+   * registry can emit it as plain JSON with no console-specific fields.
+   */
+  expectedFlowResolver?: (args: {
+    sourceFunction: string;
+    at?: string;
+  }) => ExpectedFlowGraph | null | Promise<ExpectedFlowGraph | null>;
 }
 
 /** What {@link EventKitConsoleConfig.userResolver} returns for a known user. */
@@ -88,6 +109,56 @@ export interface OriginUserProfile {
   displayName?: string | null;
   /** Absolute image URL for the avatar; an initials circle renders when absent. */
   avatarUrl?: string | null;
+}
+
+// ── Expected-flow contract ──────────────────────────────────────────────────
+//
+// This is the wire contract between a flow PRODUCER (HopDrive's registry
+// codegen, a committed `*.flow.yaml`, anything) and the console's overlay. It
+// mirrors `@hopdrive/eventkit`'s `toFlowGraph()` output EXACTLY (src/core/flow.ts
+// FlowNode/FlowEdge), so a producer can emit `toFlowGraph(kit)` as JSON, add the
+// optional metadata, and hand it straight to `expectedFlowResolver`. Node ids
+// MUST use the shared name-derived scheme (`source`, `event:<name>`,
+// `job:<event>:<name>`, `sideEffect:<job>:<effect>`) or the observed-vs-expected
+// overlay will not line up. Keep this to what `toFlowGraph` emits: no invented
+// fields beyond the optional metadata below.
+
+/** A node in an expected flow graph — `toFlowGraph()`'s `FlowNode`. */
+export interface ExpectedFlowNode {
+  /** Name-derived, stable across refactors. See the scheme above. */
+  id: string;
+  kind: 'source' | 'invocation' | 'event' | 'handler' | 'job' | 'sideEffect' | 'terminal';
+  eventName?: string;
+  jobName?: string;
+  sourceFunction?: string;
+  required?: boolean;
+  condition?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** An edge in an expected flow graph — `toFlowGraph()`'s `FlowEdge`. */
+export interface ExpectedFlowEdge {
+  from: string;
+  to: string;
+  required?: boolean;
+  condition?: string;
+}
+
+/**
+ * The expected flow for one source function: `toFlowGraph()`'s `{ nodes, edges }`
+ * plus optional, non-load-bearing metadata a producer may attach (a human title,
+ * when it was generated, a content hash for cache-busting). The overlay reads
+ * only `nodes` and `edges`; the metadata is display sugar.
+ */
+export interface ExpectedFlowGraph {
+  nodes: ExpectedFlowNode[];
+  edges: ExpectedFlowEdge[];
+  /** Human label for the flow (e.g. the function name). */
+  title?: string;
+  /** ISO timestamp of when the producer generated this graph. */
+  generatedAt?: string;
+  /** Opaque content hash the producer may set for cache-busting. */
+  hash?: string;
 }
 
 const DEFAULTS = {
