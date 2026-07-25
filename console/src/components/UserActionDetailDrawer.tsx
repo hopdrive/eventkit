@@ -9,6 +9,7 @@ import { DrawerShell, Fact, FactGrid, Collapsible, JsonBlock, SectionTitle, Node
 import { OriginAvatar } from './nodes/UserActionNode';
 import { useOriginUser } from '../hooks/useOriginUser';
 import { formatRelativeTime } from '../utils/formatTime';
+import { originKindLabel } from '../utils/originKind';
 
 interface UserActionDetailDrawerProps {
   node: Node | null;
@@ -20,8 +21,8 @@ interface UserActionDetailDrawerProps {
 }
 
 // Keys already rendered as first-class facts; everything else lands under
-// "Additional context". `id` is the Action id fact.
-const CONVENTIONAL = ['action', 'site', 'purpose', 'id'] as const;
+// "Additional context". `id` is the Action id fact; `trigger` is the kind + Trigger fact.
+const CONVENTIONAL = ['action', 'site', 'purpose', 'id', 'trigger'] as const;
 
 function asDisplay(value: unknown): string {
   if (value == null) return '';
@@ -52,7 +53,11 @@ const UserActionDetailDrawer: React.FC<UserActionDetailDrawerProps> = ({
   const action = asDisplay(obj.action);
   const site = asDisplay(obj.site);
   const purpose = asDisplay(obj.purpose);
+  const trigger = asDisplay(obj.trigger);
   const title = action || site || (typeof origin === 'string' ? origin : 'Client origin');
+  // Kind header derived from the decoded `trigger` (user / webhook / schedule / system);
+  // a decoded origin is any registered entry point, not only a human click.
+  const kindLabel = originKindLabel(origin);
 
   const rest = isObject
     ? Object.entries(obj).filter(([k, v]) => !CONVENTIONAL.includes(k as (typeof CONVENTIONAL)[number]) && v != null)
@@ -75,12 +80,12 @@ const UserActionDetailDrawer: React.FC<UserActionDetailDrawerProps> = ({
 
   return (
     <DrawerShell
-      kindLabel='User action'
+      kindLabel={kindLabel}
       kindClass='text-amber-600 dark:text-amber-400'
       title={title}
       factStrip={
         <span>
-          {site || 'unknown site'}
+          {site || kindLabel}
           {eventTime && (
             <>
               {' · '}
@@ -112,6 +117,7 @@ const UserActionDetailDrawer: React.FC<UserActionDetailDrawerProps> = ({
       )}
 
       <FactGrid>
+        {trigger && <Fact label='Trigger'>{trigger}</Fact>}
         <Fact label='Site'>{site || '—'}</Fact>
         <Fact label='Role'>{userRole || '—'}</Fact>
         <Fact label='When'>{whenValid ? when!.toLocaleString() : eventTime || '—'}</Fact>

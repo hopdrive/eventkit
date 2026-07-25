@@ -228,10 +228,10 @@ const SOURCE_TABLES = {
 // registry pattern in docs/origin-trace-decoding.md). Seeded onto a slice of hasura roots
 // so the console has a demoable origin node without any live frontend.
 const ORIGIN_ACTIONS = [
-  { action: 'move.create', site: 'dealer-portal', purpose: 'dealer creates a move' },
-  { action: 'driver.assign', site: 'admin', purpose: 'dispatcher assigns a driver' },
-  { action: 'appointment.confirm', site: 'confirmations', purpose: 'customer confirms an appointment' },
-  { action: 'invoice.approve', site: 'admin', purpose: 'ops approves an invoice' },
+  { action: 'move.create', site: 'dealer-portal', purpose: 'dealer creates a move', trigger: 'user' },
+  { action: 'driver.assign', site: 'admin', purpose: 'dispatcher assigns a driver', trigger: 'user' },
+  { action: 'appointment.confirm', site: 'confirmations', purpose: 'customer confirms an appointment', trigger: 'user' },
+  { action: 'invoice.approve', site: 'admin', purpose: 'ops approves an invoice', trigger: 'user' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -395,7 +395,9 @@ async function generateStreaming(rng, invocationCount, writers) {
   // One deterministic "showcase" chain is generated up front (see below), so the random
   // loops generate one fewer root and two fewer children to stay near the requested total.
   const hasShowcase = invocationCount >= 3;
-  const rootsToGen = Math.max(0, numRoots - (hasShowcase ? 1 : 0));
+  // The showcase generates two roots (a user-origin chain + a webhook-origin chain) and
+  // two children, so the random loops generate that many fewer to stay near the total.
+  const rootsToGen = Math.max(0, numRoots - (hasShowcase ? 2 : 0));
   const childrenToGen = Math.max(0, numChildren - (hasShowcase ? 2 : 0));
 
   const anchors = makeReservoir(rng, CHAIN_ANCHOR_RESERVOIR_CAPACITY);
@@ -609,6 +611,31 @@ async function generateStreaming(rng, invocationCount, writers) {
       });
       childLinks.push({ id: childId, sourceJobId: rootJobId });
     }
+
+    // A non-user origin: a webhook-triggered chain. The decoded origin carries
+    // trigger:'webhook' and an integration source, and there is no acting user — so the
+    // console's generalized origin node renders as "Webhook" with no who/name row.
+    const whRootId = rng.uuid();
+    const whCorr = `event-handlers.${rng.uuid()}`;
+    const whCreatedAt = randomTimeOnDay(0);
+    const whEventId = rng.uuid();
+    const whJobId = rng.uuid();
+    const whOrigin = { action: 'stripe.payment.succeeded', trigger: 'webhook', source: 'stripe', integration: 'billing' };
+    await writeEv(copyRow([whEventId, whRootId, whCorr, 'invoice.paid', true, 'completed', 1, 1, 0, isoOrNull(whCreatedAt)]));
+    eventTotal++;
+    await writeJob(copyRow([whJobId, whRootId, whEventId, whCorr, 'publishEventLog', 'publishEventLog', JSON.stringify({ retries: 0 }), rng.int(20, 300), 'completed', { ok: true }, null, null, isoOrNull(whCreatedAt)]));
+    jobTotal++;
+    await writeInvocationRow({
+      id: whRootId, created_at: whCreatedAt, updated_at: whCreatedAt, correlation_id: whCorr,
+      source_function: 'event-handlers', source_table: 'public.invoices', source_operation: 'INSERT',
+      source_system: 'webhook:stripe', source_event_id: rng.uuid(),
+      source_event_payload: buildPayload(rng, { table: 'invoices', operation: 'INSERT', recordId: recordIdCounter++, source_system: 'webhook:stripe' }),
+      source_event_time: whCreatedAt, source_user_email: null, source_user_role: null,
+      total_duration_ms: rng.int(100, 1500), auto_load_modules: true, event_modules_directory: null,
+      status: 'completed', error_message: null, error_stack: null, context_data: { origin: whOrigin },
+      origin_action: whOrigin.action, is_chain_root: true, chain_status: 'ok', chain_last_activity_at: whCreatedAt,
+      events_detected_count: 1, total_jobs_run: 1, total_jobs_succeeded: 1, total_jobs_failed: 0,
+    });
   }
 
   // --- Roots ---

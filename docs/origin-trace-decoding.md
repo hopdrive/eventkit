@@ -13,6 +13,14 @@ This sits next to chaining (see [chained-events.md](chained-events.md)), which k
 correlation id across every invocation in a chain. Origin decoding adds one optional label
 on the first invocation: where the chain came from.
 
+An origin is any registered entry point, not only a human click. A frontend action is one
+kind of conveyance, but an inbound webhook, a schedule, or a system trigger is an origin
+too. If the decoded object includes a `trigger` string, the console labels the node from it:
+`user` shows "User action", `webhook` shows "Webhook", `schedule` shows "Scheduled",
+`system` shows "System", and anything else (or no `trigger`) shows a neutral "Origin". Only
+origins that carry a person (a signed-in user) get the who/name row; a webhook or system
+origin has no identity, so that row is omitted.
+
 ## How the id gets in
 
 A frontend sends the action id as the `x-b3-traceid` header on its Hasura mutation. With
@@ -104,10 +112,11 @@ else changes.
 ## What the console shows
 
 When the first invocation of a chain has a `context_data.origin`, the flow canvas draws a
-node to its left, joined to that invocation. It shows the action, the person who did it
-(name and role), and when. That node carries the ORIGIN marker, since the click started the
-chain, not the row write. Click it for a drawer with the decoded fields, the full raw
-object, and a link to the invocation it started.
+node to its left, joined to that invocation. Its kind label comes from the `trigger` (see
+above), and it shows the action, who did it (name and role, for user origins), and when.
+That node carries the ORIGIN marker, since the origin started the chain, not the row write.
+Click it for a drawer with the decoded fields (including `trigger` when present), the full
+raw object, and a link to the invocation it started.
 
 Who did it comes from the signed session, so it is real. The console shows a name and
 avatar if you give it a resolver: the console config takes an optional `userResolver(email)`

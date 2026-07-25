@@ -4,6 +4,7 @@ import { CursorArrowRaysIcon } from '@heroicons/react/24/outline';
 import { NodeShell, NodeBadge } from './NodeShell';
 import { useOriginUser } from '../../hooks/useOriginUser';
 import { formatRelativeTime } from '../../utils/formatTime';
+import { originKindLabel } from '../../utils/originKind';
 
 // The synthetic "origin" node the layout injects to the LEFT of a chain root when the
 // origin-decoder plugin persisted a decoded client origin into context_data.origin. It
@@ -96,6 +97,9 @@ export const UserActionNode: React.FC<NodeProps<UserActionNodeData>> = ({ data, 
   const site = isObject ? displayValue(obj.site) : '';
 
   const title = action || site || (typeof origin === 'string' ? origin : 'Client origin');
+  // An origin is any registered entry point; the kind label comes from the decoded
+  // `trigger` (user / webhook / schedule / system), not a hard-coded "User action".
+  const kindLabel = originKindLabel(origin);
 
   const profile = useOriginUser(userEmail);
   const whoName = profile?.displayName || userEmail || null;
@@ -109,7 +113,7 @@ export const UserActionNode: React.FC<NodeProps<UserActionNodeData>> = ({ data, 
     <NodeShell
       tone='amber'
       icon={<CursorArrowRaysIcon className='w-4 h-4' />}
-      kindLabel='User action'
+      kindLabel={kindLabel}
       title={title}
       selected={selected}
       badges={
@@ -128,7 +132,9 @@ export const UserActionNode: React.FC<NodeProps<UserActionNodeData>> = ({ data, 
     >
       <Handle type='source' position={Position.Right} id='right' className='w-3 h-3' />
 
-      {(whoName || when) && (
+      {/* Who/when row: only for origins that carry a person (a signed-in user). Webhook,
+          schedule, and system origins have no identity, so the avatar row is omitted. */}
+      {whoName && (
         <div
           className='border-t border-gray-100 dark:border-gray-700/60 px-3 py-1.5 flex items-center gap-2 min-w-0'
           title={when ?? undefined}

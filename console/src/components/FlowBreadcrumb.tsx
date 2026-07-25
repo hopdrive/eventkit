@@ -8,6 +8,7 @@
 import React, { useMemo } from 'react';
 import { Node, Edge } from 'reactflow';
 import { ChevronRightIcon } from '@heroicons/react/24/outline';
+import { originKindLabel } from '../utils/originKind';
 
 const KIND_STYLES: Record<string, { label: string; chip: string; active: string }> = {
   invocation: {
@@ -42,7 +43,9 @@ const nodeLabel = (n: Node): string => {
       if (typeof action === 'string' && action) return action;
       if (typeof site === 'string' && site) return site;
     }
-    return 'user action';
+    // No action/site to show: fall back to the origin kind derived from `trigger`
+    // (User action / Webhook / Scheduled / System / Origin).
+    return originKindLabel(origin);
   }
   return n.data?.sourceFunction ?? n.data?.eventName ?? n.data?.jobName ?? n.data?.label ?? n.id;
 };
