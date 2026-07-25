@@ -392,6 +392,11 @@ async function generateStreaming(rng, invocationCount, writers) {
 
   const numChildren = Math.round(invocationCount * 0.15);
   const numRoots = invocationCount - numChildren;
+  // One deterministic "showcase" chain is generated up front (see below), so the random
+  // loops generate one fewer root and two fewer children to stay near the requested total.
+  const hasShowcase = invocationCount >= 3;
+  const rootsToGen = Math.max(0, numRoots - (hasShowcase ? 1 : 0));
+  const childrenToGen = Math.max(0, numChildren - (hasShowcase ? 2 : 0));
 
   const anchors = makeReservoir(rng, CHAIN_ANCHOR_RESERVOIR_CAPACITY);
   const childLinks = [];
@@ -520,6 +525,10 @@ async function generateStreaming(rng, invocationCount, writers) {
         invocation.error_message,
         invocation.error_stack,
         invocation.context_data,
+        invocation.origin_action,
+        invocation.is_chain_root,
+        invocation.chain_status,
+        isoOrNull(invocation.chain_last_activity_at),
       ])
     );
     if (p) await p;
@@ -540,8 +549,70 @@ async function generateStreaming(rng, invocationCount, writers) {
 
   const progressEvery = Math.max(1, Math.floor(invocationCount / 10));
 
+  // --- Showcase chain (deterministic) ---
+  // A completed root whose non-root child errored, so the errors-only chains view and the
+  // dashboard's "needs attention" feed always have content, and the root's row reads
+  // 'errored' even though the root invocation itself succeeded. The root also carries an
+  // origin_action, so the chains index shows an origin chip on a known row. The root's
+  // chain_status/last_activity are finalized by the post-COPY rollup UPDATE like every chain.
+  if (hasShowcase) {
+    const origin = ORIGIN_ACTIONS[0]; // move.create / dealer-portal
+    const rootCreatedAt = randomTimeOnDay(0);
+    const correlationId = `event-handlers.${rng.uuid()}`;
+    const rootId = rng.uuid();
+    const rootJobId = rng.uuid();
+    const rootEventId = rng.uuid();
+
+    await writeEv(copyRow([rootEventId, rootId, correlationId, 'move.create.requested', true, 'completed', 1, 1, 0, isoOrNull(rootCreatedAt)]));
+    eventTotal++;
+    await writeJob(copyRow([rootJobId, rootId, rootEventId, correlationId, 'requestVehicleMove', 'requestVehicleMove', JSON.stringify({ retries: 0 }), rng.int(50, 500), 'completed', { ok: true, id: rng.int(1, 99999) }, null, null, isoOrNull(rootCreatedAt)]));
+    jobTotal++;
+    await writeInvocationRow({
+      id: rootId, created_at: rootCreatedAt, updated_at: rootCreatedAt, correlation_id: correlationId,
+      source_function: 'event-handlers', source_table: 'public.moves', source_operation: 'INSERT',
+      source_system: 'hasura', source_event_id: rng.uuid(),
+      source_event_payload: buildPayload(rng, { table: 'moves', operation: 'INSERT', recordId: recordIdCounter++, source_system: 'hasura' }),
+      source_event_time: rootCreatedAt, source_user_email: 'dealerportal@hopdrive.com', source_user_role: 'admin',
+      total_duration_ms: rng.int(200, 2000), auto_load_modules: true, event_modules_directory: null,
+      status: 'completed', error_message: null, error_stack: null, context_data: { origin },
+      origin_action: origin.action, is_chain_root: true, chain_status: 'ok', chain_last_activity_at: rootCreatedAt,
+      events_detected_count: 1, total_jobs_run: 1, total_jobs_succeeded: 1, total_jobs_failed: 0,
+    });
+
+    // Two children of that root, sharing its correlation id: one completed, one FAILED.
+    const showcaseChildren = [
+      { ok: true, offsetMs: 3000, event: 'appointment.ready', jobName: 'publishGenericWebhook' },
+      { ok: false, offsetMs: 6000, event: 'move.delivery.started', jobName: 'runARV2' },
+    ];
+    for (const child of showcaseChildren) {
+      const childId = rng.uuid();
+      const childEventId = rng.uuid();
+      const childJobId = rng.uuid();
+      const childCreatedAt = new Date(rootCreatedAt.getTime() + child.offsetMs);
+      const jobStatus = child.ok ? 'completed' : 'failed';
+      await writeEv(copyRow([childEventId, childId, correlationId, child.event, true, jobStatus, 1, child.ok ? 1 : 0, child.ok ? 0 : 1, isoOrNull(childCreatedAt)]));
+      eventTotal++;
+      await writeJob(copyRow([childJobId, childId, childEventId, correlationId, child.jobName, child.jobName, JSON.stringify({ retries: child.ok ? 0 : 2 }), rng.int(50, 800), jobStatus, child.ok ? { ok: true } : null, child.ok ? null : `${child.jobName} failed: upstream timeout`, child.ok ? null : `Error: upstream timeout\n    at ${child.jobName} (jobs/${child.jobName}.ts:42:9)`, isoOrNull(childCreatedAt)]));
+      jobTotal++;
+      await writeInvocationRow({
+        id: childId, created_at: childCreatedAt, updated_at: childCreatedAt, correlation_id: correlationId,
+        source_function: 'event-handlers', source_table: 'public.moves', source_operation: 'UPDATE',
+        source_system: 'hasura', source_event_id: rng.uuid(),
+        source_event_payload: buildPayload(rng, { table: 'moves', operation: 'UPDATE', recordId: recordIdCounter++, source_system: 'hasura' }),
+        source_event_time: childCreatedAt, source_user_email: null, source_user_role: null,
+        total_duration_ms: rng.int(50, 4000), auto_load_modules: true, event_modules_directory: null,
+        status: child.ok ? 'completed' : 'failed',
+        error_message: child.ok ? null : 'Unhandled exception during event detection',
+        error_stack: child.ok ? null : `Error: Unhandled exception\n    at detectEvents (index.ts:88:9)`,
+        context_data: null, origin_action: null, is_chain_root: false, chain_status: null, chain_last_activity_at: null,
+        events_detected_count: 1, total_jobs_run: 1, total_jobs_succeeded: child.ok ? 1 : 0, total_jobs_failed: child.ok ? 0 : 1,
+      });
+      childLinks.push({ id: childId, sourceJobId: rootJobId });
+    }
+  }
+
   // --- Roots ---
-  for (let i = 0; i < numRoots; i++) {
+  for (let i = 0; i < rootsToGen; i++) {
     const entity = rng.pick(Object.keys(SOURCE_TABLES));
     const table = SOURCE_TABLES[entity];
     const operation = rng.weightedPick([['INSERT', 3], ['UPDATE', 6], ['DELETE', 1]]);
@@ -583,16 +654,23 @@ async function generateStreaming(rng, invocationCount, writers) {
       error_message: status === 'failed' ? 'Unhandled exception during event detection' : null,
       error_stack: status === 'failed' ? `Error: Unhandled exception\n    at detectEvents (index.ts:${rng.int(10, 200)}:${rng.int(1, 40)})` : null,
       context_data: origin ? { origin } : null,
+      // Chain rollup: a root MINTED its correlation id. origin_action is promoted out of the
+      // decoded origin (null on the ~88% without one). chain_status/last_activity seed 'ok' +
+      // own start; the post-COPY rollup UPDATE below finalizes them across chain members.
+      origin_action: origin ? origin.action : null,
+      is_chain_root: true,
+      chain_status: 'ok',
+      chain_last_activity_at: createdAt,
     };
 
     await generateEventsAndJobsFor(invocation);
     await writeInvocationRow(invocation);
 
-    if ((i + 1) % progressEvery === 0) log(`  roots: ${i + 1}/${numRoots}`);
+    if ((i + 1) % progressEvery === 0) log(`  roots: ${i + 1}/${rootsToGen}`);
   }
 
   // --- Children (~15%), each chained onto a random completed job from a root ---
-  for (let i = 0; i < numChildren; i++) {
+  for (let i = 0; i < childrenToGen; i++) {
     if (anchors.size === 0) break; // no completed jobs yet (degenerate case with tiny --invocations)
     const anchor = anchors.pick();
     const entity = rng.pick(Object.keys(SOURCE_TABLES));
@@ -628,13 +706,19 @@ async function generateStreaming(rng, invocationCount, writers) {
       error_message: status === 'failed' ? 'Unhandled exception during event detection' : null,
       error_stack: status === 'failed' ? `Error: Unhandled exception\n    at detectEvents (index.ts:${rng.int(10, 200)}:${rng.int(1, 40)})` : null,
       context_data: null,
+      // A child INHERITED its correlation id from the parent chain: not a root, no rollup
+      // columns of its own (those live on the root, finalized by the post-COPY UPDATE).
+      origin_action: null,
+      is_chain_root: false,
+      chain_status: null,
+      chain_last_activity_at: null,
     };
 
     await generateEventsAndJobsFor(invocation);
     await writeInvocationRow(invocation);
     childLinks.push({ id: invocation.id, sourceJobId: anchor.jobExecutionId });
 
-    if ((i + 1) % progressEvery === 0) log(`  children: ${i + 1}/${numChildren}`);
+    if ((i + 1) % progressEvery === 0) log(`  children: ${i + 1}/${childrenToGen}`);
   }
 
   return { invocationTotal, eventTotal, jobTotal, childLinks };
@@ -695,7 +779,7 @@ async function assembleFinalScript({ finalPath, invBodyPath, evBodyPath, jobBody
   await write('TRUNCATE TABLE invocations, event_executions, job_executions RESTART IDENTITY CASCADE;\n');
 
   await write(
-    'COPY invocations (id, created_at, updated_at, correlation_id, source_function, source_table, source_operation, source_system, source_event_id, source_event_payload, source_event_time, source_user_email, source_user_role, total_duration_ms, events_detected_count, total_jobs_run, total_jobs_succeeded, total_jobs_failed, auto_load_modules, event_modules_directory, status, error_message, error_stack, context_data) FROM STDIN;\n'
+    'COPY invocations (id, created_at, updated_at, correlation_id, source_function, source_table, source_operation, source_system, source_event_id, source_event_payload, source_event_time, source_user_email, source_user_role, total_duration_ms, events_detected_count, total_jobs_run, total_jobs_succeeded, total_jobs_failed, auto_load_modules, event_modules_directory, status, error_message, error_stack, context_data, origin_action, is_chain_root, chain_status, chain_last_activity_at) FROM STDIN;\n'
   );
   await pipeFileInto(invBodyPath, out);
   await write('\\.\n');
@@ -724,6 +808,21 @@ async function assembleFinalScript({ finalPath, invBodyPath, evBodyPath, jobBody
     await write(rows.join(',\n'));
     await write('\n) AS v(inv_id, job_id) WHERE i.id = v.inv_id;\n');
   }
+
+  // Finalize the chain rollup on root rows — the same summary the live observability
+  // writer maintains best-effort per member write, computed here in one pass over the
+  // seeded data. chain_last_activity_at = the latest member start in the chain; chain_status
+  // flips to 'errored' when ANY member (root or child) failed, even if the root succeeded.
+  await write(
+    'UPDATE invocations r SET chain_last_activity_at = agg.max_started ' +
+      'FROM (SELECT correlation_id, MAX(created_at) AS max_started FROM invocations GROUP BY correlation_id) agg ' +
+      'WHERE r.is_chain_root AND r.correlation_id = agg.correlation_id;\n'
+  );
+  await write(
+    "UPDATE invocations r SET chain_status = 'errored' " +
+      "FROM (SELECT DISTINCT correlation_id FROM invocations WHERE status = 'failed') f " +
+      'WHERE r.is_chain_root AND r.correlation_id = f.correlation_id;\n'
+  );
 
   for (const [, createStatement] of PERF_INDEXES) {
     await write(`${createStatement}\n`);

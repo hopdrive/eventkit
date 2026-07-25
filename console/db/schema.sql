@@ -114,7 +114,15 @@ CREATE TABLE invocations (
     error_stack TEXT,
 
     -- Custom context passed in
-    context_data JSONB
+    context_data JSONB,
+
+    -- Chain rollup (the unit of debugging is the chain: all invocations sharing a
+    -- correlation_id). These live on invocations so a chain is queryable as plain root
+    -- rows without a separate table.
+    origin_action TEXT, -- decoded origin action slug (e.g. 'dealer.move.create'), promoted out of context_data.origin.action; NULL when no decoded origin
+    is_chain_root BOOLEAN NOT NULL DEFAULT FALSE, -- true on the invocation that MINTED the chain's correlation id (vs inheriting it from an upstream invocation)
+    chain_status TEXT, -- chain rollup, meaningful only on root rows: 'ok' | 'errored' (room left for a future sweeper's 'incomplete')
+    chain_last_activity_at TIMESTAMPTZ -- root rows only: started_at of the most recent member invocation in the chain
 );
 
 -- Event module execution - each event module checked during an invocation
@@ -217,6 +225,14 @@ CREATE INDEX idx_invocations_status ON invocations(status);
 CREATE INDEX idx_invocations_source_event_id ON invocations(source_event_id);
 CREATE INDEX idx_invocations_correlation_id ON invocations(correlation_id);
 CREATE INDEX idx_invocations_source_job_id ON invocations(source_job_id);
+
+-- Chain-first index (the console's default "Chains" view queries root rows directly,
+-- no group-by). Partial indexes keep them small — only the ~85% root rows, and a much
+-- smaller errored subset — and cover the default order (last activity desc) and the
+-- persistent errors-only toggle.
+CREATE INDEX idx_invocations_chain_roots ON invocations(chain_last_activity_at DESC) WHERE is_chain_root;
+CREATE INDEX idx_invocations_errored_chain_roots ON invocations(chain_last_activity_at DESC) WHERE is_chain_root AND chain_status = 'errored';
+CREATE INDEX idx_invocations_origin_action ON invocations(origin_action); -- origin-action typeahead + per-action index filter
 
 CREATE INDEX idx_event_executions_invocation_id ON event_executions(invocation_id);
 CREATE INDEX idx_event_executions_event_name ON event_executions(event_name);
