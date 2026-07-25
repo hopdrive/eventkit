@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { Node } from 'reactflow';
+import { CheckCircleIcon } from '@heroicons/react/20/solid';
 import { DrawerShell, Fact, FactGrid, Collapsible, JsonBlock, SectionTitle, NodeRow } from './drawer/primitives';
 import { OriginAvatar } from './nodes/UserActionNode';
 import { useOriginUser } from '../hooks/useOriginUser';
@@ -18,11 +19,15 @@ interface UserActionDetailDrawerProps {
   /** Swap the drawer to another canvas node (cross-navigation). */
   onOpenNodeId?: (nodeId: string) => void;
   onBack?: () => void;
+  /** Detected event names observed anywhere in the loaded chain — checks the
+   *  cause's declared `expectedEvents` against what actually happened. */
+  observedEventNames?: Set<string>;
 }
 
 // Keys already rendered as first-class facts; everything else lands under
-// "Additional context". `id` is the Action id fact; `trigger` is the kind + Trigger fact.
-const CONVENTIONAL = ['action', 'site', 'purpose', 'id', 'trigger'] as const;
+// "Additional context". `id` is the Action id fact; `trigger` is the kind + Trigger fact;
+// `expectedEvents` gets its own checked section.
+const CONVENTIONAL = ['action', 'site', 'purpose', 'id', 'trigger', 'expectedEvents'] as const;
 
 function asDisplay(value: unknown): string {
   if (value == null) return '';
@@ -41,6 +46,7 @@ const UserActionDetailDrawer: React.FC<UserActionDetailDrawerProps> = ({
   onClose,
   onOpenNodeId,
   onBack,
+  observedEventNames,
 }) => {
   const data = node?.data ?? {};
   const profile = useOriginUser(data.userEmail);
@@ -58,6 +64,12 @@ const UserActionDetailDrawer: React.FC<UserActionDetailDrawerProps> = ({
   // Kind header derived from the decoded `trigger` (user / webhook / schedule / system);
   // a decoded origin is any registered entry point, not only a human click.
   const kindLabel = originKindLabel(origin);
+
+  // Events this cause expects somewhere in the chain (decoded, spoofable, may be
+  // absent). Just strings compared against what was observed — no schema assumed.
+  const expectedEvents = Array.isArray(obj.expectedEvents)
+    ? (obj.expectedEvents as unknown[]).filter((e): e is string => typeof e === 'string' && e.length > 0)
+    : [];
 
   const rest = isObject
     ? Object.entries(obj).filter(([k, v]) => !CONVENTIONAL.includes(k as (typeof CONVENTIONAL)[number]) && v != null)
@@ -129,6 +141,38 @@ const UserActionDetailDrawer: React.FC<UserActionDetailDrawerProps> = ({
       {purpose && <p className='text-sm text-gray-600 dark:text-gray-300 break-words'>{purpose}</p>}
 
       {typeof origin === 'string' && <p className='text-sm text-gray-600 dark:text-gray-300 break-words'>{origin}</p>}
+
+      {/* Expected events: the cause's own claim about what should happen, checked
+          against what was observed anywhere in the loaded chain. Display only —
+          the names are decoded from the client origin, not authenticated. */}
+      {expectedEvents.length > 0 && (
+        <div className='space-y-1.5'>
+          <SectionTitle>Expected events</SectionTitle>
+          {expectedEvents.map(name => {
+            const seen = observedEventNames?.has(name) ?? false;
+            return (
+              <div key={name} className='flex items-center gap-2 text-xs'>
+                {seen ? (
+                  <CheckCircleIcon className='h-4 w-4 flex-shrink-0 text-emerald-500' aria-label='observed' />
+                ) : (
+                  <span
+                    className='h-3.5 w-3.5 flex-shrink-0 rounded-full border border-dashed border-gray-400 dark:border-gray-500'
+                    title='not observed in this chain'
+                    aria-label='not observed'
+                  />
+                )}
+                <span className={seen ? 'text-gray-700 dark:text-gray-200' : 'text-gray-400 dark:text-gray-500'}>
+                  {name}
+                </span>
+              </div>
+            );
+          })}
+          <p className='text-[11px] text-gray-400 dark:text-gray-500'>
+            Events this action expected somewhere in the chain. A check means it was observed; a dashed circle means it
+            was not.
+          </p>
+        </div>
+      )}
 
       {rest.length > 0 && (
         <div className='space-y-1.5'>

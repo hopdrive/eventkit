@@ -76,6 +76,7 @@ const KeyboardShortcutsOverlay: React.FC<{ onClose: () => void }> = ({ onClose }
           <Row keys={['E']} label='Toggle “Show expected”' />
           <Row keys={['U']} label='Toggle “Show undetected”' />
           <Row keys={['O']} label='Toggle “Flag off-contract”' />
+          <Row keys={['X']} label='Toggle “Expected flow” overlay' />
           <Row keys={['?']} label='Show / hide this panel' />
         </Section>
       </div>

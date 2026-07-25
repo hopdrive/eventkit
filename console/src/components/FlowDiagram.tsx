@@ -30,7 +30,11 @@ import { useFlowHotkeys } from '../hooks/useFlowHotkeys';
 import { PlayIcon } from '@heroicons/react/20/solid';
 import { compareFlow } from '../flowdoc/compare';
 import { loadBundledDocs, loadUploadedDocs, saveUploadedDoc } from '../flowdoc/store';
-import type { FlowDoc } from '../flowdoc/types';
+import type { FlowDoc, FlowGraph } from '../flowdoc/types';
+import { useConsoleConfig } from '../config';
+import { useExpectedFlows } from '../hooks/useExpectedFlows';
+import { expectedFlowToGraph } from '../flowdoc/expectedFlow';
+import { buildExpectedOverlay, type OverlayInvocation } from '../flowdoc/overlay';
 
 // ONE canvas, overlay toggles (not separate views): the observed run always renders
 // with its normal nodes; toggles only ADD or REMOVE nodes and never change the size
@@ -60,10 +64,15 @@ const minimapNodeColor = (node: Node) => {
 };
 
 // Inner component that uses ReactFlow hooks
+// Resolver-driven expected-flow overlay: remembered across sessions (a per-user
+// preference, not part of a shareable deep link like the URL flags).
+const FLOW_OVERLAY_LS = 'eventkit-console-flow-overlay';
+
 const FlowDiagramContent = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const reactFlowInstance = useReactFlow();
+  const { expectedFlowResolver } = useConsoleConfig();
 
   // Remove useNodesState and useEdgesState to avoid conflicts
   // We'll use direct props instead
@@ -79,6 +88,27 @@ const FlowDiagramContent = () => {
   const [docError, setDocError] = useState<string>('');
   const [helpOpen, setHelpOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Resolver-driven expected-flow overlay (per-invocation). Only meaningful when the
+  // host injected an expectedFlowResolver; remembered in localStorage.
+  const [flowOverlayOn, setFlowOverlayOn] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(FLOW_OVERLAY_LS) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleFlowOverlay = useCallback(() => {
+    setFlowOverlayOn(v => {
+      const next = !v;
+      try {
+        localStorage.setItem(FLOW_OVERLAY_LS, next ? '1' : '0');
+      } catch {
+        // ignore — a private-mode localStorage failure just doesn't persist the choice
+      }
+      return next;
+    });
+  }, []);
 
   // URL Parameters. The flow view is addressable two ways: by a specific invocation
   // (?invocationId=), or by a whole chain (?correlationId=) — the stable deep-link
@@ -358,7 +388,7 @@ const FlowDiagramContent = () => {
   // EventNode/JobNode components (identical shell/size); toggles only add/remove
   // nodes — they never restyle what's already rendered. Off-contract flagging adds
   // an outline ring only (no size/content change).
-  const displayData = useMemo(() => {
+  const baseDisplayData = useMemo(() => {
     // Chain orientation: mark the ORIGIN (what actually started the chain) and the
     // entered/"viewing" invocation, so a user landing mid-chain can orient instantly.
     // Always on — not a toggle. When a root invocation has a decoded user action,
@@ -482,7 +512,62 @@ const FlowDiagramContent = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flowData, compareResult, showExpected, flagOffContract, showUndetected, selectedDoc, invocationId, data]);
 
+  // ── Resolver-driven expected-flow overlay (per-invocation) ─────────────────
+  // Independent of the doc-picker toggles above: each invocation's source_function
+  // resolves to its OWN expected graph (host-injected), compared against that
+  // invocation's observed records. Only runs when the host configured a resolver
+  // and the user turned the overlay on.
+  const flowRequests = useMemo(
+    () => invocations.map(i => ({ sourceFunction: i.source_function, at: i.created_at })),
+    [invocations]
+  );
+  // Detected event names anywhere in the loaded chain — the user-action drawer checks
+  // a cause's declared expectedEvents against these.
+  const observedEventNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const inv of invocations) {
+      for (const ev of inv.event_executions ?? []) {
+        if (ev.detected) names.add(ev.event_name);
+      }
+    }
+    return names;
+  }, [invocations]);
+  // Resolve lazily; passing [] while the overlay is off means the host resolver is
+  // never called until the user asks for it.
+  const resolvedFlows = useExpectedFlows(flowOverlayOn && expectedFlowResolver ? flowRequests : []);
+  const flowByFunction = useMemo(() => {
+    const out: Record<string, FlowGraph> = {};
+    for (const [fn, graph] of Object.entries(resolvedFlows)) {
+      if (graph) out[fn] = expectedFlowToGraph(graph);
+    }
+    return out;
+  }, [resolvedFlows]);
 
+  const flowOverlay = useMemo(() => {
+    if (!flowOverlayOn || !expectedFlowResolver || invocations.length === 0) return null;
+    if (Object.keys(flowByFunction).length === 0) return null;
+    return buildExpectedOverlay({
+      observedNodes: flowData.nodes as Node[],
+      observedEdges: flowData.edges,
+      invocations: invocations as OverlayInvocation[],
+      flowByFunction,
+    });
+  }, [flowOverlayOn, expectedFlowResolver, invocations, flowByFunction, flowData]);
+
+  // Fold the resolver overlay into the observed canvas: mark off-contract observed
+  // nodes (a badge, no size change) and append the ghost nodes/edges. Everything
+  // downstream (replay, breadcrumb, stats, cross-nav) reads this merged view.
+  const displayData = useMemo(() => {
+    if (!flowOverlay) return baseDisplayData;
+    const offIds = flowOverlay.offContractNodeIds;
+    const nodes = baseDisplayData.nodes.map(n =>
+      offIds.has(n.id) ? { ...n, data: { ...n.data, offContract: true } } : n
+    );
+    return {
+      nodes: [...nodes, ...flowOverlay.ghostNodes],
+      edges: [...baseDisplayData.edges, ...flowOverlay.ghostEdges],
+    };
+  }, [baseDisplayData, flowOverlay]);
 
   // Chain replay: reveal nodes in real chronological order on a scrubbable,
   // normalized clock (every node's created_at + duration is persisted, so the
@@ -663,6 +748,8 @@ const FlowDiagramContent = () => {
     onToggleHelp: open => setHelpOpen(o => (open == null ? !o : open)),
     onToggleFlag: key =>
       setFlag(key, !(key === 'expected' ? showExpected : key === 'offcontract' ? flagOffContract : showUndetected)),
+    // The resolver overlay is only reachable by keyboard when a resolver is wired.
+    onToggleFlowOverlay: expectedFlowResolver ? toggleFlowOverlay : undefined,
     onCycleSpeed: cycleSpeed,
   });
 
@@ -730,6 +817,20 @@ const FlowDiagramContent = () => {
           />
           Show undetected
         </label>
+        {expectedFlowResolver && (
+          <label
+            className='inline-flex items-center gap-1.5 px-2.5 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700'
+            title='Overlay the expected flow for each invocation (X). Ghost nodes are expected-but-not-observed steps; a small badge marks observed steps the flow does not declare.'
+          >
+            <input
+              type='checkbox'
+              checked={flowOverlayOn}
+              onChange={toggleFlowOverlay}
+              className='h-3.5 w-3.5 text-blue-600 border-gray-300 rounded'
+            />
+            Expected flow
+          </label>
+        )}
         {(showExpected || flagOffContract) && (
           <>
             <select
@@ -812,6 +913,29 @@ const FlowDiagramContent = () => {
         </div>
       )}
 
+      {/* Resolver overlay legend + summary (per-invocation expected flow). Shifts
+          below the doc-overlay legend so the two never collide when both are on. */}
+      {flowOverlayOn && flowOverlay && (
+        <div
+          className={`absolute right-4 z-10 bg-white/90 dark:bg-gray-800/90 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 shadow-sm space-y-1 ${
+            (compareResult || showUndetected) && (showExpected || flagOffContract || showUndetected) ? 'top-32' : 'top-4'
+          }`}
+        >
+          <div className='text-[11px] text-gray-600 dark:text-gray-300 pb-1 border-b border-gray-100 dark:border-gray-700'>
+            Expected flow · {flowOverlay.summary.missing} missing · {flowOverlay.summary.offContract} off-contract
+          </div>
+          <div className='flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-300'>
+            <span className='w-3 h-3 rounded border-2 border-dashed border-gray-400' /> expected · not observed
+          </div>
+          <div className='flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-300'>
+            <span className='px-1 rounded text-[8px] font-semibold ring-1 ring-inset ring-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/30'>
+              off-contract
+            </span>{' '}
+            observed · not in the flow
+          </div>
+        </div>
+      )}
+
       {observedGate ?? (
       <ReactFlow
         nodes={canvasData.nodes}
@@ -871,6 +995,7 @@ const FlowDiagramContent = () => {
                 onClose={handleDrawerClose}
                 onOpenNodeId={handleOpenNodeId}
                 onBack={drawerHistory.length > 0 ? handleDrawerBack : undefined}
+                observedEventNames={observedEventNames}
               />
             )}
             {selectedNode.type === 'invocation' && (

@@ -3,7 +3,7 @@ import { Handle, Position, NodeProps } from 'reactflow';
 import { SignalIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { formatDuration } from '../../utils/formatDuration';
 import { useRunningDuration } from '../../hooks/useRunningDuration';
-import { NodeShell, CountBadge, StatusGlyph } from './NodeShell';
+import { NodeShell, NodeBadge, CountBadge, StatusGlyph } from './NodeShell';
 
 export interface EventNodeData {
   eventName: string;
@@ -16,6 +16,10 @@ export interface EventNodeData {
   /** 'warning' renders the drift state (amber): the contract says this detector
    *  should have evaluated on every invocation, and there is no record of it. */
   ghostTone?: 'neutral' | 'warning';
+  /** Tooltip for the ghost meta (e.g. the per-invocation "expected, not observed" note). */
+  ghostTitle?: string;
+  /** Expected-flow overlay: observed here, but the flow doesn't declare it — small badge. */
+  offContract?: boolean;
   correlationId: string;
   detected: boolean;
   status: string;
@@ -54,7 +58,10 @@ export const EventNode: React.FC<NodeProps<EventNodeData>> = ({ data, selected }
         dashed
         dimmed={!warn}
         meta={
-          <span className={warn ? 'text-amber-700 dark:text-amber-400' : undefined} title={warn ? DRIFT_TITLE : undefined}>
+          <span
+            className={warn ? 'text-amber-700 dark:text-amber-400' : undefined}
+            title={data.ghostTitle ?? (warn ? DRIFT_TITLE : undefined)}
+          >
             {data.ghostLabel ?? 'expected · not observed'}
           </span>
         }
@@ -76,6 +83,13 @@ export const EventNode: React.FC<NodeProps<EventNodeData>> = ({ data, selected }
       failed={hasErrors}
       dimmed={!isDetected}
       running={data.replayRunning}
+      badges={
+        data.offContract ? (
+          <NodeBadge tone='amber' title='Observed on this run, but not declared in the expected flow.'>
+            off-contract
+          </NodeBadge>
+        ) : undefined
+      }
       statusArea={
         isDetected ? (
           <StatusGlyph

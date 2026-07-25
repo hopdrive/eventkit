@@ -91,6 +91,8 @@ export interface FlowHotkeyOptions {
   onFocusSearch: () => void;
   onToggleHelp: (open?: boolean) => void;
   onToggleFlag: (key: 'expected' | 'offcontract' | 'undetected') => void;
+  /** Toggle the resolver-driven expected-flow overlay. Absent when no resolver is wired. */
+  onToggleFlowOverlay?: () => void;
   onCycleSpeed: (dir: 1 | -1) => void;
 }
 
@@ -198,6 +200,9 @@ export const useFlowHotkeys = (options: FlowHotkeyOptions): void => {
           return;
         case 'o':
           o.onToggleFlag('offcontract');
+          return;
+        case 'x':
+          o.onToggleFlowOverlay?.();
           return;
         case ',': // video-editor convention, same as ←/→ during replay
           if (o.playback.active) o.playback.step(-1);

@@ -3,12 +3,16 @@ import { Handle, Position, NodeProps } from 'reactflow';
 import { Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { formatDuration } from '../../utils/formatDuration';
 import { useRunningDuration } from '../../hooks/useRunningDuration';
-import { NodeShell, StatusGlyph } from './NodeShell';
+import { NodeShell, NodeBadge, StatusGlyph } from './NodeShell';
 
 export interface JobNodeData {
   jobName: string;
   /** Expected-overlay ghost — same shell/dimensions, declared-but-not-run state. */
   ghost?: boolean;
+  /** Tooltip for the ghost meta (per-invocation "expected, not observed" note). */
+  ghostTitle?: string;
+  /** Expected-flow overlay: observed here, but the flow doesn't declare it — small badge. */
+  offContract?: boolean;
   functionName?: string;
   correlationId: string;
   status: string;
@@ -44,7 +48,7 @@ export const JobNode: React.FC<NodeProps<JobNodeData>> = ({ data, selected }) =>
         selected={selected}
         dashed
         dimmed
-        meta='expected · not observed'
+        meta={<span title={data.ghostTitle}>expected · not observed</span>}
         minWidthClass='min-w-[190px]'
       >
         <Handle type='target' position={Position.Left} className='w-3 h-3' />
@@ -66,6 +70,13 @@ export const JobNode: React.FC<NodeProps<JobNodeData>> = ({ data, selected }) =>
       selected={selected}
       failed={status === 'failed'}
       running={data.replayRunning}
+      badges={
+        data.offContract ? (
+          <NodeBadge tone='amber' title='Observed on this run, but not declared in the expected flow.'>
+            off-contract
+          </NodeBadge>
+        ) : undefined
+      }
       statusArea={<StatusGlyph status={data.replayRunning ? 'running' : status} />}
       meta={
         <>
