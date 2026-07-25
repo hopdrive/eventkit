@@ -72,6 +72,32 @@ interface Invocation {
   source_user_role?: string | null;
 }
 
+// The decoded client origin the origin-decoder plugin persisted into
+// context_data.origin. Arbitrary/consumer-shaped and never trusted: return only a
+// non-empty object or a non-empty string, and skip null/array/number/junk so a
+// malformed origin can never spawn a broken node.
+export function readOrigin(contextData: unknown): Record<string, unknown> | string | undefined {
+  if (!contextData || typeof contextData !== 'object') return undefined;
+  const origin = (contextData as { origin?: unknown }).origin;
+  if (typeof origin === 'string') return origin.length > 0 ? origin : undefined;
+  if (origin && typeof origin === 'object' && !Array.isArray(origin)) {
+    return Object.keys(origin).length > 0 ? (origin as Record<string, unknown>) : undefined;
+  }
+  return undefined;
+}
+
+// The click that started the chain. `clickId` is identical across every chain one
+// user click caused, so the canvas groups roots by it. Client-supplied, so it is a
+// display-only grouping key, never chain identity (each chain keeps its correlation id).
+export function originClickId(contextData: unknown): string | null {
+  const origin = readOrigin(contextData);
+  if (origin && typeof origin === 'object') {
+    const clickId = (origin as Record<string, unknown>).clickId;
+    if (typeof clickId === 'string' && clickId.length > 0) return clickId;
+  }
+  return null;
+}
+
 export interface PositionedNode extends Node {
   position: { x: number; y: number };
 }
@@ -156,20 +182,6 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
 
     const arrow = { type: MarkerType.ArrowClosed, width: 20, height: 20 };
 
-    // The decoded client origin the origin-decoder plugin persisted into
-    // context_data.origin. Arbitrary/consumer-shaped and never trusted: render only
-    // a non-empty object or a non-empty string, and skip null/array/number/junk so a
-    // malformed origin can never spawn a broken node.
-    const originOf = (contextData: unknown): Record<string, unknown> | string | undefined => {
-      if (!contextData || typeof contextData !== 'object') return undefined;
-      const origin = (contextData as { origin?: unknown }).origin;
-      if (typeof origin === 'string') return origin.length > 0 ? origin : undefined;
-      if (origin && typeof origin === 'object' && !Array.isArray(origin)) {
-        return Object.keys(origin).length > 0 ? (origin as Record<string, unknown>) : undefined;
-      }
-      return undefined;
-    };
-
     const placeInvocation = (invocation: Invocation, baseX: number, bandTop: number) => {
       if (processed.has(invocation.id)) return;
       processed.add(invocation.id);
@@ -200,43 +212,6 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
           updatedAt: invocation.updated_at,
         },
       });
-
-      // Origin (userAction): a synthetic node to the LEFT of a chain ROOT when the
-      // origin-decoder plugin persisted a client origin into context_data. Roots only
-      // (no source_job_id): a chained hop shows its parent job on the left instead,
-      // and only the root carries the client's action id anyway. Named "userAction" to
-      // avoid clashing with the InvocationNode ORIGIN badge (that marks the chain root
-      // itself; this marks who/what started it).
-      if (!invocation.source_job_id) {
-        const origin = originOf(invocation.context_data);
-        if (origin !== undefined) {
-          const originNodeId = `origin-${invocation.id}`;
-          nodes.push({
-            id: originNodeId,
-            type: 'userAction',
-            position: { x: baseX - horizontalSpacing, y: centerY - NODE_H.invocation / 2 },
-            data: {
-              origin,
-              userEmail: invocation.source_user_email ?? null,
-              userRole: invocation.source_user_role ?? null,
-              eventTime: invocation.source_event_time ?? null,
-              // Reveal with the chain root during replay (zero duration), not faded out.
-              createdAt: invocation.source_event_time ?? invocation.created_at,
-            },
-          });
-          edges.push({
-            id: `origin-${invocation.id}-to-${invocation.id}`,
-            source: originNodeId,
-            sourceHandle: 'right',
-            target: invocation.id,
-            targetHandle: 'left',
-            type: 'default',
-            animated: false,
-            style: { stroke: '#f59e0b', strokeWidth: 2 }, // amber, the origin edge
-            markerEnd: arrow,
-          });
-        }
-      }
 
       // Source job for a chain root that arrived with its parent job preloaded
       // (chained invocations placed recursively already have their job node).
@@ -401,6 +376,98 @@ export const useFlowPositioning = (invocations: Invocation[], config: Positionin
         const band = invBand.get(invocation.id) ?? NODE_H.invocation + verticalGap;
         placeInvocation(invocation, 200, rootCursor);
         rootCursor += band + ROOT_GAP;
+      }
+    }
+
+    // ── Origin fan-out (userAction) ─────────────────────────────────────────
+    // A synthetic node to the LEFT of the chain ROOTS it started. One user click can
+    // start several chains: they share `context_data.origin.clickId` but each keeps its
+    // own server-minted correlation id, so roots are grouped by clickId and ONE node
+    // fans an edge into every root in the group. A root whose origin has no clickId
+    // stays one-node-per-root (the common case). Named "userAction" to avoid clashing
+    // with the InvocationNode ORIGIN badge (that marks the chain root itself; this marks
+    // the client action that started it). clickId is client-supplied, so this grouping
+    // is display only, never chain identity.
+    const ROOT_X = 200; // the x the root-placement loops below use as baseX
+    interface OriginRoot {
+      id: string;
+      sourceFunction: string;
+      correlationId: string;
+    }
+    interface OriginGroup {
+      clickId: string | null;
+      roots: OriginRoot[];
+      // Representative (earliest root) for the card's what/who/when.
+      origin: Record<string, unknown> | string;
+      userEmail: string | null;
+      userRole: string | null;
+      eventTime: string | null;
+      createdAt: string;
+    }
+    const originGroups = new Map<string, OriginGroup>();
+    for (const inv of byCreatedAt(invocations.filter(i => !i.source_job_id))) {
+      if (!processed.has(inv.id)) continue; // only roots actually placed on the canvas
+      const origin = readOrigin(inv.context_data);
+      if (origin === undefined) continue;
+      const clickId = originClickId(inv.context_data);
+      const key = clickId ? `click:${clickId}` : `root:${inv.id}`;
+      const root: OriginRoot = { id: inv.id, sourceFunction: inv.source_function, correlationId: inv.correlation_id };
+      const existing = originGroups.get(key);
+      if (existing) {
+        existing.roots.push(root);
+      } else {
+        originGroups.set(key, {
+          clickId,
+          roots: [root],
+          origin,
+          userEmail: inv.source_user_email ?? null,
+          userRole: inv.source_user_role ?? null,
+          eventTime: inv.source_event_time ?? null,
+          // Reveal with the chain roots during replay (zero duration), not faded out.
+          createdAt: inv.source_event_time ?? inv.created_at,
+        });
+      }
+    }
+
+    const rootCenterY = (rootId: string): number | null => {
+      const n = nodes.find(nn => nn.id === rootId);
+      return n ? n.position.y + NODE_H.invocation / 2 : null;
+    };
+
+    for (const group of originGroups.values()) {
+      const centers = group.roots.map(r => rootCenterY(r.id)).filter((y): y is number => y != null);
+      if (centers.length === 0) continue;
+      const groupCenterY = (Math.min(...centers) + Math.max(...centers)) / 2;
+      const originNodeId = group.clickId ? `origin-click-${group.clickId}` : `origin-${group.roots[0].id}`;
+      nodes.push({
+        id: originNodeId,
+        type: 'userAction',
+        position: { x: ROOT_X - horizontalSpacing, y: groupCenterY - NODE_H.invocation / 2 },
+        data: {
+          origin: group.origin,
+          userEmail: group.userEmail,
+          userRole: group.userRole,
+          eventTime: group.eventTime,
+          createdAt: group.createdAt,
+          clickId: group.clickId,
+          // Roots this click started. The drawer lists them; displayData reads the ids to
+          // hand the ORIGIN marker from each root to this node.
+          rootInvocationIds: group.roots.map(r => r.id),
+          roots: group.roots,
+        },
+      });
+      for (const { id: rootId } of group.roots) {
+        edges.push({
+          id: `origin-${originNodeId}-to-${rootId}`,
+          source: originNodeId,
+          sourceHandle: 'right',
+          target: rootId,
+          targetHandle: 'left',
+          type: 'default',
+          animated: false,
+          style: { stroke: '#f59e0b', strokeWidth: 2 }, // amber, the origin edge
+          markerEnd: arrow,
+        });
       }
     }
 

@@ -1,7 +1,7 @@
 import React, { useCallback, useState, useEffect, useRef, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { nodeTypes } from './nodes';
-import { useFlowPositioning } from '../hooks/useFlowPositioning';
+import { useFlowPositioning, originClickId } from '../hooks/useFlowPositioning';
 import ReactFlow, {
   Node,
   Edge,
@@ -15,7 +15,7 @@ import ReactFlow, {
   ConnectionMode,
 } from 'reactflow';
 import { AnimatePresence } from 'framer-motion';
-import { useInvocationTreeFlowQuery } from '../types/generated';
+import { useInvocationTreeFlowQuery, useSiblingChainsByClickQuery } from '../types/generated';
 import InvocationDetailDrawer from './InvocationDetailDrawer';
 import UserActionDetailDrawer from './UserActionDetailDrawer';
 import 'reactflow/dist/style.css';
@@ -133,17 +133,55 @@ const FlowDiagramContent = () => {
     errorPolicy: 'all',
   });
 
-  // Use the positioning hook to generate nodes and edges
-  // Combine the main invocation with its correlated invocations for recursive rendering.
+  // The focused chain: the entered invocation plus everything sharing its correlation id.
   // MUST be memoized: a fresh array every render would invalidate the layout memo and
   // rebuild every node/edge object on every render of this component.
-  const invocations = useMemo(
+  const primaryInvocations = useMemo(
     () =>
       data?.invocations_by_pk
         ? [data.invocations_by_pk, ...(data.invocations_by_pk.correlated_invocations || [])]
         : [],
     [data]
   );
+
+  // Click grouping: if the focused chain's root carries a decoded origin clickId, other
+  // root chains from the SAME user click share it (each with its own correlation id).
+  // Fetch those siblings so the canvas can fan one user-action node into all of them.
+  // Bounded to a recent window and a small limit; clickId is client-supplied, so this is
+  // a display-only grouping, never chain identity.
+  const focusedRoot = useMemo(
+    () => primaryInvocations.find(i => !i.source_job_id) ?? null,
+    [primaryInvocations]
+  );
+  const focusedClickId = originClickId(focusedRoot?.context_data);
+  const siblingSince = useMemo(() => {
+    if (!focusedRoot) return '';
+    // Bound on created_at (the column the query filters and indexes), one hour back. The
+    // clickId already scopes to one click; this window is just a safety cap on the scan.
+    return new Date(new Date(focusedRoot.created_at).getTime() - 60 * 60 * 1000).toISOString();
+  }, [focusedRoot]);
+  const { data: siblingData } = useSiblingChainsByClickQuery({
+    variables: {
+      clickMatch: { origin: { clickId: focusedClickId } },
+      excludeCorrelationId: focusedRoot?.correlation_id ?? '',
+      since: siblingSince,
+      limit: 25,
+    },
+    skip: !focusedClickId || !focusedRoot,
+    fetchPolicy: 'cache-first',
+    errorPolicy: 'all',
+  });
+
+  // Merge the focused chain with any sibling chains, de-duped by id.
+  const invocations = useMemo(() => {
+    const siblings = (siblingData?.invocations ?? []).flatMap(r => [r, ...(r.correlated_invocations || [])]);
+    const byId = new Map<string, (typeof primaryInvocations)[number]>();
+    for (const inv of [...primaryInvocations, ...siblings]) {
+      if (!byId.has(inv.id)) byId.set(inv.id, inv);
+    }
+    return [...byId.values()];
+  }, [primaryInvocations, siblingData]);
+
   const { nodes: generatedNodes, edges: generatedEdges } = useFlowPositioning(invocations);
 
   // Compare: overlay this run's observed tree on the selected expected graph.
@@ -315,8 +353,13 @@ const FlowDiagramContent = () => {
     // THAT node is the origin (the click started the chain, not the row write), so
     // the root invocation hands its ORIGIN marker to the user-action node.
     const originIds = new Set(invocations.filter(i => !i.source_job_id).map(i => i.id));
+    // Roots that a user-action node stands in front of. One user-action node can front
+    // several roots (a click that started multiple chains), so read the root ids off its
+    // data, not the node id.
     const rootsWithUserAction = new Set(
-      flowData.nodes.filter(n => n.type === 'userAction').map(n => String(n.id).slice('origin-'.length))
+      flowData.nodes
+        .filter(n => n.type === 'userAction')
+        .flatMap(n => (n.data?.rootInvocationIds as string[] | undefined) ?? [])
     );
     let nodes = flowData.nodes.map(n =>
       n.type === 'invocation'

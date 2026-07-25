@@ -7,6 +7,30 @@ query InvocationTreeFlow($invocationId: uuid!) {
   }
 }
 
+# Sibling chains started by the SAME user click. The decoded origin carries a
+# `clickId` (identical across every chain one click caused); each chain still keeps
+# its own server-minted correlation id. This fetches the OTHER root invocations that
+# share a clickId (jsonb containment on context_data), so the canvas can fan one
+# user-action node into all of them. `clickMatch` is the containment doc
+# `{origin: {clickId: "..."}}`; `since` and `limit` bound it to a recent, small set.
+query SiblingChainsByClick($clickMatch: jsonb!, $excludeCorrelationId: String!, $since: timestamptz!, $limit: Int!) {
+  invocations(
+    where: {
+      source_job_id: { _is_null: true }
+      context_data: { _contains: $clickMatch }
+      correlation_id: { _neq: $excludeCorrelationId }
+      created_at: { _gte: $since }
+    }
+    order_by: { created_at: asc }
+    limit: $limit
+  ) {
+    ...invocationTree
+    correlated_invocations(order_by: {created_at: asc}) {
+      ...invocationTree
+    }
+  }
+}
+
 fragment invocationTree on invocations {
   id
   source_event_id

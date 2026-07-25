@@ -21,6 +21,10 @@ export interface UserActionNodeData {
   eventTime?: string | null;
   /** Stamped by the canvas: when present, this node (not the root invocation) is the chain's origin. */
   isOrigin?: boolean;
+  /** Display-only click grouping: the client-supplied clickId this action fanned from. */
+  clickId?: string | null;
+  /** Chain roots this one click started (>1 when the click fanned into several chains). */
+  rootInvocationIds?: string[];
 }
 
 /** Render any value on one short line without throwing (objects → compact JSON). */
@@ -81,7 +85,8 @@ export const OriginAvatar: React.FC<{
 };
 
 export const UserActionNode: React.FC<NodeProps<UserActionNodeData>> = ({ data, selected }) => {
-  const { origin, userEmail, eventTime, isOrigin } = data;
+  const { origin, userEmail, eventTime, isOrigin, rootInvocationIds } = data;
+  const chainCount = rootInvocationIds?.length ?? 1;
 
   // A raw-string origin: show it verbatim, no key/value breakdown.
   const isObject = origin != null && typeof origin === 'object';
@@ -107,7 +112,18 @@ export const UserActionNode: React.FC<NodeProps<UserActionNodeData>> = ({ data, 
       kindLabel='User action'
       title={title}
       selected={selected}
-      badges={isOrigin ? <NodeBadge tone='amber' title='This user action started the chain'>ORIGIN</NodeBadge> : undefined}
+      badges={
+        <>
+          {isOrigin && (
+            <NodeBadge tone='amber' title='This user action started the chain'>ORIGIN</NodeBadge>
+          )}
+          {chainCount > 1 && (
+            <NodeBadge tone='gray' title={`This one click started ${chainCount} chains (grouped by client clickId)`}>
+              {chainCount} chains
+            </NodeBadge>
+          )}
+        </>
+      }
       minWidthClass='w-[240px]'
     >
       <Handle type='source' position={Position.Right} id='right' className='w-3 h-3' />

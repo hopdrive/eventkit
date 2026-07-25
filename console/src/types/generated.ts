@@ -127474,3 +127474,66 @@ export type HealthCheckQueryHookResult = ReturnType<typeof useHealthCheckQuery>;
 export type HealthCheckLazyQueryHookResult = ReturnType<typeof useHealthCheckLazyQuery>;
 export type HealthCheckSuspenseQueryHookResult = ReturnType<typeof useHealthCheckSuspenseQuery>;
 export type HealthCheckQueryResult = Apollo.QueryResult<HealthCheckQuery, HealthCheckQueryVariables>;
+export type SiblingChainsByClickQueryVariables = Exact<{
+  clickMatch: Scalars['jsonb']['input'];
+  excludeCorrelationId: Scalars['String']['input'];
+  since: Scalars['timestamptz']['input'];
+  limit: Scalars['Int']['input'];
+}>;
+
+
+export type SiblingChainsByClickQuery = { __typename?: 'query_root', invocations: Array<{ __typename?: 'invocations', id: string, source_event_id?: string | null, source_function: string, source_system?: string | null, source_type?: string | null, status: string, total_duration_ms?: number | null, correlation_id?: string | null, source_job_id?: string | null, created_at: string, updated_at: string, source_event_time?: string | null, source_user_email?: string | null, source_user_role?: string | null, context_data?: object | null, correlated_invocations: Array<{ __typename?: 'invocations', id: string, source_event_id?: string | null, source_function: string, source_system?: string | null, source_type?: string | null, status: string, total_duration_ms?: number | null, correlation_id?: string | null, source_job_id?: string | null, created_at: string, updated_at: string, source_event_time?: string | null, source_user_email?: string | null, source_user_role?: string | null, context_data?: object | null, source_job_execution?: { __typename?: 'job_executions', id: string, job_name: string, job_function_name?: string | null, status: string, duration_ms?: number | null, correlation_id?: string | null, created_at: string, updated_at: string } | null, event_executions: Array<{ __typename?: 'event_executions', id: string, event_name: string, detected: boolean, status: string, detection_duration_ms?: number | null, handler_duration_ms?: number | null, correlation_id?: string | null, created_at: string, updated_at: string, job_executions: Array<{ __typename?: 'job_executions', id: string, job_name: string, job_function_name?: string | null, status: string, duration_ms?: number | null, result?: object | null, error_message?: string | null, correlation_id?: string | null, created_at: string, updated_at: string, triggered_invocations: Array<{ __typename?: 'invocations', id: string, correlation_id?: string | null }> }> }> }>, source_job_execution?: { __typename?: 'job_executions', id: string, job_name: string, job_function_name?: string | null, status: string, duration_ms?: number | null, correlation_id?: string | null, created_at: string, updated_at: string } | null, event_executions: Array<{ __typename?: 'event_executions', id: string, event_name: string, detected: boolean, status: string, detection_duration_ms?: number | null, handler_duration_ms?: number | null, correlation_id?: string | null, created_at: string, updated_at: string, job_executions: Array<{ __typename?: 'job_executions', id: string, job_name: string, job_function_name?: string | null, status: string, duration_ms?: number | null, result?: object | null, error_message?: string | null, correlation_id?: string | null, created_at: string, updated_at: string, triggered_invocations: Array<{ __typename?: 'invocations', id: string, correlation_id?: string | null }> }> }> }> };
+
+export const SiblingChainsByClickDocument = gql`
+    query SiblingChainsByClick($clickMatch: jsonb!, $excludeCorrelationId: String!, $since: timestamptz!, $limit: Int!) {
+  invocations(
+    where: {source_job_id: {_is_null: true}, context_data: {_contains: $clickMatch}, correlation_id: {_neq: $excludeCorrelationId}, created_at: {_gte: $since}}
+    order_by: {created_at: asc}
+    limit: $limit
+  ) {
+    ...invocationTree
+    correlated_invocations(order_by: {created_at: asc}) {
+      ...invocationTree
+    }
+  }
+}
+    ${InvocationTreeFragmentDoc}`;
+
+/**
+ * __useSiblingChainsByClickQuery__
+ *
+ * To run a query within a React component, call `useSiblingChainsByClickQuery` and pass it any options that fit your needs.
+ * When your component renders, `useSiblingChainsByClickQuery` returns an object from Apollo Client that contains loading, error, and data properties
+ * you can use to render your UI.
+ *
+ * @param baseOptions options that will be passed into the query, supported options are listed on: https://www.apollographql.com/docs/react/api/react-hooks/#options;
+ *
+ * @example
+ * const { data, loading, error } = useSiblingChainsByClickQuery({
+ *   variables: {
+ *      clickMatch: // value for 'clickMatch'
+ *      excludeCorrelationId: // value for 'excludeCorrelationId'
+ *      since: // value for 'since'
+ *      limit: // value for 'limit'
+ *   },
+ * });
+ */
+export function useSiblingChainsByClickQuery(baseOptions: Apollo.QueryHookOptions<SiblingChainsByClickQuery, SiblingChainsByClickQueryVariables> & ({ variables: SiblingChainsByClickQueryVariables; skip?: boolean; } | { skip: boolean; }) ) {
+        const options = {...defaultOptions, ...baseOptions}
+        return Apollo.useQuery<SiblingChainsByClickQuery, SiblingChainsByClickQueryVariables>(SiblingChainsByClickDocument, options);
+      }
+export function useSiblingChainsByClickLazyQuery(baseOptions?: Apollo.LazyQueryHookOptions<SiblingChainsByClickQuery, SiblingChainsByClickQueryVariables>) {
+          const options = {...defaultOptions, ...baseOptions}
+          return Apollo.useLazyQuery<SiblingChainsByClickQuery, SiblingChainsByClickQueryVariables>(SiblingChainsByClickDocument, options);
+        }
+// @ts-ignore
+export function useSiblingChainsByClickSuspenseQuery(baseOptions?: Apollo.SuspenseQueryHookOptions<SiblingChainsByClickQuery, SiblingChainsByClickQueryVariables>): Apollo.UseSuspenseQueryResult<SiblingChainsByClickQuery, SiblingChainsByClickQueryVariables>;
+export function useSiblingChainsByClickSuspenseQuery(baseOptions?: Apollo.SkipToken | Apollo.SuspenseQueryHookOptions<SiblingChainsByClickQuery, SiblingChainsByClickQueryVariables>): Apollo.UseSuspenseQueryResult<SiblingChainsByClickQuery | undefined, SiblingChainsByClickQueryVariables>;
+export function useSiblingChainsByClickSuspenseQuery(baseOptions?: Apollo.SkipToken | Apollo.SuspenseQueryHookOptions<SiblingChainsByClickQuery, SiblingChainsByClickQueryVariables>) {
+          const options = baseOptions === Apollo.skipToken ? baseOptions : {...defaultOptions, ...baseOptions}
+          return Apollo.useSuspenseQuery<SiblingChainsByClickQuery, SiblingChainsByClickQueryVariables>(SiblingChainsByClickDocument, options);
+        }
+export type SiblingChainsByClickQueryHookResult = ReturnType<typeof useSiblingChainsByClickQuery>;
+export type SiblingChainsByClickLazyQueryHookResult = ReturnType<typeof useSiblingChainsByClickLazyQuery>;
+export type SiblingChainsByClickSuspenseQueryHookResult = ReturnType<typeof useSiblingChainsByClickSuspenseQuery>;
+export type SiblingChainsByClickQueryResult = Apollo.QueryResult<SiblingChainsByClickQuery, SiblingChainsByClickQueryVariables>;

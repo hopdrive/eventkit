@@ -62,8 +62,16 @@ const UserActionDetailDrawer: React.FC<UserActionDetailDrawerProps> = ({
   const whenValid = when && !Number.isNaN(when.getTime());
   const name = profile?.displayName || userEmail || null;
 
-  // The synthetic node's id is `origin-<rootInvocationId>`.
-  const rootInvocationId = node.id.startsWith('origin-') ? node.id.slice('origin-'.length) : null;
+  // Chain roots this one click started. `roots` is stamped by the layout (one entry, or
+  // several when a click fanned into multiple chains). Fall back to the id convention
+  // `origin-<rootInvocationId>` for any older node without the field.
+  const roots: Array<{ id: string; sourceFunction?: string; correlationId?: string }> = Array.isArray(data.roots)
+    ? (data.roots as Array<{ id: string; sourceFunction?: string; correlationId?: string }>)
+    : node.id.startsWith('origin-') && !node.id.startsWith('origin-click-')
+      ? [{ id: node.id.slice('origin-'.length) }]
+      : [];
+  const clickId = typeof data.clickId === 'string' ? data.clickId : null;
+  const shortCorr = (correlationId?: string) => correlationId?.split('.').pop()?.slice(0, 8);
 
   return (
     <DrawerShell
@@ -130,10 +138,23 @@ const UserActionDetailDrawer: React.FC<UserActionDetailDrawerProps> = ({
 
       {isObject && <Collapsible title='Decoded origin (raw)'>{() => <JsonBlock data={origin} />}</Collapsible>}
 
-      {rootInvocationId && onOpenNodeId && (
+      {roots.length > 0 && onOpenNodeId && (
         <div className='space-y-1.5'>
-          <SectionTitle>Started</SectionTitle>
-          <NodeRow label='Chain root invocation' sub={rootInvocationId} onClick={() => onOpenNodeId(rootInvocationId)} />
+          <SectionTitle>{roots.length > 1 ? `This click started ${roots.length} chains` : 'Started'}</SectionTitle>
+          {roots.map(r => (
+            <NodeRow
+              key={r.id}
+              label={r.sourceFunction || 'Chain root invocation'}
+              sub={shortCorr(r.correlationId) || r.id}
+              onClick={() => onOpenNodeId(r.id)}
+            />
+          ))}
+          {roots.length > 1 && (
+            <p className='text-[11px] text-gray-400 dark:text-gray-500'>
+              Grouped by the client-supplied clickId{clickId ? ` (${clickId})` : ''}. Display only: these are separate
+              chains that one click started, each keeping its own correlation id.
+            </p>
+          )}
         </div>
       )}
 
