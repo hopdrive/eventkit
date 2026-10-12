@@ -128,17 +128,24 @@ export interface ObservabilityConfig {
   /** Periodic mid-invocation upsert cadence (ms) for the live Console view. Off by default. */
   flushIntervalMs?: number;
   /**
-   * Persist each job's `job_execution` row (status `running`) at job START, before the
-   * job body runs, rather than only at the next flush/invocation end. Default true.
+   * Write each job's `job_execution` row (status `running`) at job START, rather than only
+   * at invocation end.
    *
    * WHY: a job's own DB writes can chain into CHILD invocations (in separate processes)
-   * that reference this job as their `source_job_id`. If the job row isn't durable yet,
-   * that FK fails and the sink drops the link (graceful-degrade) — orphaning the child as
-   * a false second "origin". The runtime awaits onJobStart before the job body, so an
-   * eager persist here guarantees the parent job row exists before its side effects fire.
-   * Set false only for perf-sensitive telemetry where lineage accuracy is not required.
+   * that reference this job as their `source_job_id`. If the job row isn't durable when
+   * the child records itself, that FK fails and the sink drops the link (graceful-degrade)
+   * — orphaning the child as a false second "origin".
+   *
+   *   - `'background'` (default since 0.8.0, ADR-045): start the write when the job starts
+   *     and let the job body run alongside it. A child only exists after the job writes,
+   *     the database event is delivered and the child function runs — normally well after
+   *     this one write lands — and `graphqlSink` retries a missing link before dropping it.
+   *     The invocation's later writes queue behind it, so the final state always wins.
+   *   - `'await'` (or `true`, the pre-0.8.0 default): the job body waits for the write.
+   *     Strict lineage at the cost of a sink round trip per job on the response path.
+   *   - `false`: no job-start write; the job row lands with the final flush.
    */
-  persistJobsAtStart?: boolean;
+  persistJobsAtStart?: boolean | 'await' | 'background';
   /**
    * Record an event row for EVERY detector evaluation, including those that did not
    * fire (`detected: false`, status `not_detected`) — matching the legacy plugin and
@@ -156,6 +163,14 @@ interface Buffer {
   eventIdByName: Map<string, string>;
   jobs: Map<string, JobRecord>; // keyed by job execution id
   timer?: ReturnType<typeof setInterval>;
+  /**
+   * This invocation's sink writes, chained: each write starts only after the previous one
+   * settles, and reads the buffer when it starts. So a background job-start write can never
+   * land after (and overwrite) the terminal one. Never rejects.
+   */
+  writes: Promise<void>;
+  /** onInvocationEnd has run. Only ended invocations are retried by onFlush. */
+  ended?: boolean;
 }
 
 const FAILED_STATUSES = new Set(['failed', 'timed_out', 'cancelled']);
@@ -165,7 +180,12 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
     throw new Error('observability() requires a `sink` function to flush records (e.g. graphqlSink(...)).');
   }
   const captureSourcePayload = config.captureSourcePayload !== false;
-  const persistJobsAtStart = config.persistJobsAtStart !== false;
+  const persistJobsAtStart: 'await' | 'background' | false =
+    config.persistJobsAtStart === false
+      ? false
+      : config.persistJobsAtStart === true || config.persistJobsAtStart === 'await'
+        ? 'await'
+        : 'background';
   const captureJobMetadata = config.captureJobMetadata !== false;
   const captureErrorStacks = config.captureErrorStacks !== false;
   const recordUndetectedEvents = config.recordUndetectedEvents !== false;
@@ -213,30 +233,41 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
     jobs: [...buf.jobs.values()],
   });
 
-  const flush = async (invocationId: string, final: boolean): Promise<void> => {
+  /**
+   * Queue a write of this invocation's buffer behind any write already in flight for it.
+   * `bestEffort` writes (background job-start, periodic) never reject — nothing awaits them
+   * to receive the error — so `strict` applies only to awaited writes.
+   */
+  const flush = (invocationId: string, final: boolean, { bestEffort = false } = {}): Promise<void> => {
     const buf = buffers.get(invocationId);
-    if (!buf) return;
+    if (!buf) return Promise.resolve();
     // On a final flush the invocation has ended, so stop the periodic timer up front — no
-    // more mid-flight snapshots are wanted even if this write fails. But do NOT discard the
-    // buffer until the sink has DURABLY accepted the batch. Deleting it up front was the bug:
-    // the sink writes invocation → events → jobs sequentially, and a failure after the
-    // invocations mutation permanently and silently lost the job/event terminal states,
-    // leaving a job stuck 'running' under a 'completed' invocation. Keeping the buffer lets a
-    // later `onFlush` (process teardown) retry the terminal write.
+    // more mid-flight snapshots are wanted even if this write fails.
     if (final && buf.timer) {
       clearInterval(buf.timer);
       delete buf.timer;
     }
-    try {
-      await config.sink(buildBatch(buf));
-      if (final) buffers.delete(invocationId); // durably written → safe to drop
-    } catch (err) {
-      if (config.strict) throw err;
-      // Best-effort: a telemetry write failure must not fail business execution — but it MUST
-      // be visible (silent loss is undiagnosable), and the buffer MUST survive so onFlush can
-      // retry the terminal write rather than dropping the job's terminal state forever.
-      reportSinkError(err, { invocationId, final });
-    }
+    const write = async (): Promise<void> => {
+      // An earlier final write in the chain already landed and dropped the buffer.
+      if (buffers.get(invocationId) !== buf) return;
+      try {
+        await config.sink(buildBatch(buf));
+        // Do NOT discard the buffer until the sink has DURABLY accepted the batch. Deleting it
+        // up front was the bug: the sink writes invocation → events → jobs, and a failure
+        // part-way permanently and silently lost the job/event terminal states, leaving a job
+        // stuck 'running' under a 'completed' invocation. Keeping the buffer lets a later
+        // `onFlush` retry the terminal write.
+        if (final) buffers.delete(invocationId);
+      } catch (err) {
+        if (config.strict && !bestEffort) throw err;
+        // Best-effort: a telemetry write failure must not fail business execution — but it
+        // MUST be visible (silent loss is undiagnosable).
+        reportSinkError(err, { invocationId, final });
+      }
+    };
+    const next = buf.writes.then(write);
+    buf.writes = next.catch(() => undefined);
+    return next;
   };
 
   return {
@@ -274,9 +305,9 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
       }
       if (ctx.request.meta !== undefined) invocation.context_data = safeSerialize(ctx.request.meta, serOpts);
 
-      const buf: Buffer = { invocation, events: new Map(), eventIdByName: new Map(), jobs: new Map() };
+      const buf: Buffer = { invocation, events: new Map(), eventIdByName: new Map(), jobs: new Map(), writes: Promise.resolve() };
       if (config.flushIntervalMs && config.flushIntervalMs > 0) {
-        buf.timer = setInterval(() => void flush(ctx.invocationId, false), config.flushIntervalMs);
+        buf.timer = setInterval(() => void flush(ctx.invocationId, false, { bestEffort: true }), config.flushIntervalMs);
         if (typeof buf.timer.unref === 'function') buf.timer.unref();
       }
       buffers.set(ctx.invocationId, buf);
@@ -340,11 +371,13 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
       if (eventId) rec.event_execution_id = eventId;
       if (captureJobMetadata && ctx.job.metadata) rec.job_options = safeSerialize(ctx.job.metadata, serOpts);
       buf.jobs.set(ctx.job.id, rec);
-      // Make this job's row (and its invocation) durable BEFORE the job body runs, so a
-      // child invocation the job spawns via DB writes can resolve its source_job_id FK to
-      // this row instead of being orphaned as a false origin. The runtime awaits onJobStart
-      // before invoking the job fn, so this flush completes first. Idempotent (sink upserts).
-      if (persistJobsAtStart) await flush(ctx.invocationId, false);
+      // Get this job's row (and its invocation) written early, so a child invocation the job
+      // spawns via DB writes can resolve its source_job_id FK to it instead of being orphaned
+      // as a false origin. 'await': the runtime awaits onJobStart, so the row is durable
+      // before the job body runs. 'background': the write runs alongside the body (ADR-045).
+      // Idempotent either way (the sink upserts).
+      if (persistJobsAtStart === 'await') await flush(ctx.invocationId, false);
+      else if (persistJobsAtStart === 'background') void flush(ctx.invocationId, false, { bestEffort: true });
     },
 
     onJobEnd(ctx: JobContext, execution: JobExecution) {
@@ -413,11 +446,21 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
             ? 'failed'
             : 'completed';
         buf.invocation.updated_at = new Date().toISOString();
+        buf.ended = true;
       }
       await flush(ctx.invocationId, true);
     },
 
+    // Retry the terminal write of any ENDED invocation whose final flush failed. An invocation
+    // still running belongs to a concurrent request (a long-lived server, `netlify dev`, or
+    // end-of-invocation work running after the response — ADR-045) and must not be finalized
+    // here, mid-run.
     async onFlush() {
+      for (const [id, buf] of [...buffers.entries()]) if (buf.ended) await flush(id, true);
+    },
+
+    // Process teardown (`kit.shutdown()`): write whatever is left, ended or not.
+    async onShutdown() {
       for (const id of [...buffers.keys()]) await flush(id, true);
     },
   };

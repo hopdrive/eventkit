@@ -155,15 +155,24 @@ class Kit implements EventKit {
     rawPayloadOrArgs: unknown,
     request?: RequestContext | unknown,
   ): Promise<{ envelope: EventEnvelope; req: RequestContext }> {
-    let raw: unknown;
-    let req: RequestContext;
+    return this.normalizeIntake(await this.resolveRequest(rawPayloadOrArgs, request));
+  }
+
+  /** Intake step 1: the raw payload + RequestContext, via the platform when one is registered. */
+  private async resolveRequest(
+    rawPayloadOrArgs: unknown,
+    request?: RequestContext | unknown,
+  ): Promise<{ raw: unknown; req: RequestContext }> {
     if (this.pm.platform) {
-      raw = await this.pm.platform.extractPayload?.(rawPayloadOrArgs, request);
-      req = (this.pm.platform.buildRequest?.(rawPayloadOrArgs, request) as RequestContext) ?? {};
-    } else {
-      raw = rawPayloadOrArgs;
-      req = (request as RequestContext) ?? {};
+      const raw = await this.pm.platform.extractPayload?.(rawPayloadOrArgs, request);
+      const req = (this.pm.platform.buildRequest?.(rawPayloadOrArgs, request) as RequestContext) ?? {};
+      return { raw, req };
     }
+    return { raw: rawPayloadOrArgs, req: (request as RequestContext) ?? {} };
+  }
+
+  /** Intake step 2: normalize → augment → notify. A source may reject here (e.g. a ClientError 401). */
+  private async normalizeIntake({ raw, req }: { raw: unknown; req: RequestContext }): Promise<{ envelope: EventEnvelope; req: RequestContext }> {
     await this.pm.onBeforeNormalize(raw, req);
     let envelope: EventEnvelope = this.pm.normalize(raw, req);
     envelope = await this.pm.augmentEnvelope(envelope);
@@ -360,6 +369,9 @@ class Kit implements EventKit {
     let invocation: InvocationContext | undefined;
     let result: InvocationResult | undefined;
     let flushed = false;
+    // The platform's "finish after the response" hook for THIS request (ADR-045). Read
+    // from the per-request RequestContext, so concurrent requests never share it.
+    let waitUntil: RequestContext['waitUntil'];
 
     // A framework-level failure (normalize/extractPayload/etc.) produces a fatal
     // InvocationResult with a top-level `error` → 500 → the platform/Hasura MAY
@@ -367,13 +379,17 @@ class Kit implements EventKit {
     // and stay in events[] with NO top-level error → 200 → no retry.
     try {
     // 1–2. Resolve raw payload + RequestContext, normalize → augment (shared intake).
-    const intake = await this.intake(rawPayloadOrArgs, request);
+    // Resolve the request first so its waitUntil is known even if normalize rejects.
+    const resolved = await this.resolveRequest(rawPayloadOrArgs, request);
+    waitUntil = resolved.req.waitUntil;
+    const intake = await this.normalizeIntake(resolved);
     const envelope: EventEnvelope = intake.envelope;
 
     const sourceType: EventSourceType = this.pm.sourceType;
 
     // 3. Per-request config refinement (delta), then resolve ids.
     const req = await this.pm.configureInvocation(intake.req, envelope);
+    waitUntil = req.waitUntil ?? waitUntil;
     const invocationId = req.invocationId ? asInvocationId(req.invocationId) : newInvocationId();
     // Single correlationId lever, by precedence: a plugin's augmentEnvelope (e.g.
     // loop-guard lifting the inbound token's correlation — chaining beats a
@@ -531,13 +547,24 @@ class Kit implements EventKit {
       // so a warm-lambda buffer never leaks. Best-effort: never mask the real outcome.
       if (!flushed) {
         flushed = true;
-        try {
-          if (invocation && result) await this.pm.onInvocationEnd(invocation, result);
-          await this.pm.onFlush();
-        } catch {
-          // onInvocationEnd/onFlush are best-effort fan-outs (they already swallow
-          // per-plugin throws); this guard covers anything unexpected.
-        }
+        // A snapshot: the caller keeps using `result` (handler() attaches the reply to it),
+        // and deferred plugins must see the outcome as it was when the run settled.
+        const ended = invocation && result ? { invocation, result: { ...result } } : undefined;
+        const endOfInvocation = async (): Promise<void> => {
+          try {
+            if (ended) await this.pm.onInvocationEnd(ended.invocation, ended.result);
+            await this.pm.onFlush();
+          } catch {
+            // onInvocationEnd/onFlush are best-effort fan-outs (they already swallow
+            // per-plugin throws); this guard covers anything unexpected.
+          }
+        };
+        // ADR-045: where the platform can keep the invocation alive past the response, the
+        // end-of-invocation work (observability writes, log transports) runs AFTER it —
+        // telemetry is the framework's overhead and stays off the caller's clock. Elsewhere
+        // it is awaited here, before handle() returns, exactly as before.
+        if (waitUntil) waitUntil(endOfInvocation());
+        else await endOfInvocation();
       }
     }
   }

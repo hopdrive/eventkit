@@ -75,6 +75,15 @@ export interface RequestContext {
   sourceFunction?: string;
   /** Serverless time budget. Normally supplied by the platform adapter (§9.8). */
   getRemainingTimeMs?: () => number;
+  /**
+   * Keep the invocation alive for work that finishes AFTER the response (ADR-045).
+   * Supplied by the platform adapter when the runtime supports it — Netlify Functions
+   * v2's `context.waitUntil` — and absent where it doesn't (classic Lambda freezes the
+   * process the moment the handler returns). When present, the runtime hands the
+   * end-of-invocation work (`onInvocationEnd` + `onFlush`: observability writes, log
+   * transports) to it instead of awaiting that work before `handle()` returns.
+   */
+  waitUntil?: (promise: Promise<unknown>) => void;
   /** Per-request plugin overrides, keyed by plugin name. */
   pluginConfig?: Record<string, Record<string, unknown>>;
   meta?: Record<string, unknown>;

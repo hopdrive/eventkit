@@ -232,8 +232,8 @@ Generic and config-driven, registered via `kit.use(plugin, config?)`. I/O plugin
 
 | Plugin | Subpath | Registers |
 |---|---|---|
-| `observability` | `/plugins/observability` | `{ sink, strict? }`. Buffers Invocation→Event→Job, flushes once per invocation |
-| `graphqlSink` | `/plugins/observability/graphql-sink` | the built-in observability `sink` (bulk-upsert to Hasura) |
+| `observability` | `/plugins/observability` | `{ sink, strict?, persistJobsAtStart? }`. Buffers Invocation→Event→Job and writes it at invocation end (after the response, where the platform allows) |
+| `graphqlSink` | `/plugins/observability/graphql-sink` | the built-in observability `sink` (bulk-upsert to Hasura, one request per batch) |
 | `batch` | `/plugins/batch` | `{ store, logFlush? }`. Durability. `requires:['source:hasura']` |
 | `loopGuard` | `/plugins/loop-guard` | `{ field?, serviceId?, codec? }`. Inbound provenance into `envelope.meta` |
 | `grafana` | `/plugins/transports/grafana` | `{ logger }` (bridge to sdk-server-logger) or `{ grafana: { endpoint, auth } }` (direct Loki) |
@@ -265,9 +265,26 @@ the source stays the positional arg. Use `kit.handler()` (adapter owns the signa
 thin `kit.handle(...)`.
 
 - `netlifyPlatform()`. Netlify classic (`{ statusCode, body }`)
-- `netlifyV2Platform({ maxExecutionMs? })`. Netlify v2 / Web `Request`→`Response`
+- `netlifyV2Platform({ maxExecutionMs?, afterResponse? })`. Netlify v2 / Web `Request`→`Response`
 - `netlifyBackgroundPlatform({ maxExecutionMs? })`. 15-min background / 202
 - `lambdaPlatform()`. AWS Lambda
+
+### Response time: telemetry runs after the reply
+
+On Netlify v2, `kit.handler()` passes Netlify's `context` to the adapter, and the adapter
+hands the end-of-invocation work (observability writes, log-transport flushes) to
+`context.waitUntil`. The reply goes out as soon as it exists; the writes finish afterwards,
+inside the same invocation (they still count against its time limit). Nothing to wire:
+`export default kit.handler()` already passes the context. Pass
+`netlifyV2Platform({ afterResponse: 'await' })` to keep the writes before the reply.
+
+Classic Lambda and classic Netlify freeze the process when the handler returns, so there
+the writes stay before the reply. Background platforms answer 202 up front, so it doesn't
+matter there. A custom adapter opts in by returning `waitUntil` from `buildRequest`.
+
+The observability job-start write (`persistJobsAtStart`, which keeps a child invocation's
+`source_job_id` link resolvable) runs alongside the job body by default (`'background'`);
+`'await'` makes the body wait for it, as before 0.8.0. See ADR-045.
 
 The `before` hook on `kit.handler({ before })` runs pre-dispatch. Return a
 platform-agnostic `{ status, body }` to short-circuit (auth or method) and the adapter's

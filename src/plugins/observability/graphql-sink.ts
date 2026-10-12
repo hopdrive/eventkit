@@ -9,6 +9,12 @@
 // so `graphql-request` is not pulled in. On its own subpath so apps that wire a
 // custom sink don't bundle it.
 //
+// One round trip (ADR-045): by default the three upserts travel as ONE GraphQL document.
+// Hasura runs every root mutation in a request sequentially inside a single transaction,
+// so it is all-or-nothing and FK order (invocation → events → jobs) is kept. If that
+// request is rejected at the GraphQL level, the sink falls back to the three separate
+// upserts below, which carry the per-table graceful-degrade paths.
+//
 // Resilience (so telemetry survives real-world edge cases):
 //  - Transport failures (network / 5xx) retry with backoff; GraphQL-level errors
 //    (a malformed mutation, a constraint violation) are deterministic and are NOT
@@ -17,7 +23,9 @@
 //    (a non-eventkit writer, observability was down when it ran, …) the invocation
 //    insert would FK-violate and drop the WHOLE record. We catch that specific
 //    violation and retry the invocation WITHOUT `source_job_id` — keeping the
-//    telemetry, dropping only the unverifiable link.
+//    telemetry, dropping only the unverifiable link. Before dropping it, the sink retries
+//    WITH the link on a short backoff (`sourceJobLinkRetryMs`): the parent job's row is
+//    usually just a moment from landing (its job-start write runs in the background).
 //  - eventkit emits a richer status vocabulary than the legacy schema's CHECK
 //    constraints allow; `mapStatuses` (default on) maps to the allowed set so
 //    writes stay valid. Set `mapStatuses: false` if you migrate the schema to
@@ -48,6 +56,16 @@ export interface GraphqlSinkConfig {
   mapStatuses?: boolean;
   /** Override/extend the default status mappings (merged over the defaults). */
   statusMap?: StatusMap;
+  /**
+   * Send the invocation, event and job upserts as ONE GraphQL request (default true).
+   * Hasura executes them in one transaction. Set false to always send three requests.
+   */
+  singleRequest?: boolean;
+  /**
+   * Delays (ms) between retries of an invocation whose `source_job_id` names a job row that
+   * isn't there yet, before the link is dropped. Default `[250, 1000]`; `[]` drops at once.
+   */
+  sourceJobLinkRetryMs?: number[];
   /** Override the transport (testing / custom client). Default posts via fetch. */
   request?: (body: { query: string; variables: Record<string, unknown> }, target: { endpoint: string; headers: Record<string, string> }) => Promise<unknown>;
 }
@@ -99,6 +117,22 @@ const MUT_INVOCATIONS = upsert('invocations', 'invocations_pkey', INVOCATION_COL
 const MUT_EVENTS = upsert('event_executions', 'event_executions_pkey', EVENT_COLUMNS);
 const MUT_JOBS = upsert('job_executions', 'job_executions_pkey', JOB_COLUMNS);
 
+const upsertField = (table: string, variable: string, constraint: string, columns: string[]): string =>
+  `insert_${table}(objects: $${variable}, on_conflict: { constraint: ${constraint}, update_columns: [${columns.join(', ')}] }) { affected_rows }`;
+
+// All three upserts in one document — one round trip, one transaction (field order = FK order).
+const MUT_BATCH = `
+  mutation Upsert_observability_batch(
+    $invocations: [invocations_insert_input!]!
+    $events: [event_executions_insert_input!]!
+    $jobs: [job_executions_insert_input!]!
+  ) {
+    ${upsertField('invocations', 'invocations', 'invocations_pkey', INVOCATION_COLUMNS)}
+    ${upsertField('event_executions', 'events', 'event_executions_pkey', EVENT_COLUMNS)}
+    ${upsertField('job_executions', 'jobs', 'job_executions_pkey', JOB_COLUMNS)}
+  }
+`;
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Drop undefined keys so omitted columns are not sent (Hasura would otherwise null them on upsert).
@@ -128,6 +162,8 @@ export function graphqlSink(config: GraphqlSinkConfig): (batch: ObservabilityBat
   const maxRetries = config.maxRetries ?? 3;
   const retryDelayMs = config.retryDelayMs ?? 500;
   const mapStatuses = config.mapStatuses !== false;
+  const singleRequest = config.singleRequest !== false;
+  const linkRetryMs = config.sourceJobLinkRetryMs ?? [250, 1000];
   const statusMap: Required<StatusMap> = {
     invocations: { ...DEFAULT_STATUS_MAP.invocations, ...(config.statusMap?.invocations ?? {}) },
     events: { ...DEFAULT_STATUS_MAP.events, ...(config.statusMap?.events ?? {}) },
@@ -167,10 +203,14 @@ export function graphqlSink(config: GraphqlSinkConfig): (batch: ObservabilityBat
 
   const send = async (query: string, objects: Record<string, unknown>[]): Promise<void> => {
     if (objects.length === 0) return;
+    await sendVariables(query, { objects });
+  };
+
+  const sendVariables = async (query: string, variables: Record<string, unknown>): Promise<void> => {
     let lastErr: unknown;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        const result = await doRequest({ query, variables: { objects } }, { endpoint: config.endpoint, headers });
+        const result = await doRequest({ query, variables }, { endpoint: config.endpoint, headers });
         // GraphQL-level failure → deterministic, NOT retried (applies to default + custom transports).
         const errors = (result as { errors?: unknown[] } | null | undefined)?.errors;
         if (errors && errors.length) throw new GraphqlResponseError(errors);
@@ -186,17 +226,19 @@ export function graphqlSink(config: GraphqlSinkConfig): (batch: ObservabilityBat
 
   const sendInvocation = async (record: InvocationRecord): Promise<void> => {
     const obj = cleanAndMap(record, 'invocations');
-    try {
-      await send(MUT_INVOCATIONS, [obj]);
-    } catch (err) {
-      // Graceful degrade: a bad source_job_id link must not drop the whole record.
-      if (isSourceJobIdFkError(err) && 'source_job_id' in obj) {
-        const { source_job_id: _dropped, ...withoutLink } = obj;
-        await send(MUT_INVOCATIONS, [withoutLink]);
+    for (let attempt = 0; attempt <= linkRetryMs.length; attempt++) {
+      try {
+        await send(MUT_INVOCATIONS, [obj]);
         return;
+      } catch (err) {
+        if (!(isSourceJobIdFkError(err) && 'source_job_id' in obj)) throw err;
+        // The parent job's row may be a moment from landing — wait and try the link again.
+        if (attempt < linkRetryMs.length) await sleep(linkRetryMs[attempt]!);
       }
-      throw err;
     }
+    // Graceful degrade: a link that never resolved must not drop the whole record.
+    const { source_job_id: _dropped, ...withoutLink } = obj;
+    await send(MUT_INVOCATIONS, [withoutLink]);
   };
 
   // Send a bulk mutation; on a deterministic GraphQL-level rejection, retry ONCE with the
@@ -222,10 +264,27 @@ export function graphqlSink(config: GraphqlSinkConfig): (batch: ObservabilityBat
     }
   };
 
-  return async (batch: ObservabilityBatch): Promise<void> => {
-    // Order matters for FKs: invocation → events → jobs.
+  // Order matters for FKs: invocation → events → jobs.
+  const sendSeparately = async (batch: ObservabilityBatch): Promise<void> => {
     await sendInvocation(batch.invocation);
     await sendDegradable(MUT_EVENTS, 'event_executions', batch.events.map(e => cleanAndMap(e, 'events')));
     await sendDegradable(MUT_JOBS, 'job_executions', batch.jobs.map(j => cleanAndMap(j, 'jobs')));
+  };
+
+  return async (batch: ObservabilityBatch): Promise<void> => {
+    if (!singleRequest) return sendSeparately(batch);
+    try {
+      await sendVariables(MUT_BATCH, {
+        invocations: [cleanAndMap(batch.invocation, 'invocations')],
+        events: batch.events.map(e => cleanAndMap(e, 'events')),
+        jobs: batch.jobs.map(j => cleanAndMap(j, 'jobs')),
+      });
+    } catch (err) {
+      // A GraphQL-level rejection (an FK miss on source_job_id, a value a column rejects)
+      // rolled the whole transaction back. Re-send per table, where each rejection has its
+      // own graceful-degrade path. A transport failure was already retried — surface it.
+      if (!(err instanceof GraphqlResponseError)) throw err;
+      await sendSeparately(batch);
+    }
   };
 }

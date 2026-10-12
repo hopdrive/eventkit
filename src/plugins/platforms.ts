@@ -8,5 +8,5 @@
 export { lambdaPlatform } from './platform-lambda/index.js';
 export { netlifyPlatform } from './platform-netlify/index.js';
 export { netlifyBackgroundPlatform } from './platform-netlify-background/index.js';
-export { netlifyV2Platform } from './platform-netlify-v2/index.js';
+export { netlifyV2Platform, type NetlifyV2Context, type NetlifyV2PlatformConfig } from './platform-netlify-v2/index.js';
 export { netlifyV2BackgroundPlatform } from './platform-netlify-v2-background/index.js';
