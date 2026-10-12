@@ -12,6 +12,18 @@ name: Release
 #      (build + bundle smoke + `changeset publish`) to publish to npm and cut a
 #      matching GitHub Release. Versions are never bumped or published by hand.
 #
+# Release candidates: a manual run with `rc_branch` set publishes that branch's pending
+# changesets as a prerelease instead — e.g. 0.8.0-rc.20261012153000 — under the npm dist-tag
+# `rc`, so `latest` (what a plain `npm install hopdrive-eventkit` gets) never moves:
+#
+#   gh workflow run release.yml --repo hopdrive/eventkit -f rc_branch=feat/my-change
+#
+# The version is what the branch's changesets WILL release (`snapshot.useCalculatedVersion`
+# in .changeset/config.json), with `rc.<UTC datetime>` appended so successive RCs sort in
+# order. Nothing is committed, tagged, or released on GitHub; re-run it after each push to
+# cut the next RC. It lives in this file, not its own, because npm Trusted Publishing
+# authorizes ONE workflow file — a second file would need its own trusted publisher on npmjs.
+#
 # Auth: npm Trusted Publishing via GitHub OIDC — NO stored npm token. npmjs must
 # have a trusted publisher configured for this package pointing at
 # `hopdrive/eventkit` + this workflow file (`release.yml`). Because the repo is
@@ -21,13 +33,21 @@ name: Release
 on:
   push:
     branches: [main]
-  workflow_dispatch: # allow manual re-trigger (e.g. to retry a failed publish)
+  workflow_dispatch: # manual re-trigger of the release (e.g. to retry a failed publish), or an RC
+    inputs:
+      rc_branch:
+        description: 'Publish a release candidate from this branch. Leave empty to re-run the normal release.'
+        required: false
+        type: string
+        default: ''
 
-# Never let two release runs race the version PR / publish.
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+# Never let two release runs race the version PR / publish. RCs queue per branch, apart from
+# releases, so cutting one never displaces a pending release run (or vice versa).
+concurrency: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.rc_branch || 'release' }}
 
 jobs:
   release:
+    if: ${{ github.event_name == 'push' || inputs.rc_branch == '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write # commit the version bump, push tags, create releases
@@ -80,3 +100,81 @@ jobs:
           # Emit build provenance (repo is public, so it's publicly verifiable).
           NPM_CONFIG_PROVENANCE: 'true'
           HUSKY: '0'
+
+  release-candidate:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.rc_branch != '' }}
+    runs-on: ubuntu-latest
+    # The branch name reaches the scripts through the environment, never interpolated into
+    # them, so a branch name can't inject shell.
+    env:
+      RC_BRANCH: ${{ inputs.rc_branch }}
+    permissions:
+      contents: read # nothing is pushed: no version commit, no tag, no GitHub Release
+      id-token: write # OIDC token for npm Trusted Publishing (same publisher as the release)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rc_branch }}
+
+      # Same runtime as the release job, for the same reason (npm 11 + intact sigstore).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Print npm/node versions
+        run: |
+          node -v
+          npm -v
+
+      - run: npm ci
+
+      - name: Check the branch can cut a release candidate
+        run: |
+          # Without useCalculatedVersion, changesets versions a snapshot 0.0.0-rc-…, which says
+          # nothing about the release it previews. Branches cut before RC support need a rebase.
+          if ! jq -e '.snapshot.useCalculatedVersion == true' .changeset/config.json > /dev/null; then
+            echo "::error::$RC_BRANCH predates RC support (.changeset/config.json has no snapshot.useCalculatedVersion). Rebase it on main."
+            exit 1
+          fi
+          # A snapshot with no pending changesets leaves the version unchanged, and the publish
+          # would then try to overwrite the current release.
+          if ! ls .changeset/*.md 2>/dev/null | grep -v '/README.md$' > /dev/null; then
+            echo "::error::$RC_BRANCH has no pending changesets, so there is nothing to release. Add one with 'npx changeset'."
+            exit 1
+          fi
+
+      - name: Version the release candidate
+        id: version
+        run: |
+          npx changeset version --snapshot rc
+          VERSION=$(node -p "require('./package.json').version")
+          case "$VERSION" in
+            *-rc.*) ;;
+            *) echo "::error::Expected an rc prerelease version, got $VERSION."; exit 1 ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Same gates as `npm run release`, minus the stable publish.
+      - name: Build, bundle smoke, console
+        run: npm run build && npm run smoke:bundle && npm run build:console
+
+      - name: Publish to npm under the rc dist-tag
+        run: npx changeset publish --tag rc --no-git-tag
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
+          HUSKY: '0'
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo "## Published hopdrive-eventkit@$VERSION"
+            echo ""
+            echo "From \`$RC_BRANCH\` at \`$(git rev-parse --short HEAD)\`, under the npm dist-tag \`rc\` (\`latest\` is unchanged)."
+            echo ""
+            echo '```bash'
+            echo "npm install hopdrive-eventkit@$VERSION"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
