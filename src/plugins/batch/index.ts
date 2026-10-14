@@ -145,6 +145,12 @@ export function batch(config: BatchConfig): EventKitPlugin {
 
   const buffers = new Map<RowId, LogEntry[]>();
   const timers = new Map<RowId, ReturnType<typeof setInterval>>();
+  // Which invocation each buffered row belongs to, and which invocations have ended. onFlush
+  // only touches rows of ended invocations: a row still in flight belongs to a concurrent
+  // request (a long-lived server, `netlify dev`, or end-of-invocation work running after the
+  // response — ADR-045), and stopping its timer would cut its periodic log flushing short.
+  const rowInvocation = new Map<RowId, string>();
+  const endedInvocations = new Set<string>();
 
   const safeUpdate = async (id: RowId, fields: BatchJobUpdate): Promise<void> => {
     try {
@@ -227,6 +233,7 @@ export function batch(config: BatchConfig): EventKitPlugin {
       // to onError as a loud breadcrumb rather than silently mangled at write time.
       assertSerializableMetadata(ctx.job.metadata, `job('${String(ctx.job.name)}').metadata`);
       buffers.set(row.id, []);
+      rowInvocation.set(row.id, String(ctx.invocationId));
       if (intervalMs && intervalMs > 0) {
         const timer = setInterval(() => void flushLogs(row.id), intervalMs);
         if (typeof timer.unref === 'function') timer.unref();
@@ -265,6 +272,7 @@ export function batch(config: BatchConfig): EventKitPlugin {
         await safeUpdate(row.id, { status, output: composeOutput(row.id, undefined, serializeError(execution.error)) });
       }
       buffers.delete(row.id);
+      rowInvocation.delete(row.id);
     },
 
     // Stuck-row safety net (opt-in). The job lifecycle only moves the row when a job
@@ -274,6 +282,7 @@ export function batch(config: BatchConfig): EventKitPlugin {
     // runtime records + flushes in a `finally`), so here we notice "zero jobs ran for
     // this triggering row" and flip it `pending → error` race-safely, then log loudly.
     async onInvocationEnd(ctx: InvocationContext, result: InvocationResult) {
+      endedInvocations.add(String(ctx.invocationId));
       if (!safetyNet) return;
       // A job ran iff some detected event dispatched at least one job execution. When one
       // did, the onJobStart/onJobEnd hooks already own this row's status, so leave it be.
@@ -304,7 +313,21 @@ export function batch(config: BatchConfig): EventKitPlugin {
       }
     },
 
+    // Rows left over by an ENDED invocation (a job that never reached onJobEnd): stop their
+    // timers and write their logs. Rows of invocations still running are left alone.
     async onFlush() {
+      for (const id of [...buffers.keys()]) {
+        if (!endedInvocations.has(rowInvocation.get(id) ?? '')) continue;
+        stopTimer(id);
+        await flushLogs(id);
+        buffers.delete(id);
+        rowInvocation.delete(id);
+      }
+      endedInvocations.clear();
+    },
+
+    // Process teardown (`kit.shutdown()`): every row left, running or not.
+    async onShutdown() {
       for (const id of [...buffers.keys()]) {
         stopTimer(id);
         await flushLogs(id);

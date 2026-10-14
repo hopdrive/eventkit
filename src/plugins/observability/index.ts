@@ -106,9 +106,19 @@ export interface ObservabilityBatch {
   jobs: JobRecord[];
 }
 
+/** What the plugin tells the sink about a write, beside the batch itself. */
+export interface SinkWriteInfo {
+  /**
+   * The write does not hold up a response: the request handed end-of-invocation work to
+   * the platform's `waitUntil` (ADR-045). A sink may spend time here it shouldn't spend
+   * on the response path — `graphqlSink` only retries a missing `source_job_id` link then.
+   */
+  deferred: boolean;
+}
+
 export interface ObservabilityConfig {
   /** Flush a per-invocation batch. Wire `graphqlSink(...)` or a custom transport. */
-  sink: (batch: ObservabilityBatch) => void | Promise<void>;
+  sink: (batch: ObservabilityBatch, info?: SinkWriteInfo) => void | Promise<void>;
   /** When true, a sink failure is rethrown (surfacing via onError); default best-effort. */
   strict?: boolean;
   /**
@@ -136,16 +146,22 @@ export interface ObservabilityConfig {
    * the child records itself, that FK fails and the sink drops the link (graceful-degrade)
    * — orphaning the child as a false second "origin".
    *
-   *   - `'background'` (default since 0.8.0, ADR-045): start the write when the job starts
-   *     and let the job body run alongside it. A child only exists after the job writes,
-   *     the database event is delivered and the child function runs — normally well after
-   *     this one write lands — and `graphqlSink` retries a missing link before dropping it.
-   *     The invocation's later writes queue behind it, so the final state always wins.
-   *   - `'await'` (or `true`, the pre-0.8.0 default): the job body waits for the write.
-   *     Strict lineage at the cost of a sink round trip per job on the response path.
+   *   - `'auto'` (default, ADR-045): `'background'` when the request can finish after the
+   *     response (its RequestContext has `waitUntil`, e.g. Netlify v2), `'await'` otherwise.
+   *     So platforms that answer only once the work is done keep the strict ordering they
+   *     always had, and only a deferring platform trades it for response time.
+   *   - `'background'`: start the write when the job starts and let the job body run
+   *     alongside it. A child only exists after the job writes, the database event is
+   *     delivered and the child function runs — normally well after this one write lands —
+   *     and `graphqlSink` retries a missing link before dropping it. A CUSTOM sink gets no
+   *     such retry: under `'background'` it must handle a `source_job_id` FK miss itself.
+   *   - `'await'` (or `true`, the pre-0.8.0 behaviour): the job body waits for the write.
    *   - `false`: no job-start write; the job row lands with the final flush.
+   *
+   * Job-start writes of parallel jobs share one write (see `flush`), so N parallel jobs
+   * cost about one round trip, not N.
    */
-  persistJobsAtStart?: boolean | 'await' | 'background';
+  persistJobsAtStart?: boolean | 'auto' | 'await' | 'background';
   /**
    * Record an event row for EVERY detector evaluation, including those that did not
    * fire (`detected: false`, status `not_detected`) — matching the legacy plugin and
@@ -169,8 +185,17 @@ interface Buffer {
    * land after (and overwrite) the terminal one. Never rejects.
    */
   writes: Promise<void>;
-  /** onInvocationEnd has run. Only ended invocations are retried by onFlush. */
+  /**
+   * A write that is queued behind `writes` but hasn't started. A write reads the buffer
+   * when it starts, so later requests join this one instead of queuing their own.
+   */
+  queued?: { final: boolean; bestEffort: boolean; promise: Promise<void> };
+  /** The request handed end-of-invocation work to `waitUntil` (writes don't hold up the response). */
+  deferred: boolean;
+  /** onInvocationEnd has run. */
   ended?: boolean;
+  /** The terminal write failed; onFlush retries it. */
+  finalFailed?: boolean;
 }
 
 const FAILED_STATUSES = new Set(['failed', 'timed_out', 'cancelled']);
@@ -180,12 +205,14 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
     throw new Error('observability() requires a `sink` function to flush records (e.g. graphqlSink(...)).');
   }
   const captureSourcePayload = config.captureSourcePayload !== false;
-  const persistJobsAtStart: 'await' | 'background' | false =
+  const persistJobsAtStart: 'auto' | 'await' | 'background' | false =
     config.persistJobsAtStart === false
       ? false
       : config.persistJobsAtStart === true || config.persistJobsAtStart === 'await'
         ? 'await'
-        : 'background';
+        : config.persistJobsAtStart === 'background'
+          ? 'background'
+          : 'auto';
   const captureJobMetadata = config.captureJobMetadata !== false;
   const captureErrorStacks = config.captureErrorStacks !== false;
   const recordUndetectedEvents = config.recordUndetectedEvents !== false;
@@ -233,8 +260,13 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
     jobs: [...buf.jobs.values()],
   });
 
+  const settle = (p: Promise<void>): Promise<void> => p.catch(() => undefined);
+
   /**
-   * Queue a write of this invocation's buffer behind any write already in flight for it.
+   * Write this invocation's buffer, after any write already in flight for it. Writes for one
+   * invocation never overlap, and each reads the buffer when it STARTS — so if a write is
+   * already queued and not yet started, a new request joins it (upgrading it to final if
+   * needed) rather than queuing another: N parallel job starts cost one write, not N.
    * `bestEffort` writes (background job-start, periodic) never reject — nothing awaits them
    * to receive the error — so `strict` applies only to awaited writes.
    */
@@ -247,27 +279,35 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
       clearInterval(buf.timer);
       delete buf.timer;
     }
-    const write = async (): Promise<void> => {
+    if (buf.queued) {
+      buf.queued.final ||= final;
+      buf.queued.bestEffort &&= bestEffort;
+      return bestEffort ? settle(buf.queued.promise) : buf.queued.promise;
+    }
+    const queued: NonNullable<Buffer['queued']> = { final, bestEffort, promise: Promise.resolve() };
+    queued.promise = buf.writes.then(async () => {
+      if (buf.queued === queued) delete buf.queued;
       // An earlier final write in the chain already landed and dropped the buffer.
       if (buffers.get(invocationId) !== buf) return;
       try {
-        await config.sink(buildBatch(buf));
+        await config.sink(buildBatch(buf), { deferred: buf.deferred });
         // Do NOT discard the buffer until the sink has DURABLY accepted the batch. Deleting it
         // up front was the bug: the sink writes invocation → events → jobs, and a failure
         // part-way permanently and silently lost the job/event terminal states, leaving a job
         // stuck 'running' under a 'completed' invocation. Keeping the buffer lets a later
         // `onFlush` retry the terminal write.
-        if (final) buffers.delete(invocationId);
+        if (queued.final) buffers.delete(invocationId);
       } catch (err) {
-        if (config.strict && !bestEffort) throw err;
+        if (queued.final) buf.finalFailed = true;
+        if (config.strict && !queued.bestEffort) throw err;
         // Best-effort: a telemetry write failure must not fail business execution — but it
         // MUST be visible (silent loss is undiagnosable).
-        reportSinkError(err, { invocationId, final });
+        reportSinkError(err, { invocationId, final: queued.final });
       }
-    };
-    const next = buf.writes.then(write);
-    buf.writes = next.catch(() => undefined);
-    return next;
+    });
+    buf.writes = settle(queued.promise);
+    buf.queued = queued;
+    return bestEffort ? settle(queued.promise) : queued.promise;
   };
 
   return {
@@ -305,7 +345,14 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
       }
       if (ctx.request.meta !== undefined) invocation.context_data = safeSerialize(ctx.request.meta, serOpts);
 
-      const buf: Buffer = { invocation, events: new Map(), eventIdByName: new Map(), jobs: new Map(), writes: Promise.resolve() };
+      const buf: Buffer = {
+        invocation,
+        events: new Map(),
+        eventIdByName: new Map(),
+        jobs: new Map(),
+        writes: Promise.resolve(),
+        deferred: typeof ctx.request.waitUntil === 'function',
+      };
       if (config.flushIntervalMs && config.flushIntervalMs > 0) {
         buf.timer = setInterval(() => void flush(ctx.invocationId, false, { bestEffort: true }), config.flushIntervalMs);
         if (typeof buf.timer.unref === 'function') buf.timer.unref();
@@ -375,9 +422,11 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
       // spawns via DB writes can resolve its source_job_id FK to it instead of being orphaned
       // as a false origin. 'await': the runtime awaits onJobStart, so the row is durable
       // before the job body runs. 'background': the write runs alongside the body (ADR-045).
+      // 'auto' picks background only when the request finishes after the response.
       // Idempotent either way (the sink upserts).
-      if (persistJobsAtStart === 'await') await flush(ctx.invocationId, false);
-      else if (persistJobsAtStart === 'background') void flush(ctx.invocationId, false, { bestEffort: true });
+      const mode = persistJobsAtStart === 'auto' ? (buf.deferred ? 'background' : 'await') : persistJobsAtStart;
+      if (mode === 'await') await flush(ctx.invocationId, false);
+      else if (mode === 'background') void flush(ctx.invocationId, false, { bestEffort: true });
     },
 
     onJobEnd(ctx: JobContext, execution: JobExecution) {
@@ -451,12 +500,17 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
       await flush(ctx.invocationId, true);
     },
 
-    // Retry the terminal write of any ENDED invocation whose final flush failed. An invocation
-    // still running belongs to a concurrent request (a long-lived server, `netlify dev`, or
-    // end-of-invocation work running after the response — ADR-045) and must not be finalized
-    // here, mid-run.
+    // Retry the terminal write of any invocation whose final flush FAILED. Every other buffer
+    // belongs to a concurrent request (a long-lived server, `netlify dev`, or end-of-invocation
+    // work running after the response — ADR-045): one still running must not be finalized
+    // mid-run, and one whose final write is in flight must not make this request wait on it.
     async onFlush() {
-      for (const [id, buf] of [...buffers.entries()]) if (buf.ended) await flush(id, true);
+      for (const [id, buf] of [...buffers.entries()]) {
+        if (buf.ended && buf.finalFailed) {
+          buf.finalFailed = false;
+          await flush(id, true);
+        }
+      }
     },
 
     // Process teardown (`kit.shutdown()`): write whatever is left, ended or not.

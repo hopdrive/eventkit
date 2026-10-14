@@ -283,8 +283,11 @@ the writes stay before the reply. Background platforms answer 202 up front, so i
 matter there. A custom adapter opts in by returning `waitUntil` from `buildRequest`.
 
 The observability job-start write (`persistJobsAtStart`, which keeps a child invocation's
-`source_job_id` link resolvable) runs alongside the job body by default (`'background'`);
-`'await'` makes the body wait for it, as before 0.8.0. See ADR-045.
+`source_job_id` link resolvable) defaults to `'auto'`: it runs alongside the job body when the
+request finishes after the response, and the body waits for it otherwise, as before 0.8.0.
+`'background'` / `'await'` force one or the other. Under `'background'` a custom sink must
+handle a `source_job_id` FK miss itself (`graphqlSink` retries the link before dropping it).
+See ADR-045.
 
 The `before` hook on `kit.handler({ before })` runs pre-dispatch. Return a
 platform-agnostic `{ status, body }` to short-circuit (auth or method) and the adapter's

@@ -103,6 +103,12 @@ type RegisteredModule = EventModule<any, any, any>;
 
 class Kit implements EventKit {
   private readonly pm: PluginManager;
+  /**
+   * End-of-invocation work handed to a platform's `waitUntil` and not finished yet (ADR-045).
+   * `shutdown()` waits for it: once telemetry runs after the response, an empty request queue
+   * no longer means it is written.
+   */
+  private readonly afterResponse = new Set<Promise<void>>();
   private readonly modules: RegisteredModule[] = [];
   private readonly moduleNames = new Set<string>();
   private validated = false;
@@ -563,8 +569,20 @@ class Kit implements EventKit {
         // end-of-invocation work (observability writes, log transports) runs AFTER it —
         // telemetry is the framework's overhead and stays off the caller's clock. Elsewhere
         // it is awaited here, before handle() returns, exactly as before.
-        if (waitUntil) waitUntil(endOfInvocation());
-        else await endOfInvocation();
+        if (waitUntil) {
+          const work = endOfInvocation();
+          this.afterResponse.add(work);
+          void work.finally(() => this.afterResponse.delete(work));
+          try {
+            waitUntil(work);
+          } catch {
+            // A waitUntil that throws must not replace the run's real outcome: finish the
+            // work here instead, as a platform without waitUntil would.
+            await work;
+          }
+        } else {
+          await endOfInvocation();
+        }
       }
     }
   }
@@ -767,6 +785,9 @@ class Kit implements EventKit {
   }
 
   async shutdown(): Promise<void> {
+    // Telemetry still running after its response (ADR-045) finishes first, so onShutdown
+    // never finalizes a buffer whose onInvocationEnd hasn't run yet.
+    await Promise.allSettled([...this.afterResponse]);
     await this.pm.onFlush();
     await this.pm.onShutdown();
   }
