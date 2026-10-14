@@ -28,7 +28,8 @@
 //    path (`info.deferred`), the sink first retries WITH the link on a short backoff
 //    (`sourceJobLinkRetryMs`): the parent job's row is usually just a moment from landing
 //    (its job-start write may run in the background). A link it gave up on is remembered,
-//    so the invocation's later writes drop it at once.
+//    so the invocation's later writes drop it at once — except its final write, which tries
+//    the link once more (no wait) in case the parent row has landed since.
 //  - eventkit emits a richer status vocabulary than the legacy schema's CHECK
 //    constraints allow; `mapStatuses` (default on) maps to the allowed set so
 //    writes stay valid. Set `mapStatuses: false` if you migrate the schema to
@@ -149,6 +150,7 @@ const boundedSet = (max: number) => {
       items.add(k);
       if (items.size > max) items.delete(items.values().next().value as string);
     },
+    delete: (k: string) => items.delete(k),
   };
 };
 
@@ -245,14 +247,19 @@ export function graphqlSink(config: GraphqlSinkConfig): (batch: ObservabilityBat
     throw lastErr;
   };
 
-  const sendInvocation = async (record: InvocationRecord, deferred: boolean): Promise<void> => {
+  const sendInvocation = async (record: InvocationRecord, deferred: boolean, final: boolean): Promise<void> => {
     const obj = cleanAndMap(record, 'invocations');
     const linkKey = `${record.id}|${String(obj['source_job_id'])}`;
-    if ('source_job_id' in obj && deadLinks.has(linkKey)) delete obj['source_job_id'];
-    const retries = deferred ? linkRetryMs : [];
+    const dead = 'source_job_id' in obj && deadLinks.has(linkKey);
+    // A link already given up on is dropped at once — except on the invocation's final
+    // write, which tries it once more without waiting, in case the parent row has landed
+    // since the give-up.
+    if (dead && !final) delete obj['source_job_id'];
+    const retries = deferred && !dead ? linkRetryMs : [];
     for (let attempt = 0; attempt <= retries.length; attempt++) {
       try {
         await send(MUT_INVOCATIONS, [obj]);
+        if (dead && 'source_job_id' in obj) deadLinks.delete(linkKey); // it landed after all
         return;
       } catch (err) {
         if (!(isSourceJobIdFkError(err) && 'source_job_id' in obj)) throw err;
@@ -290,18 +297,21 @@ export function graphqlSink(config: GraphqlSinkConfig): (batch: ObservabilityBat
   };
 
   // Order matters for FKs: invocation → events → jobs.
-  const sendSeparately = async (batch: ObservabilityBatch, deferred: boolean): Promise<void> => {
-    await sendInvocation(batch.invocation, deferred);
+  const sendSeparately = async (batch: ObservabilityBatch, deferred: boolean, final: boolean): Promise<void> => {
+    await sendInvocation(batch.invocation, deferred, final);
     await sendDegradable(MUT_EVENTS, 'event_executions', batch.events.map(e => cleanAndMap(e, 'events')));
     await sendDegradable(MUT_JOBS, 'job_executions', batch.jobs.map(j => cleanAndMap(j, 'jobs')));
   };
 
   return async (batch: ObservabilityBatch, info?: SinkWriteInfo): Promise<void> => {
     const deferred = info?.deferred === true;
-    if (!singleRequest || needsSeparate.has(batch.invocation.id)) return sendSeparately(batch, deferred);
+    const final = info?.final === true;
+    if (!singleRequest || needsSeparate.has(batch.invocation.id)) return sendSeparately(batch, deferred, final);
     const invocation = cleanAndMap(batch.invocation, 'invocations');
-    // A link already given up on would only get the one request rejected again.
+    // A link already given up on would only get the one request rejected again: drop it, or
+    // on the final write, take the per-table path, which tries it once more.
     if ('source_job_id' in invocation && deadLinks.has(`${batch.invocation.id}|${String(invocation['source_job_id'])}`)) {
+      if (final) return sendSeparately(batch, deferred, final);
       delete invocation['source_job_id'];
     }
     try {
@@ -316,7 +326,7 @@ export function graphqlSink(config: GraphqlSinkConfig): (batch: ObservabilityBat
       // own graceful-degrade path. A transport failure was already retried — surface it.
       if (!(err instanceof GraphqlResponseError)) throw err;
       needsSeparate.add(batch.invocation.id);
-      await sendSeparately(batch, deferred);
+      await sendSeparately(batch, deferred, final);
     }
   };
 }

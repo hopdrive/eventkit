@@ -456,6 +456,48 @@ describe('batch: concurrent invocations on one kit', () => {
   });
 });
 
+describe('batch: onFlush bookkeeping under concurrency', () => {
+  it("one invocation's onFlush does not forget another invocation that ended while it was flushing", async () => {
+    const releaseA = gate();
+    const updates: Array<{ id: string | number; fields: BatchJobUpdate }> = [];
+    const plugin = batch({
+      store: {
+        update: async (id, fields) => {
+          updates.push({ id, fields });
+          if (id === 'row-a' && fields.output) await releaseA.wait; // A's log flush is slow
+        },
+      },
+    }) as unknown as {
+      onJobStart: (ctx: unknown) => Promise<void>;
+      onJobLog: (ctx: unknown, entry: unknown) => void;
+      onInvocationEnd: (ctx: unknown, result: unknown) => Promise<void>;
+      onFlush: () => Promise<void>;
+    };
+    const ctx = (invocationId: string, rowId: string) => ({
+      invocationId,
+      job: { name: 'proc', id: `job-${rowId}` },
+      envelope: { payload: { event: { op: 'INSERT', data: { old: null, new: { id: rowId, input: {} } } } } },
+    });
+    const ended = { events: [] };
+
+    // Two rows whose jobs never reached onJobEnd, B's buffered first so A's loop passes it first.
+    await plugin.onJobStart(ctx('inv-b', 'row-b'));
+    await plugin.onJobStart(ctx('inv-a', 'row-a'));
+    plugin.onJobLog(ctx('inv-b', 'row-b'), { message: 'b' });
+    plugin.onJobLog(ctx('inv-a', 'row-a'), { message: 'a' });
+
+    await plugin.onInvocationEnd({ invocationId: 'inv-a' }, ended);
+    const flushA = plugin.onFlush(); // skips row-b (B still running), then waits on row-a
+    await new Promise(resolve => setTimeout(resolve, 5));
+    await plugin.onInvocationEnd({ invocationId: 'inv-b' }, ended); // B ends mid-flush
+    releaseA.open();
+    await flushA;
+    await plugin.onFlush(); // B's own flush must still find row-b
+
+    expect(updates.some(u => u.id === 'row-b' && u.fields.output)).toBe(true);
+  });
+});
+
 describe('graphqlSink: one request, and the parent-job link retry', () => {
   const batch = (extra: Record<string, unknown> = {}): ObservabilityBatch =>
     ({
@@ -657,5 +699,56 @@ describe('graphqlSink: one request, and the parent-job link retry', () => {
     await sink(batch());
 
     expect(calls).toEqual([['invocations'], ['event_executions'], ['job_executions']]);
+  });
+
+  it("the invocation's final write tries a given-up link once more, and keeps it if the parent has landed", async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    let parentLanded = false;
+    const sink = graphqlSink({
+      endpoint: 'http://h/v1/graphql',
+      singleRequest: false,
+      sourceJobLinkRetryMs: [1, 1],
+      request: async body => {
+        if (/insert_invocations/.test(body.query)) {
+          const obj = (body.variables as { objects: Record<string, unknown>[] }).objects[0]!;
+          sent.push(obj);
+          if ('source_job_id' in obj && !parentLanded) return fkError as never;
+        }
+        return {};
+      },
+    });
+
+    await sink(batch({ source_job_id: 'late-parent' }), { deferred: true, final: false }); // gives up
+    parentLanded = true;
+    sent.length = 0;
+    const started = Date.now();
+    await sink(batch({ source_job_id: 'late-parent' }), { deferred: true, final: true });
+
+    expect(sent).toHaveLength(1); // one try with the link, no backoff
+    expect(sent[0]!['source_job_id']).toBe('late-parent');
+    expect(Date.now() - started).toBeLessThan(100);
+  });
+
+  it("the final write drops a still-missing link after that one try, without waiting", async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    const sink = graphqlSink({
+      endpoint: 'http://h/v1/graphql',
+      singleRequest: false,
+      sourceJobLinkRetryMs: [1, 1],
+      request: async body => {
+        if (/insert_invocations/.test(body.query)) {
+          const obj = (body.variables as { objects: Record<string, unknown>[] }).objects[0]!;
+          sent.push(obj);
+          if ('source_job_id' in obj) return fkError as never;
+        }
+        return {};
+      },
+    });
+
+    await sink(batch({ source_job_id: 'never-lands' }), { deferred: true, final: false }); // gives up
+    sent.length = 0;
+    await sink(batch({ source_job_id: 'never-lands' }), { deferred: true, final: true });
+
+    expect(sent.map(o => 'source_job_id' in o)).toEqual([true, false]);
   });
 });

@@ -114,6 +114,8 @@ export interface SinkWriteInfo {
    * on the response path — `graphqlSink` only retries a missing `source_job_id` link then.
    */
   deferred: boolean;
+  /** The invocation's terminal write (later writes for it are retries of this one). */
+  final: boolean;
 }
 
 export interface ObservabilityConfig {
@@ -290,7 +292,7 @@ export function observability(config: ObservabilityConfig): EventKitPlugin {
       // An earlier final write in the chain already landed and dropped the buffer.
       if (buffers.get(invocationId) !== buf) return;
       try {
-        await config.sink(buildBatch(buf), { deferred: buf.deferred });
+        await config.sink(buildBatch(buf), { deferred: buf.deferred, final: queued.final });
         // Do NOT discard the buffer until the sink has DURABLY accepted the batch. Deleting it
         // up front was the bug: the sink writes invocation → events → jobs, and a failure
         // part-way permanently and silently lost the job/event terminal states, leaving a job

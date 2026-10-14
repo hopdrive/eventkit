@@ -323,7 +323,12 @@ export function batch(config: BatchConfig): EventKitPlugin {
         buffers.delete(id);
         rowInvocation.delete(id);
       }
-      endedInvocations.clear();
+      // Forget only invocations with no rows left. Clearing the whole set could drop the
+      // marker of a concurrent invocation that ended while this loop awaited a flush, after
+      // the loop had passed its rows — leaving them to its own onFlush, which would then
+      // skip them.
+      const withRows = new Set(rowInvocation.values());
+      for (const inv of [...endedInvocations]) if (!withRows.has(inv)) endedInvocations.delete(inv);
     },
 
     // Process teardown (`kit.shutdown()`): every row left, running or not.
