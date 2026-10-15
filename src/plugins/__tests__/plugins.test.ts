@@ -325,14 +325,15 @@ describe('observability', () => {
     expect(b.jobs.find(j => j.job_name === 'bad')!.error_message).toBe('x');
   });
 
-  it('persistJobsAtStart (default) makes the running job row durable before the job body', async () => {
+  it("persistJobsAtStart: 'await' makes the running job row durable before the job body", async () => {
     const batches: ObservabilityBatch[] = [];
     const mod = defineFakeEvent('thing.happened', () => true, [
       job(() => 'ok', { name: 'good', metadata: { tier: 1 } }),
     ]);
-    // Default (option omitted → true): an eager idempotent flush fires at job START, so the
-    // job's row is durable BEFORE the job body runs (and can spawn child invocations).
-    const kit = createEventKit(fakeSource()).use(observability, { sink: (b: ObservabilityBatch) => void batches.push(structuredClone(b)) }).registerEvents([mod]);
+    // 'await': an eager idempotent flush fires at job START and the job body waits for it, so
+    // the job's row is durable BEFORE the body runs (and can spawn child invocations). The
+    // 'background' default is covered in runtime/__tests__/after-response.test.ts.
+    const kit = createEventKit(fakeSource()).use(observability, { persistJobsAtStart: 'await', sink: (b: ObservabilityBatch) => void batches.push(structuredClone(b)) }).registerEvents([mod]);
     await kit.handle('go');
 
     // More than the single invocation-end flush happened — the eager persist(s) upsert too.
@@ -524,6 +525,7 @@ describe('observability/graphql-sink', () => {
     const sink = graphqlSink({
       endpoint: 'http://hasura/v1/graphql',
       headers: { 'x-hasura-admin-secret': 'secret' },
+      singleRequest: false, // the per-table path; the one-request default is covered below
       request: async body => {
         calls.push({ query: body.query, objects: (body.variables as { objects: unknown[] }).objects });
         return {};
@@ -559,6 +561,8 @@ describe('observability/graphql-sink', () => {
     let firstCall = true;
     const sink = graphqlSink({
       endpoint: 'http://h/v1/graphql',
+      singleRequest: false,
+      sourceJobLinkRetryMs: [], // degrade at once; the link-retry backoff has its own test
       request: async body => {
         const obj = (body.variables as { objects: Record<string, unknown>[] }).objects[0]!;
         if (/insert_invocations/.test(body.query)) {
@@ -585,6 +589,7 @@ describe('observability/graphql-sink', () => {
     const sink = graphqlSink({
       endpoint: 'http://h/v1/graphql',
       maxRetries: 3,
+      singleRequest: false,
       request: async () => {
         calls += 1;
         return { errors: [{ message: 'field "bogus" not found' }] } as never;
@@ -603,6 +608,7 @@ describe('observability/graphql-sink', () => {
     let firstJobsCall = true;
     const sink = graphqlSink({
       endpoint: 'http://h/v1/graphql',
+      singleRequest: false,
       request: async body => {
         if (/insert_job_executions/.test(body.query)) {
           const objects = (body.variables as { objects: Record<string, unknown>[] }).objects;
@@ -633,6 +639,7 @@ describe('observability/graphql-sink', () => {
     const capture = (mapStatuses?: boolean) =>
       graphqlSink({
         endpoint: 'http://h/v1/graphql',
+        singleRequest: false,
         ...(mapStatuses === false ? { mapStatuses: false } : {}),
         request: async body => {
           const table = body.query.match(/insert_(\w+)\(/)?.[1] ?? '';
