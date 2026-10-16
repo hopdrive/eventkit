@@ -39,7 +39,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "autoprefixer": "^10.4.0",
     "dotenv": "^17.2.2",
-    "postcss": "^8.4.0",
+    "postcss": "^8.5.25",
     "puppeteer": "25.3.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.2.0",
